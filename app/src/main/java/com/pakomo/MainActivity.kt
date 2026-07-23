@@ -1,0 +1,82 @@
+package com.pakomo
+
+import android.Manifest
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.pakomo.core.model.EngineStage
+import com.pakomo.ui.PakomoApp
+import com.pakomo.ui.PakomoViewModel
+import com.pakomo.ui.theme.PakomoTheme
+import com.pakomo.vpn.VpnServiceController
+
+class MainActivity : ComponentActivity() {
+    private val viewModel: PakomoViewModel by viewModels()
+
+    private val vpnPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (it.resultCode == RESULT_OK) startSafeValidation()
+        }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 33) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        setContent {
+            val serviceStage by VpnServiceController.stage.collectAsState()
+            LaunchedEffect(serviceStage) {
+                viewModel.setEngineStage(serviceStage)
+            }
+
+            PakomoTheme {
+                PakomoApp(
+                    viewModel = viewModel,
+                    onToggleService = {
+                        if (serviceStage == EngineStage.STOPPED) {
+                            requestVpnPermission()
+                        } else {
+                            VpnServiceController.stop(this@MainActivity)
+                        }
+                    },
+                    onEmergencyStop = {
+                        VpnServiceController.stop(this@MainActivity)
+                    },
+                )
+            }
+        }
+    }
+
+    private fun requestVpnPermission() {
+        val permissionIntent: Intent? = VpnService.prepare(this)
+        if (permissionIntent == null) {
+            startSafeValidation()
+        } else {
+            vpnPermissionLauncher.launch(permissionIntent)
+        }
+    }
+
+    private fun startSafeValidation() {
+        val state = viewModel.state.value
+        VpnServiceController.start(
+            context = this,
+            scope = state.scope,
+            selectedPackages = state.selectedApps.map { it.packageName },
+            rule = state.activeRule,
+        )
+    }
+}
