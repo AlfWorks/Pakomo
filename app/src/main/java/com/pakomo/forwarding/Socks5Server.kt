@@ -71,6 +71,8 @@ class Socks5Server(
                 launch {
                     try {
                         handleClient(client)
+                    } catch (error: Exception) {
+                        safeLog("SOCKS session failed", error)
                     } finally {
                         activeSessions.decrementAndGet()
                         runCatching { client.close() }
@@ -164,6 +166,7 @@ class Socks5Server(
         if (!protector.protect(relaySocket)) {
             localSocket.close()
             relaySocket.close()
+            safeLog("SOCKS UDP relay socket protection failed")
             writeReply(controlOutput, REPLY_GENERAL_FAILURE, null)
             return@coroutineScope
         }
@@ -185,7 +188,8 @@ class Socks5Server(
                     val sender = packet.socketAddress as? InetSocketAddress ?: continue
                     clientEndpoint.compareAndSet(null, sender)
                     if (sender != clientEndpoint.get()) continue
-                    val request = parseUdpPacket(packetBuffer, packet.length) ?: continue
+                    val request = parseUdpPacket(packetBuffer, packet.length)
+                        ?: continue
                     if (shouldShape(request.host, request.port)) {
                         val decision = shaper.decide(
                             TrafficDirection.UPLOAD,
@@ -201,7 +205,10 @@ class Socks5Server(
                             InetSocketAddress(request.host, request.port),
                         ),
                     )
-                } catch (_: SocketException) {
+                } catch (error: Exception) {
+                    if (!localSocket.isClosed) {
+                        safeLog("SOCKS UDP upstream relay failed", error)
+                    }
                     break
                 }
             }
@@ -232,7 +239,10 @@ class Socks5Server(
                         payload = payload,
                     )
                     localSocket.send(DatagramPacket(wrapped, wrapped.size, target))
-                } catch (_: SocketException) {
+                } catch (error: Exception) {
+                    if (!relaySocket.isClosed) {
+                        safeLog("SOCKS UDP downstream relay failed", error)
+                    }
                     break
                 }
             }
@@ -464,6 +474,16 @@ class Socks5Server(
             difference = difference or (a.toInt() xor b.toInt())
         }
         return difference == 0
+    }
+
+    private fun safeLog(message: String, error: Throwable? = null) {
+        runCatching {
+            if (error == null) {
+                Log.d(TAG, message)
+            } else {
+                Log.w(TAG, message, error)
+            }
+        }
     }
 
     private data class SocksRequest(
