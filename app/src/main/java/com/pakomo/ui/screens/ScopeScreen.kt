@@ -54,7 +54,6 @@ import com.pakomo.core.model.PakomoUiState
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.AppIcon
 import com.pakomo.ui.components.MonoText
-import com.pakomo.ui.components.ScopeSelector
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.theme.Accent
 import com.pakomo.ui.theme.AccentTint
@@ -79,7 +78,6 @@ fun ScopeScreen(
     onAddAddress: (String) -> String?,
     onRemoveAddress: (String) -> Unit,
 ) {
-    var pendingGlobal by remember { mutableStateOf(false) }
     var domainTarget by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -88,7 +86,11 @@ fun ScopeScreen(
             .statusBarsPadding(),
     ) {
         ScreenHeader(
-            title = "接管范围",
+            title = when (state.scope) {
+                TargetScope.APPLICATIONS -> "选择应用"
+                TargetScope.ADDRESSES -> "管理地址"
+                TargetScope.GLOBAL -> "全局接管"
+            },
             onBack = onBack,
             action = {
                 if (state.scope == TargetScope.APPLICATIONS) {
@@ -98,25 +100,7 @@ fun ScopeScreen(
                 }
             },
         )
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            ScopeSelector(
-                selected = state.scope,
-                onSelected = { scope ->
-                    if (scope == TargetScope.GLOBAL && state.scope != TargetScope.GLOBAL) {
-                        pendingGlobal = true
-                    } else {
-                        onScopeSelected(scope)
-                    }
-                },
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = state.scope.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+        Spacer(Modifier.height(4.dp))
 
         when (state.scope) {
             TargetScope.GLOBAL -> GlobalScopeNotice()
@@ -136,27 +120,6 @@ fun ScopeScreen(
                 onRemove = onRemoveAddress,
             )
         }
-    }
-
-    if (pendingGlobal) {
-        AlertDialog(
-            onDismissRequest = { pendingGlobal = false },
-            title = { Text("确认全局接管") },
-            text = {
-                Text("全局模式会让设备中的 IPv4 流量进入 Pakomo。建议首次测试先使用“指定应用”。")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingGlobal = false
-                        onScopeSelected(TargetScope.GLOBAL)
-                    },
-                ) { Text("继续") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingGlobal = false }) { Text("取消") }
-            },
-        )
     }
 
     domainTarget?.let { target ->
@@ -333,32 +296,16 @@ private fun ApplicationCard(
                     .background(SurfaceFold)
                     .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
             ) {
-                if (!app.isSelected) {
-                    Text(
-                        text = "开启应用后，可选择仅让下列域名生效",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                app.domains.forEachIndexed { index, domain ->
+                    DomainRow(
+                        domain = domain,
+                        onRemove = { onRemoveDomain(domain) },
                     )
-                } else if (app.domains.isEmpty()) {
-                    Text(
-                        text = "未限定域名，将处理此应用的全部流量",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                    )
-                } else {
-                    app.domains.forEachIndexed { index, domain ->
-                        DomainRow(
-                            domain = domain,
-                            onRemove = { onRemoveDomain(domain) },
+                    if (index < app.domains.lastIndex) {
+                        androidx.compose.material3.HorizontalDivider(
+                            modifier = Modifier.padding(start = 4.dp),
+                            color = Border,
                         )
-                        if (index < app.domains.lastIndex) {
-                            androidx.compose.material3.HorizontalDivider(
-                                modifier = Modifier.padding(start = 4.dp),
-                                color = Border,
-                            )
-                        }
                     }
                 }
                 Spacer(Modifier.height(5.dp))
@@ -434,13 +381,6 @@ private fun AddressScopeContent(
         ),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
-            Text(
-                text = "这里的域名对所有应用生效；应用内域名只属于对应应用。",
-                style = MaterialTheme.typography.bodySmall,
-                color = OnSurfaceVariant,
-            )
-        }
         items(domains, key = { it }) { domain ->
             Card(
                 shape = RoundedCornerShape(10.dp),
@@ -481,10 +421,10 @@ private fun GlobalScopeNotice() {
             .background(Color.White, RoundedCornerShape(10.dp))
             .padding(16.dp),
     ) {
-        Text("全局接管已选择", fontWeight = FontWeight.SemiBold)
+        Text("全局接管", fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "启动前仍会进行安全检查。转发内核未接入时只运行验证模式，不会注册流量路由。",
+            text = "设备中的 IPv4 流量都会按当前规则处理。",
             style = MaterialTheme.typography.bodySmall,
             color = OnSurfaceVariant,
         )
@@ -515,12 +455,6 @@ private fun DomainInputDialog(
         title = { Text("添加域名") },
         text = {
             Column {
-                Text(
-                    text = "只填写域名，不需要协议、路径或端口。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant,
-                )
-                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = value,
                     onValueChange = {

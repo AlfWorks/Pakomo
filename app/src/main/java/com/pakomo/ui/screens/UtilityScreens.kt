@@ -80,11 +80,40 @@ fun DiagnosticsScreen(
                 state.engineMessage?.let { message ->
                     InfoRow("链路状态", message)
                 }
+                InfoRow("接管范围", state.stats.activeScopeLabel ?: state.scope.label)
+                if (state.stats.attributionAttempts > 0) {
+                    InfoRow("归属命中率", formatAttribution(state.stats))
+                }
                 InfoRow("上行速率", formatRate(state.stats.uploadBytesPerSecond))
                 InfoRow("下行速率", formatRate(state.stats.downloadBytesPerSecond))
                 InfoRow("活跃连接", state.stats.activeConnections.toString())
                 InfoRow("主动丢弃次数", state.stats.droppedTransfers.toString())
                 InfoRow("延迟处理次数", state.stats.delayedTransfers.toString())
+            }
+
+            SectionLabel("命中的应用与域名")
+            InfoCard {
+                val hits = state.stats.recentHits
+                if (hits.isEmpty()) {
+                    InfoRow(
+                        "命中记录",
+                        if (state.engineStage == EngineStage.FORWARDING) "等待目标流量" else "未运行",
+                    )
+                } else {
+                    hits.forEach { hit ->
+                        InfoRow(
+                            label = hit.appLabel
+                                ?: hit.packageName
+                                ?: (if (hit.attributed) "未知应用" else "未归属"),
+                            value = if (hit.shaped) hit.host else "${hit.host} · 旁路",
+                            valueColor = when {
+                                !hit.shaped -> Muted
+                                hit.attributed -> Accent
+                                else -> Danger
+                            },
+                        )
+                    }
+                }
             }
 
             SectionLabel("统计说明")
@@ -212,6 +241,14 @@ fun SecurityScreen(
             },
         )
     }
+}
+
+private fun formatAttribution(stats: com.pakomo.core.model.RuntimeStats): String {
+    val total = stats.attributionAttempts
+    if (total <= 0) return "—"
+    val hit = (total - stats.attributionMisses).coerceAtLeast(0)
+    val percent = hit * 100.0 / total
+    return String.format(Locale.US, "%.1f%% (%d/%d)", percent, hit, total)
 }
 
 private fun formatRate(bytesPerSecond: Long): String = when {

@@ -26,7 +26,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,7 +73,7 @@ fun RulesScreen(
         containerColor = Background,
         topBar = {
             ScreenHeader(
-                title = "弱网规则",
+                title = "规则",
                 onBack = onBack,
                 action = {
                     IconButton(onClick = onCreateRule) {
@@ -82,15 +81,6 @@ fun RulesScreen(
                     }
                 },
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCreateRule,
-                containerColor = Accent,
-                contentColor = Color.White,
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = "新建规则")
-            }
         },
     ) { padding ->
         LazyColumn(
@@ -100,18 +90,11 @@ fun RulesScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
-                top = 10.dp,
-                bottom = 96.dp,
+                top = 12.dp,
+                bottom = 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
-                Text(
-                    text = "同一时间只生效一条规则。卡片直接显示实际参数，不再用“轻度/中度”代替量化信息。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant,
-                )
-            }
             items(state.rules, key = NetworkRule::id) { rule ->
                 RuleCard(
                     rule = rule,

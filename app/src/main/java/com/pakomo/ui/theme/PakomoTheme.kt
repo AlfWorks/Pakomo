@@ -10,16 +10,18 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
+// Tokens trued to the Penpot "v2" (blue) design palette.
 val Accent = Color(0xFF3B6FE0)
-val AccentTint = Color(0xFFE8EDFB)
-val Background = Color(0xFFFAFBFC)
+val AccentStrong = Color(0xFF2F5FCA)
+val AccentTint = Color(0xFFE8EEFC)
+val Background = Color(0xFFF7F8F9)
 val Surface = Color(0xFFFFFFFF)
 val SurfaceFold = Color(0xFFF6F8FA)
-val Border = Color(0xFFE9EBEF)
-val OnSurface = Color(0xFF1B1F26)
+val Border = Color(0xFFEEF0F3)
+val OnSurface = Color(0xFF1C1F24)
 val OnSurfaceVariant = Color(0xFF59616E)
 val Muted = Color(0xFF98A2B3)
-val Danger = Color(0xFFB4453E)
+val Danger = Color(0xFFC0392E)
 
 private val PakomoColors = lightColorScheme(
     primary = Accent,
