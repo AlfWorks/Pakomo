@@ -13,7 +13,6 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import com.pakomo.core.model.EngineStage
 import com.pakomo.ui.PakomoApp
 import com.pakomo.ui.PakomoViewModel
 import com.pakomo.ui.theme.PakomoTheme
@@ -38,16 +37,16 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val serviceStage by VpnServiceController.stage.collectAsState()
-            LaunchedEffect(serviceStage) {
-                viewModel.setEngineStage(serviceStage)
+            val serviceRuntime by VpnServiceController.runtime.collectAsState()
+            LaunchedEffect(serviceRuntime) {
+                viewModel.setEngineRuntime(serviceRuntime)
             }
 
             PakomoTheme {
                 PakomoApp(
                     viewModel = viewModel,
                     onToggleService = {
-                        if (serviceStage == EngineStage.STOPPED) {
+                        if (!serviceRuntime.stage.isActive) {
                             requestVpnPermission()
                         } else {
                             VpnServiceController.stop(this@MainActivity)

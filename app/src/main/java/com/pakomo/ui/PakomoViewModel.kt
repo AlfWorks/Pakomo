@@ -3,7 +3,7 @@ package com.pakomo.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.pakomo.core.model.EngineStage
+import com.pakomo.core.model.EngineRuntime
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.PakomoUiState
@@ -162,8 +162,14 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(rules = updated, activeRuleId = active) }
     }
 
-    fun setEngineStage(stage: EngineStage) {
-        _state.update { it.copy(engineStage = stage) }
+    fun setEngineRuntime(runtime: EngineRuntime) {
+        _state.update {
+            it.copy(
+                engineStage = runtime.stage,
+                stats = runtime.stats,
+                engineMessage = runtime.message,
+            )
+        }
     }
 
     fun setDiagnosticMode(enabled: Boolean) {

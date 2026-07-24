@@ -67,15 +67,20 @@ fun DiagnosticsScreen(
                     "服务",
                     when (state.engineStage) {
                         EngineStage.STOPPED -> "已停止"
+                        EngineStage.STARTING -> "正在启动"
                         EngineStage.SAFE_VALIDATION -> "安全验证模式"
                         EngineStage.FORWARDING -> "弱网模拟运行中"
+                        EngineStage.ERROR -> "启动失败"
                     },
-                    valueColor = if (state.engineStage == EngineStage.STOPPED) {
-                        OnSurfaceVariant
-                    } else {
-                        Accent
+                    valueColor = when (state.engineStage) {
+                        EngineStage.ERROR -> Danger
+                        EngineStage.STOPPED -> OnSurfaceVariant
+                        else -> Accent
                     },
                 )
+                state.engineMessage?.let { message ->
+                    InfoRow("链路状态", message)
+                }
                 InfoRow("活跃连接", state.stats.activeConnections.toString())
                 InfoRow("已丢弃数据包", state.stats.droppedPackets.toString())
                 InfoRow("延迟队列", state.stats.delayedPackets.toString())
@@ -93,7 +98,7 @@ fun DiagnosticsScreen(
                 InfoRow("自动关闭", "应用重启后")
             }
             Text(
-                text = "当前版本尚未接入转发内核，因此实时数值为 0。这个页面不会伪造测试结果。",
+                text = "统计来自设备本地转发链路；未产生目标流量时数值为 0。诊断不会记录流量内容。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -132,7 +137,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             InfoCard {
                 InfoRow("IP 协议", "仅 IPv4")
                 InfoRow("IPv6", "旁路，不接管")
-                InfoRow("转发内核", "待接入")
+                InfoRow("转发内核", "HEV + 本地 SOCKS5")
             }
         }
     }
@@ -188,7 +193,7 @@ fun SecurityScreen(
             InfoCard {
                 InfoRow("版本", BuildConfig.VERSION_NAME)
                 InfoRow("最低系统", "Android 10")
-                InfoRow("实现状态", "程序首批 / 安全验证模式")
+                InfoRow("实现状态", "IPv4 本地弱网转发")
             }
         }
     }

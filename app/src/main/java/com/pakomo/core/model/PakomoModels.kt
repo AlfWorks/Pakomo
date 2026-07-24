@@ -41,14 +41,22 @@ data class RuntimeStats(
     val downloadBytesPerSecond: Long = 0,
     val activeConnections: Int = 0,
     val droppedPackets: Long = 0,
-    val delayedPackets: Int = 0,
+    val delayedPackets: Long = 0,
 )
 
-enum class EngineStage {
-    STOPPED,
-    SAFE_VALIDATION,
-    FORWARDING,
+enum class EngineStage(val isActive: Boolean) {
+    STOPPED(false),
+    STARTING(true),
+    SAFE_VALIDATION(true),
+    FORWARDING(true),
+    ERROR(false),
 }
+
+data class EngineRuntime(
+    val stage: EngineStage = EngineStage.STOPPED,
+    val stats: RuntimeStats = RuntimeStats(),
+    val message: String? = null,
+)
 
 data class PakomoUiState(
     val scope: TargetScope = TargetScope.APPLICATIONS,
@@ -61,6 +69,7 @@ data class PakomoUiState(
     val activeRuleId: String = defaultRules[1].id,
     val stats: RuntimeStats = RuntimeStats(),
     val engineStage: EngineStage = EngineStage.STOPPED,
+    val engineMessage: String? = null,
     val diagnosticMode: Boolean = false,
 ) {
     val activeRule: NetworkRule

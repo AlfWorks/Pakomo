@@ -3,16 +3,18 @@ package com.pakomo.vpn
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.pakomo.core.model.EngineRuntime
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.NetworkRule
+import com.pakomo.core.model.RuntimeStats
 import com.pakomo.core.model.TargetScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object VpnServiceController {
-    private val _stage = MutableStateFlow(EngineStage.STOPPED)
-    val stage: StateFlow<EngineStage> = _stage.asStateFlow()
+    private val _runtime = MutableStateFlow(EngineRuntime())
+    val runtime: StateFlow<EngineRuntime> = _runtime.asStateFlow()
 
     fun start(
         context: Context,
@@ -43,7 +45,22 @@ object VpnServiceController {
         context.startService(intent)
     }
 
-    internal fun publish(stage: EngineStage) {
-        _stage.value = stage
+    internal fun publish(
+        stage: EngineStage,
+        message: String? = null,
+        stats: RuntimeStats = if (stage == EngineStage.FORWARDING) {
+            _runtime.value.stats
+        } else {
+            RuntimeStats()
+        },
+    ) {
+        _runtime.value = EngineRuntime(stage = stage, stats = stats, message = message)
+    }
+
+    internal fun publishStats(stats: RuntimeStats) {
+        val current = _runtime.value
+        if (current.stage == EngineStage.FORWARDING) {
+            _runtime.value = current.copy(stats = stats)
+        }
     }
 }

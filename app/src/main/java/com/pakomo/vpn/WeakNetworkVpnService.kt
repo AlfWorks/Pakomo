@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.pakomo.MainActivity
 import com.pakomo.R
@@ -22,6 +24,14 @@ import java.io.File
 import java.net.DatagramSocket
 import java.net.Socket
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Local on-device forwarding pipeline:
@@ -32,6 +42,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var socksServer: Socks5Server? = null
     private var nativeTunnel: TProxyService? = null
     private var tunnelConfig: File? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var statsJob: Job? = null
+    private var terminalError: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -42,9 +55,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
         when (intent?.action) {
             ACTION_STOP -> stopValidation()
             ACTION_START -> {
+                terminalError = null
                 val packages = intent.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES).orEmpty()
                 val scope = intent.readScope()
                 val rule = intent.readRule()
+                VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
                 startForeground(NOTIFICATION_ID, buildNotification("正在启动本地转发"))
                 if (scope == TargetScope.ADDRESSES) {
                     startSafeValidation(packages)
@@ -63,7 +78,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
     override fun onDestroy() {
         stopPipeline()
-        VpnServiceController.publish(EngineStage.STOPPED)
+        serviceScope.cancel()
+        terminalError?.let {
+            VpnServiceController.publish(EngineStage.ERROR, it)
+        } ?: VpnServiceController.publish(EngineStage.STOPPED)
         super.onDestroy()
     }
 
@@ -74,7 +92,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
     ) {
         stopPipeline()
         if (scope == TargetScope.APPLICATIONS && allowedPackages.isEmpty()) {
-            stopValidation()
+            stopWithError("请先选择至少一个应用")
             return
         }
         try {
@@ -110,10 +128,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
             nativeTunnel = hev
             hev.start(config.absolutePath, tunnelInterface!!.fd)
 
-            VpnServiceController.publish(EngineStage.FORWARDING)
+            startStatsMonitoring(hev, localSocks, shaper)
+            VpnServiceController.publish(EngineStage.FORWARDING, "本地转发链路已建立")
             updateNotification("弱网模拟运行中 · ${rule.name}")
-        } catch (_: Throwable) {
-            stopValidation()
+        } catch (error: Throwable) {
+            Log.e(TAG, "Failed to start local forwarding", error)
+            stopWithError(error.toUserMessage())
         }
     }
 
@@ -142,6 +162,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun stopValidation() {
+        terminalError = null
         stopPipeline()
         VpnServiceController.publish(EngineStage.STOPPED)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -149,6 +170,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun stopPipeline() {
+        statsJob?.cancel()
+        statsJob = null
         runCatching { nativeTunnel?.stop() }
         nativeTunnel = null
         runCatching { tunnelInterface?.close() }
@@ -157,6 +180,51 @@ class WeakNetworkVpnService : android.net.VpnService() {
         socksServer = null
         runCatching { tunnelConfig?.delete() }
         tunnelConfig = null
+    }
+
+    private fun startStatsMonitoring(
+        hev: TProxyService,
+        localSocks: Socks5Server,
+        shaper: TrafficShaper,
+    ) {
+        val sampler = TunnelStatsSampler()
+        statsJob = serviceScope.launch {
+            while (isActive) {
+                delay(STATS_INTERVAL_MS)
+                val values = runCatching { hev.stats() }
+                    .onFailure { Log.w(TAG, "Unable to read tunnel stats", it) }
+                    .getOrNull()
+                if (values == null || values.size < 4) continue
+                val stats = sampler.sample(
+                    counters = TunnelCounters(
+                        uploadPackets = values[0],
+                        uploadBytes = values[1],
+                        downloadPackets = values[2],
+                        downloadBytes = values[3],
+                    ),
+                    nowNanos = SystemClock.elapsedRealtimeNanos(),
+                    activeConnections = localSocks.activeSessionCount(),
+                    droppedPackets = shaper.droppedCount(),
+                    delayedTransfers = shaper.delayedCount(),
+                )
+                VpnServiceController.publishStats(stats)
+            }
+        }
+    }
+
+    private fun stopWithError(message: String) {
+        terminalError = message
+        stopPipeline()
+        VpnServiceController.publish(EngineStage.ERROR, message)
+        updateNotification("启动失败 · $message")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun Throwable.toUserMessage(): String = when (this) {
+        is UnsatisfiedLinkError -> "转发内核未能加载"
+        is SecurityException -> "系统拒绝建立 VPN"
+        else -> message?.takeIf { it.isNotBlank() }?.take(80) ?: "本地转发启动失败"
     }
 
     private fun baseBuilder(
@@ -255,5 +323,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val EXTRA_UPLOAD_KBPS = "upload_kbps"
         private const val CHANNEL_ID = "pakomo_vpn_status"
         private const val NOTIFICATION_ID = 4101
+        private const val STATS_INTERVAL_MS = 1_000L
+        private const val TAG = "PakomoVpn"
     }
 }

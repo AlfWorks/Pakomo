@@ -182,7 +182,7 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(
-                    enabled = state.engineStage != EngineStage.STOPPED,
+                    enabled = state.engineStage.isActive,
                     onClick = onEmergencyStop,
                 )
                 .padding(horizontal = 16.dp, vertical = 17.dp),
@@ -191,14 +191,14 @@ fun HomeScreen(
             androidx.compose.material3.Icon(
                 imageVector = Icons.Rounded.PowerSettingsNew,
                 contentDescription = null,
-                tint = if (state.engineStage == EngineStage.STOPPED) Muted else Danger,
+                tint = if (state.engineStage.isActive) Danger else Muted,
                 modifier = Modifier.size(22.dp),
             )
             Spacer(Modifier.size(14.dp))
             Column {
                 Text(
                     text = "紧急恢复正常网络",
-                    color = if (state.engineStage == EngineStage.STOPPED) Muted else Danger,
+                    color = if (state.engineStage.isActive) Danger else Muted,
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -238,14 +238,28 @@ private fun ServiceStatusCard(
     state: PakomoUiState,
     onToggle: () -> Unit,
 ) {
-    val isRunning = stage != EngineStage.STOPPED
+    val isRunning = stage.isActive
+    val isError = stage == EngineStage.ERROR
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(76.dp),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = if (isRunning) AccentTint else Color.White),
-        border = BorderStroke(1.dp, if (isRunning) Color(0xFFD7E1FA) else Border),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isError -> Color(0xFFFFF5F4)
+                isRunning -> AccentTint
+                else -> Color.White
+            },
+        ),
+        border = BorderStroke(
+            1.dp,
+            when {
+                isError -> Color(0xFFF0C8C4)
+                isRunning -> Color(0xFFD7E1FA)
+                else -> Border
+            },
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
@@ -257,15 +271,24 @@ private fun ServiceStatusCard(
             Spacer(
                 modifier = Modifier
                     .size(9.dp)
-                    .background(if (isRunning) Accent else Muted, CircleShape),
+                    .background(
+                        when {
+                            isError -> Danger
+                            isRunning -> Accent
+                            else -> Muted
+                        },
+                        CircleShape,
+                    ),
             )
             Spacer(Modifier.size(11.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = when (stage) {
                         EngineStage.STOPPED -> "服务已停止"
+                        EngineStage.STARTING -> "正在启动"
                         EngineStage.SAFE_VALIDATION -> "安全验证模式"
                         EngineStage.FORWARDING -> "弱网模拟运行中"
+                        EngineStage.ERROR -> "启动失败"
                     },
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
@@ -275,9 +298,11 @@ private fun ServiceStatusCard(
                 Text(
                     text = when (stage) {
                         EngineStage.STOPPED -> "开启后申请系统 VPN 权限"
+                        EngineStage.STARTING -> state.engineMessage ?: "正在建立本地转发链路"
                         EngineStage.SAFE_VALIDATION -> "未注册流量路由，不影响当前网络"
                         EngineStage.FORWARDING ->
                             "↑${state.stats.uploadBytesPerSecond}  ↓${state.stats.downloadBytesPerSecond} B/s"
+                        EngineStage.ERROR -> state.engineMessage ?: "请打开诊断页查看原因"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceVariant,
