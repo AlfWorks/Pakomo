@@ -1,0 +1,173 @@
+diff --git a/src/hev-socks5-session-tcp.c b/src/hev-socks5-session-tcp.c
+index 7bcfa05..4bf1ac0 100644
+--- a/src/hev-socks5-session-tcp.c
++++ b/src/hev-socks5-session-tcp.c
+@@ -215,6 +215,47 @@ hev_socks5_session_tcp_bind (HevSocks5 *self, int fd,
+     return 0;
+ }
+ 
++static int
++hev_socks5_session_tcp_write_preamble (HevSocks5Session *base, int fd)
++{
++    HevSocks5SessionTCP *self = HEV_SOCKS5_SESSION_TCP (base);
++    unsigned char buf[HEV_PAKOMO_PREAMBLE_SIZE];
++    unsigned int src_port, dst_port;
++
++    if (!self->pcb)
++        return -1;
++
++    /* IPv4-only tunnel: on the intercepted pcb, "remote" is the original app
++     * source and "local" is the destination the app connected to. */
++    if (!IP_IS_V4 (&self->pcb->local_ip) || !IP_IS_V4 (&self->pcb->remote_ip))
++        return -1;
++
++    src_port = self->pcb->remote_port;
++    dst_port = self->pcb->local_port;
++
++    buf[0] = 'P';
++    buf[1] = 'K';
++    buf[2] = 'M';
++    buf[3] = 'O';
++    buf[4] = HEV_PAKOMO_PREAMBLE_VERSION;
++    buf[5] = HEV_PAKOMO_PROTO_TCP;
++    buf[6] = (src_port >> 8) & 0xff;
++    buf[7] = src_port & 0xff;
++    buf[8] = (dst_port >> 8) & 0xff;
++    buf[9] = dst_port & 0xff;
++    /* ip4 addr is already stored in network byte order. */
++    memcpy (buf + 10, &ip_2_ip4 (&self->pcb->remote_ip)->addr, 4);
++    memcpy (buf + 14, &ip_2_ip4 (&self->pcb->local_ip)->addr, 4);
++    buf[18] = 0;
++    buf[19] = 0;
++
++    if (hev_task_io_socket_send (fd, buf, sizeof (buf), MSG_WAITALL,
++                                 task_io_yielder, self) <= 0)
++        return -1;
++
++    return 0;
++}
++
+ static void
+ hev_socks5_session_tcp_splice (HevSocks5Session *base)
+ {
+@@ -376,6 +417,7 @@ hev_socks5_session_tcp_class (void)
+         siptr->get_task = hev_socks5_session_tcp_get_task;
+         siptr->set_task = hev_socks5_session_tcp_set_task;
+         siptr->get_node = hev_socks5_session_tcp_get_node;
++        siptr->write_preamble = hev_socks5_session_tcp_write_preamble;
+     }
+ 
+     return okptr;
+diff --git a/src/hev-socks5-session-udp.c b/src/hev-socks5-session-udp.c
+index 3c009ab..51bcfaa 100644
+--- a/src/hev-socks5-session-udp.c
++++ b/src/hev-socks5-session-udp.c
+@@ -400,6 +400,50 @@ hev_socks5_session_udp_destruct (HevObject *base)
+     HEV_SOCKS5_CLIENT_UDP_TYPE->destruct (base);
+ }
+ 
++static int
++hev_socks5_session_udp_write_preamble (HevSocks5Session *base, int fd)
++{
++    HevSocks5SessionUDP *self = HEV_SOCKS5_SESSION_UDP (base);
++    unsigned char buf[HEV_PAKOMO_PREAMBLE_SIZE];
++    unsigned int src_port, dst_port;
++
++    if (!self->pcb)
++        return -1;
++
++    /* On the intercepted udp pcb, "remote" is the original app source and
++     * "local" is the first destination. Only the source is used for UID
++     * attribution; unknown/non-IPv4 sources fall back on the local side. */
++    src_port = self->pcb->remote_port;
++    dst_port = self->pcb->local_port;
++
++    buf[0] = 'P';
++    buf[1] = 'K';
++    buf[2] = 'M';
++    buf[3] = 'O';
++    buf[4] = HEV_PAKOMO_PREAMBLE_VERSION;
++    buf[5] = HEV_PAKOMO_PROTO_UDP;
++    buf[6] = (src_port >> 8) & 0xff;
++    buf[7] = src_port & 0xff;
++    buf[8] = (dst_port >> 8) & 0xff;
++    buf[9] = dst_port & 0xff;
++    if (IP_IS_V4 (&self->pcb->remote_ip))
++        memcpy (buf + 10, &ip_2_ip4 (&self->pcb->remote_ip)->addr, 4);
++    else
++        memset (buf + 10, 0, 4);
++    if (IP_IS_V4 (&self->pcb->local_ip))
++        memcpy (buf + 14, &ip_2_ip4 (&self->pcb->local_ip)->addr, 4);
++    else
++        memset (buf + 14, 0, 4);
++    buf[18] = 0;
++    buf[19] = 0;
++
++    if (hev_task_io_socket_send (fd, buf, sizeof (buf), MSG_WAITALL,
++                                 task_io_yielder, self) <= 0)
++        return -1;
++
++    return 0;
++}
++
+ static void *
+ hev_socks5_session_udp_iface (HevObject *base, void *type)
+ {
+@@ -442,6 +486,7 @@ hev_socks5_session_udp_class (void)
+         siptr->get_task = hev_socks5_session_udp_get_task;
+         siptr->set_task = hev_socks5_session_udp_set_task;
+         siptr->get_node = hev_socks5_session_udp_get_node;
++        siptr->write_preamble = hev_socks5_session_udp_write_preamble;
+     }
+ 
+     return okptr;
+diff --git a/src/hev-socks5-session.c b/src/hev-socks5-session.c
+index 520db98..28efba4 100644
+--- a/src/hev-socks5-session.c
++++ b/src/hev-socks5-session.c
+@@ -39,6 +39,15 @@ hev_socks5_session_run (HevSocks5Session *self)
+         LOG_D ("%p socks5 client auth %s:%s", self, srv->user, srv->pass);
+     }
+ 
++    iface = HEV_OBJECT_GET_IFACE (self, HEV_SOCKS5_SESSION_TYPE);
++    if (iface->write_preamble) {
++        res = iface->write_preamble (self, HEV_SOCKS5 (self)->fd);
++        if (res < 0) {
++            LOG_I ("%p socks5 session preamble", self);
++            return;
++        }
++    }
++
+     res = hev_socks5_client_handshake (HEV_SOCKS5_CLIENT (self), srv->pipeline);
+     if (res < 0) {
+         LOG_I ("%p socks5 session handshake", self);
+diff --git a/src/hev-socks5-session.h b/src/hev-socks5-session.h
+index 1475892..859b442 100644
+--- a/src/hev-socks5-session.h
++++ b/src/hev-socks5-session.h
+@@ -14,6 +14,12 @@
+ 
+ #include "hev-list.h"
+ 
++/* Pakomo attribution preamble (see write_preamble below). */
++#define HEV_PAKOMO_PREAMBLE_SIZE 20
++#define HEV_PAKOMO_PREAMBLE_VERSION 1
++#define HEV_PAKOMO_PROTO_TCP 6
++#define HEV_PAKOMO_PROTO_UDP 17
++
+ #define HEV_SOCKS5_SESSION(p) ((HevSocks5Session *)p)
+ #define HEV_SOCKS5_SESSION_IFACE(p) ((HevSocks5SessionIface *)p)
+ #define HEV_SOCKS5_SESSION_TYPE (hev_socks5_session_iface ())
+@@ -35,6 +41,12 @@ struct _HevSocks5SessionIface
+     HevTask *(*get_task) (HevSocks5Session *self);
+     void (*set_task) (HevSocks5Session *self, HevTask *task);
+     HevListNode *(*get_node) (HevSocks5Session *self);
++    /*
++     * Pakomo extension: write a fixed 20-byte attribution preamble carrying the
++     * original connection 5-tuple to the local SOCKS server right after connect
++     * and before the SOCKS5 greeting. Optional; may be NULL.
++     */
++    int (*write_preamble) (HevSocks5Session *self, int fd);
+ };
+ 
+ void *hev_socks5_session_iface (void);
