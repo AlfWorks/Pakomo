@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pakomo.core.model.EngineRuntime
+import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.PakomoUiState
@@ -11,6 +12,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.core.validation.DomainInputValidator
 import com.pakomo.data.InstalledAppCatalog
 import com.pakomo.data.PakomoPreferences
+import com.pakomo.vpn.VpnServiceController
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +59,27 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     fun selectScope(scope: TargetScope) {
         preferences.writeScope(scope)
         _state.update { it.copy(scope = scope) }
+        reapplyIfRunning()
+    }
+
+    /**
+     * Config captured at start is a snapshot, so a live rule/scope/domain change is pushed to the
+     * running service by re-sending the current configuration; the service rebuilds the pipeline
+     * (uptime is preserved). No-op unless forwarding is active.
+     */
+    private fun reapplyIfRunning() {
+        val current = _state.value
+        if (current.engineStage != EngineStage.FORWARDING) return
+        VpnServiceController.start(
+            context = getApplication(),
+            scope = current.scope,
+            selectedPackages = current.selectedApps.map { it.packageName },
+            targetDomains = current.addressDomains,
+            domainsByPackage = current.selectedApps
+                .filter { it.domains.isNotEmpty() }
+                .associate { it.packageName to it.domains },
+            rule = current.activeRule,
+        )
     }
 
     fun setAppQuery(query: String) {
@@ -105,6 +128,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         val updated = _state.value.addressDomains + domain
         preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
+        reapplyIfRunning()
         return null
     }
 
@@ -112,12 +136,14 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         val updated = _state.value.addressDomains.filterNot { it == domain }
         preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
+        reapplyIfRunning()
     }
 
     fun selectRule(ruleId: String) {
         if (_state.value.rules.none { it.id == ruleId }) return
         preferences.writeActiveRuleId(ruleId)
         _state.update { it.copy(activeRuleId = ruleId) }
+        reapplyIfRunning()
     }
 
     fun saveRule(rule: NetworkRule) {
@@ -129,6 +155,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
         preferences.writeRules(updated)
         _state.update { it.copy(rules = updated) }
+        if (rule.id == _state.value.activeRuleId) reapplyIfRunning()
     }
 
     fun duplicateRule(ruleId: String): NetworkRule? {
@@ -196,6 +223,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         preferences.writeDomainsByPackage(
             apps.filter { it.domains.isNotEmpty() }.associate { it.packageName to it.domains },
         )
+        reapplyIfRunning()
     }
 
 }

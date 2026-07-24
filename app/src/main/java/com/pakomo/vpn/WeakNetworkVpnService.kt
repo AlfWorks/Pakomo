@@ -18,6 +18,11 @@ import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.TargetScope
 import com.pakomo.forwarding.SocketProtector
 import com.pakomo.forwarding.DomainRoutingPolicy
+import com.pakomo.forwarding.DomainScopedShaping
+import com.pakomo.forwarding.PerAppShapingPolicy
+import com.pakomo.forwarding.ShapeEverythingShaping
+import com.pakomo.forwarding.ShapedApplication
+import com.pakomo.forwarding.ShapingPolicy
 import com.pakomo.forwarding.Socks5Server
 import com.pakomo.forwarding.SocksCredentials
 import com.pakomo.security.SecurityPolicy
@@ -49,6 +54,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var statsJob: Job? = null
     private var terminalError: String? = null
+    private var hitTracker: RecentHitTracker? = null
+    private var activeScopeLabel: String? = null
+    private var attributor: AndroidConnectionAttributor? = null
+    private var startedAtElapsedMs: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -62,11 +71,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 terminalError = null
                 val packages = intent.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES).orEmpty()
                 val targetDomains = intent.getStringArrayListExtra(EXTRA_TARGET_DOMAINS).orEmpty()
+                val domainsByPackage = intent.readDomainsByPackage()
                 val scope = intent.readScope()
                 val rule = intent.readRule()
                 VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
                 startForeground(NOTIFICATION_ID, buildNotification("正在启动本地转发"))
-                startForwarding(scope, packages, targetDomains, rule)
+                startForwarding(scope, packages, targetDomains, domainsByPackage, rule)
             }
         }
         return START_NOT_STICKY
@@ -90,6 +100,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         scope: TargetScope,
         allowedPackages: List<String>,
         targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
     ) {
         stopPipeline()
@@ -109,11 +120,16 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     UUID.randomUUID().toString().replace("-", ""),
             )
             val shaper = TrafficShaper(rule)
-            val domainPolicy = if (scope == TargetScope.ADDRESSES) {
-                DomainRoutingPolicy(targetDomains)
-            } else {
-                null
-            }
+            val hits = RecentHitTracker()
+            hitTracker = hits
+            activeScopeLabel = scope.label
+            val shapingPolicy = buildShapingPolicy(
+                scope = scope,
+                allowedPackages = allowedPackages,
+                targetDomains = targetDomains,
+                domainsByPackage = domainsByPackage,
+                hits = hits,
+            )
             val localSocks = Socks5Server(
                 credentials = credentials,
                 protector = object : SocketProtector {
@@ -138,7 +154,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     }
                 },
                 shaper = shaper,
-                domainRoutingPolicy = domainPolicy,
+                shapingPolicy = shapingPolicy,
+                expectOriginPreamble = true,
             )
             val socksPort = localSocks.start()
             socksServer = localSocks
@@ -159,6 +176,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
             nativeTunnel = hev
             hev.start(config.absolutePath, tunnelInterface!!.fd)
 
+            // Keep the uptime running across a live reconfigure (which rebuilds the pipeline);
+            // only a real stop resets it.
+            if (startedAtElapsedMs == 0L) startedAtElapsedMs = SystemClock.elapsedRealtime()
             startStatsMonitoring(hev, localSocks, shaper)
             VpnServiceController.publish(EngineStage.FORWARDING, "本地转发链路已建立")
             updateNotification("弱网模拟运行中 · ${rule.name}")
@@ -170,6 +190,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
     private fun stopValidation() {
         terminalError = null
+        startedAtElapsedMs = 0L
         stopPipeline()
         VpnServiceController.publish(EngineStage.STOPPED)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -187,6 +208,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
         socksServer = null
         runCatching { tunnelConfig?.delete() }
         tunnelConfig = null
+        hitTracker = null
+        activeScopeLabel = null
+        attributor = null
     }
 
     private fun startStatsMonitoring(
@@ -213,6 +237,16 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     activeConnections = localSocks.activeSessionCount(),
                     droppedTransfers = shaper.droppedCount(),
                     delayedTransfers = shaper.delayedCount(),
+                ).copy(
+                    activeScopeLabel = activeScopeLabel,
+                    recentHits = hitTracker?.snapshot().orEmpty(),
+                    attributionAttempts = attributor?.stats()?.attempts ?: 0,
+                    attributionMisses = attributor?.stats()?.misses ?: 0,
+                    uptimeMs = if (startedAtElapsedMs > 0) {
+                        SystemClock.elapsedRealtime() - startedAtElapsedMs
+                    } else {
+                        0
+                    },
                 )
                 VpnServiceController.publishStats(stats)
             }
@@ -221,6 +255,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
     private fun stopWithError(message: String) {
         terminalError = message
+        startedAtElapsedMs = 0L
         stopPipeline()
         VpnServiceController.publish(EngineStage.ERROR, message)
         updateNotification("启动失败 · $message")
@@ -257,6 +292,55 @@ class WeakNetworkVpnService : android.net.VpnService() {
             builder.addDisallowedApplication(packageName)
         }
         return builder
+    }
+
+    /**
+     * Builds the per-connection shaping policy for the active scope. In APPLICATIONS mode
+     * each selected app keeps its own domain filter (never merged across apps) and traffic
+     * is attributed to its owning app through [AndroidConnectionAttributor].
+     */
+    private fun buildShapingPolicy(
+        scope: TargetScope,
+        allowedPackages: List<String>,
+        targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
+        hits: RecentHitTracker,
+    ): ShapingPolicy = when (scope) {
+        TargetScope.GLOBAL -> ShapingPolicy { ShapeEverythingShaping(scope.label, hits) }
+
+        TargetScope.ADDRESSES -> {
+            val policy = DomainRoutingPolicy(targetDomains)
+            ShapingPolicy {
+                DomainScopedShaping(
+                    scope = scope.label,
+                    policy = policy,
+                    packageName = null,
+                    appLabel = null,
+                    attributed = true,
+                    reporter = hits,
+                )
+            }
+        }
+
+        TargetScope.APPLICATIONS -> {
+            val pm = packageManager
+            val apps = allowedPackages.distinct().map { pkg ->
+                ShapedApplication(
+                    packageName = pkg,
+                    label = runCatching {
+                        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                    }.getOrDefault(pkg),
+                    domains = domainsByPackage[pkg].orEmpty(),
+                )
+            }
+            val appAttributor = AndroidConnectionAttributor(
+                connectivity = getSystemService(ConnectivityManager::class.java),
+                packageManager = pm,
+                knownPackages = allowedPackages,
+            )
+            attributor = appAttributor
+            PerAppShapingPolicy(apps, appAttributor, hits, scope.label)
+        }
     }
 
     private fun readUnderlyingNetwork(): UnderlyingNetwork {
@@ -316,6 +400,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
             .notify(NOTIFICATION_ID, buildNotification(body))
     }
 
+    private fun Intent.readDomainsByPackage(): Map<String, List<String>> {
+        val bundle = getBundleExtra(EXTRA_DOMAINS_BY_PACKAGE) ?: return emptyMap()
+        return bundle.keySet().associateWith { key ->
+            bundle.getStringArrayList(key).orEmpty().toList()
+        }
+    }
+
     private fun Intent.readScope(): TargetScope = runCatching {
         TargetScope.valueOf(getStringExtra(EXTRA_SCOPE) ?: TargetScope.APPLICATIONS.name)
     }.getOrDefault(TargetScope.APPLICATIONS)
@@ -332,6 +423,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
             downloadKbps = download,
             uploadKbps = upload,
             isSystem = false,
+            advanced = getBooleanExtra(EXTRA_ADVANCED, false),
+            uploadLatencyMs = getIntExtra(EXTRA_UP_LATENCY_MS, 0).coerceIn(0, 60_000),
+            downloadLatencyMs = getIntExtra(EXTRA_DOWN_LATENCY_MS, 0).coerceIn(0, 60_000),
+            uploadJitterMs = getIntExtra(EXTRA_UP_JITTER_MS, 0).coerceIn(0, 30_000),
+            downloadJitterMs = getIntExtra(EXTRA_DOWN_JITTER_MS, 0).coerceIn(0, 30_000),
+            uploadLossPercent = getIntExtra(EXTRA_UP_LOSS_PERCENT, 0).coerceIn(0, 100),
+            downloadLossPercent = getIntExtra(EXTRA_DOWN_LOSS_PERCENT, 0).coerceIn(0, 100),
         )
     }
 
@@ -345,6 +443,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val EXTRA_ALLOWED_PACKAGES = "allowed_packages"
         const val EXTRA_TARGET_DOMAINS = "target_domains"
+        const val EXTRA_DOMAINS_BY_PACKAGE = "domains_by_package"
         const val EXTRA_SCOPE = "scope"
         const val EXTRA_RULE_ID = "rule_id"
         const val EXTRA_RULE_NAME = "rule_name"
@@ -353,6 +452,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val EXTRA_LOSS_PERCENT = "loss_percent"
         const val EXTRA_DOWNLOAD_KBPS = "download_kbps"
         const val EXTRA_UPLOAD_KBPS = "upload_kbps"
+        const val EXTRA_ADVANCED = "advanced"
+        const val EXTRA_UP_LATENCY_MS = "up_latency_ms"
+        const val EXTRA_DOWN_LATENCY_MS = "down_latency_ms"
+        const val EXTRA_UP_JITTER_MS = "up_jitter_ms"
+        const val EXTRA_DOWN_JITTER_MS = "down_jitter_ms"
+        const val EXTRA_UP_LOSS_PERCENT = "up_loss_percent"
+        const val EXTRA_DOWN_LOSS_PERCENT = "down_loss_percent"
         private const val CHANNEL_ID = "pakomo_vpn_status"
         private const val NOTIFICATION_ID = 4101
         private const val STATS_INTERVAL_MS = 1_000L

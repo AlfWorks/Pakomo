@@ -76,6 +76,9 @@ class MainActivity : ComponentActivity() {
             scope = state.scope,
             selectedPackages = state.selectedApps.map { it.packageName },
             targetDomains = state.addressDomains,
+            domainsByPackage = state.selectedApps
+                .filter { it.domains.isNotEmpty() }
+                .associate { it.packageName to it.domains },
             rule = state.activeRule,
         )
     }
