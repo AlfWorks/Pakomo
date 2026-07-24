@@ -266,6 +266,89 @@ class Socks5ServerTest {
         }
     }
 
+    @Test
+    fun manyConcurrentLongLivedConnectionsRelayWithoutStalling() {
+        // Multi-connection echo server that keeps echoing on every open connection.
+        val echo = ServerSocket(0, 256, InetAddress.getLoopbackAddress())
+        val acceptor = thread(start = true, isDaemon = true) {
+            while (!echo.isClosed) {
+                val conn = try { echo.accept() } catch (_: Exception) { break }
+                thread(start = true, isDaemon = true) {
+                    val buffer = ByteArray(64)
+                    try {
+                        while (true) {
+                            val n = conn.getInputStream().read(buffer)
+                            if (n < 0) break
+                            conn.getOutputStream().write(buffer, 0, n)
+                            conn.getOutputStream().flush()
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        runCatching { conn.close() }
+                    }
+                }
+            }
+        }
+        val socks = Socks5Server(
+            credentials = SocksCredentials("pakomo", "test-token"),
+            protector = object : SocketProtector {
+                override fun protect(socket: Socket): Boolean = true
+                override fun protect(socket: DatagramSocket): Boolean = true
+            },
+            shaper = TrafficShaper(defaultRules.first { it.id == "normal" }),
+        )
+
+        // 2x the default Dispatchers.IO pool: the old blocking relay (two parked threads per
+        // flow) would exhaust the pool and most of these would never receive their echo.
+        val connectionCount = 128
+        val clients = mutableListOf<Socket>()
+        try {
+            val socksPort = socks.start()
+            repeat(connectionCount) {
+                val client = Socket(InetAddress.getLoopbackAddress(), socksPort)
+                authenticate(client)
+                val port = echo.localPort
+                client.getOutputStream().write(
+                    byteArrayOf(5, 1, 0, 1, 127, 0, 0, 1, (port ushr 8).toByte(), port.toByte()),
+                )
+                client.getOutputStream().flush()
+                val header = client.getInputStream().readExact(4)
+                assertEquals(0, header[1].toInt())
+                val addressSize = if (header[3].toInt() == 1) 4 else 16
+                client.getInputStream().readExact(addressSize + 2)
+                clients.add(client)
+            }
+
+            val errors = java.util.Collections.synchronizedList(mutableListOf<String>())
+            val workers = clients.mapIndexed { index, client ->
+                thread(start = true, isDaemon = true) {
+                    try {
+                        val payload = "msg-$index".toByteArray()
+                        client.getOutputStream().write(payload)
+                        client.getOutputStream().flush()
+                        val echoed = client.getInputStream().readExact(payload.size)
+                        if (!echoed.contentEquals(payload)) errors.add("mismatch @$index")
+                    } catch (error: Exception) {
+                        errors.add("conn $index: ${error.message}")
+                    }
+                }
+            }
+            val deadline = System.currentTimeMillis() + 15_000
+            workers.forEach { worker ->
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining > 0) worker.join(remaining)
+            }
+            val stalled = workers.count { it.isAlive }
+            assertEquals("connections stalled without echo (pool exhaustion): $stalled", 0, stalled)
+            assertTrue("relay errors: ${errors.take(5)}", errors.isEmpty())
+        } finally {
+            clients.forEach { runCatching { it.close() } }
+            socks.close()
+            echo.close()
+            acceptor.join(2_000)
+        }
+    }
+
     private fun openUdpAssociation(control: Socket): InetSocketAddress {
         authenticate(control)
         control.getOutputStream().run {

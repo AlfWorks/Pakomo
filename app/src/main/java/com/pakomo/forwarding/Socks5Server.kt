@@ -14,16 +14,17 @@ import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.channels.DatagramChannel
 import java.nio.channels.ServerSocketChannel
+import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -39,12 +40,14 @@ class Socks5Server(
     private val credentials: SocksCredentials,
     private val protector: SocketProtector,
     private val shaper: TrafficShaper,
-    private val domainRoutingPolicy: DomainRoutingPolicy? = null,
+    private val shapingPolicy: ShapingPolicy = ShapingPolicy { ShapeEverythingShaping("全局", null) },
+    private val expectOriginPreamble: Boolean = false,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeSessions = AtomicInteger(0)
     private var serverChannel: ServerSocketChannel? = null
     private var acceptJob: Job? = null
+    private val relayLoop = NioSelectorLoop()
 
     val port: Int
         get() = serverChannel?.socket()?.localPort ?: 0
@@ -94,6 +97,7 @@ class Socks5Server(
         serverChannel = null
         acceptJob?.cancel()
         acceptJob = null
+        runCatching { relayLoop.close() }
         scope.cancel()
     }
 
@@ -101,6 +105,24 @@ class Socks5Server(
         client.soTimeout = SecurityPolicy.SOCKS_HANDSHAKE_TIMEOUT_MS
         val input = client.getInputStream()
         val output = client.getOutputStream()
+        val origin = if (expectOriginPreamble) {
+            val preamble = runCatching { input.readExact(ConnectionOrigin.PREAMBLE_SIZE) }.getOrNull()
+            if (preamble == null) {
+                Log.w(TAG, "SOCKS origin preamble missing")
+                return
+            }
+            val parsed = ConnectionOrigin.parse(preamble)
+            if (parsed == null) {
+                // A required preamble that fails to parse must not fall back to shaping-all;
+                // reject the session rather than misattributing the connection.
+                Log.w(TAG, "SOCKS origin preamble malformed; rejecting session")
+                return
+            }
+            parsed
+        } else {
+            null
+        }
+        val shaping = shapingPolicy.resolve(origin)
         if (!negotiateAuthentication(input, output)) {
             Log.w(TAG, "SOCKS method negotiation failed")
             return
@@ -115,8 +137,8 @@ class Socks5Server(
             return
         }
         when (request.command) {
-            COMMAND_CONNECT -> handleConnect(client, output, request)
-            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output)
+            COMMAND_CONNECT -> handleConnect(client, output, request, shaping)
+            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping)
             else -> writeReply(output, REPLY_COMMAND_NOT_SUPPORTED, null)
         }
     }
@@ -125,43 +147,46 @@ class Socks5Server(
         client: Socket,
         output: OutputStream,
         request: SocksRequest,
+        shaping: ConnectionShaping,
     ) {
-        if (shouldShape(request.host, request.port) && shaper.blocksAllTraffic()) {
+        val clientChannel = client.channel ?: run {
+            writeReply(output, REPLY_GENERAL_FAILURE, null)
+            return
+        }
+        // When the decision doesn't depend on the host, decide up front (one hit report) and refuse
+        // fast on a full block. Domain-filtered flows decide after sniffing the real host.
+        val nonDomainShape =
+            if (shaping.usesDomainFilter) null else shaping.shouldShape(request.host, request.port)
+        if (nonDomainShape == true && shaper.blocksAllTraffic()) {
             writeReply(output, REPLY_NETWORK_UNREACHABLE, null)
             return
         }
-        val outbound = Socket()
+
+        val outbound = connectOutbound(output, request) ?: return
         try {
-            if (!protector.protect(outbound)) {
-                writeReply(output, REPLY_GENERAL_FAILURE, null)
-                return
-            }
-            try {
-                withContext(Dispatchers.IO) {
-                    outbound.connect(
-                        InetSocketAddress(request.host, request.port),
-                        SecurityPolicy.OUTBOUND_CONNECT_TIMEOUT_MS,
-                    )
-                }
-            } catch (error: Exception) {
-                safeLog("SOCKS TCP connect failed", error)
-                runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
-                return
-            }
+            outbound.socket().tcpNoDelay = true
+            writeReply(output, REPLY_SUCCEEDED, outbound.socket().localSocketAddress as? InetSocketAddress)
+            // Relay is non-blocking from here on: both channels are serviced by the shared reactor.
             client.soTimeout = 0
-            outbound.soTimeout = 0
-            outbound.tcpNoDelay = true
-            writeReply(output, REPLY_SUCCEEDED, outbound.localSocketAddress as? InetSocketAddress)
+            clientChannel.configureBlocking(false)
+            outbound.configureBlocking(false)
+
+            var initialUpload: ByteArray? = null
+            val shapeTraffic = if (nonDomainShape != null) {
+                nonDomainShape
+            } else {
+                // Sniff the real hostname (TLS SNI / HTTP Host) so domain matching works regardless
+                // of how the app resolved the name (DoH / DoT / cached DNS the tunnel can't see).
+                val (peeked, sniffed) = resolveClientHost(clientChannel)
+                initialUpload = peeked
+                shaping.shouldShape(sniffed ?: request.host, request.port)
+            }
+            if (shapeTraffic && shaper.blocksAllTraffic()) return // drop the flow → blocked
+
             try {
-                relay(
-                    client = client,
-                    outbound = outbound,
-                    shapeTraffic = shouldShape(request.host, request.port),
-                )
-            } catch (error: SocketException) {
-                safeLog("SOCKS TCP relay closed", error)
+                relay(clientChannel, outbound, shapeTraffic, initialUpload)
             } catch (error: Exception) {
-                safeLog("SOCKS TCP relay failed", error)
+                safeLog("SOCKS TCP relay closed", error)
             }
         } catch (error: Exception) {
             safeLog("SOCKS TCP session failed", error)
@@ -170,9 +195,67 @@ class Socks5Server(
         }
     }
 
+    private suspend fun connectOutbound(output: OutputStream, request: SocksRequest): SocketChannel? {
+        val outbound = SocketChannel.open()
+        outbound.configureBlocking(true)
+        if (!protector.protect(outbound.socket())) {
+            writeReply(output, REPLY_GENERAL_FAILURE, null)
+            runCatching { outbound.close() }
+            return null
+        }
+        return try {
+            withContext(Dispatchers.IO) {
+                outbound.socket().connect(
+                    InetSocketAddress(request.host, request.port),
+                    SecurityPolicy.OUTBOUND_CONNECT_TIMEOUT_MS,
+                )
+            }
+            outbound
+        } catch (error: Exception) {
+            safeLog("SOCKS TCP connect failed", error)
+            runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
+            runCatching { outbound.close() }
+            null
+        }
+    }
+
+    /**
+     * Reads the first client bytes (up to a bounded size / short timeout) to recover the destination
+     * hostname from the TLS ClientHello SNI or the HTTP Host header. Returns the consumed bytes (which
+     * the caller forwards as the start of the upload stream) and the hostname if found.
+     */
+    private suspend fun resolveClientHost(client: SocketChannel): Pair<ByteArray, String?> {
+        val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
+        var host: String? = null
+        try {
+            while (buffer.position() < buffer.capacity()) {
+                val count = relayLoop.read(client, buffer, PEEK_TIMEOUT_MS)
+                if (count <= 0) break
+                val length = buffer.position()
+                val data = buffer.array()
+                val tlsRecordSize = HostSniffer.tlsRecordSize(data, length)
+                if (tlsRecordSize in 1..buffer.capacity()) {
+                    if (length < tlsRecordSize) continue // keep reading until the record is complete
+                    host = HostSniffer.extract(data, length)
+                    break
+                }
+                if (HostSniffer.looksLikeHttp(data, length)) {
+                    host = HostSniffer.extract(data, length)
+                    if (host != null || String(data, 0, length, Charsets.US_ASCII).contains("\r\n\r\n")) break
+                    continue // keep reading until headers complete
+                }
+                break // neither TLS nor HTTP: nothing to sniff
+            }
+        } catch (_: Exception) {
+            // Timeout or read error (e.g. a server-speaks-first protocol): fall back to the IP.
+        }
+        return buffer.array().copyOf(buffer.position()) to host
+    }
+
     private suspend fun handleUdpAssociate(
         client: Socket,
         controlOutput: OutputStream,
+        shaping: ConnectionShaping,
     ) {
         val controlChannel = checkNotNull(client.channel) {
             "UDP association requires a channel-backed control socket"
@@ -225,23 +308,18 @@ class Socks5Server(
                             requestBuffer.position(),
                         )
                         if (request != null) {
-                            val allowed = if (shouldShape(request.host, request.port)) {
-                                shaper.await(
-                                    shaper.decide(
-                                        TrafficDirection.UPLOAD,
-                                        request.payload.size,
-                                        isDatagram = true,
-                                    ),
+                            val target = InetSocketAddress(request.host, request.port)
+                            if (shaping.shouldShape(request.host, request.port)) {
+                                val decision = shaper.decide(
+                                    TrafficDirection.UPLOAD,
+                                    request.payload.size,
+                                    isDatagram = true,
                                 )
+                                if (!decision.drop) {
+                                    scheduleDatagram(relayChannel, request.payload, target, decision.waitNanos)
+                                }
                             } else {
-                                true
-                            }
-                            if (allowed) {
-                                sendDatagram(
-                                    channel = relayChannel,
-                                    payload = request.payload,
-                                    target = InetSocketAddress(request.host, request.port),
-                                )
+                                sendDatagram(relayChannel, request.payload, target)
                             }
                         }
                     }
@@ -254,27 +332,20 @@ class Socks5Server(
                     handledPacket = true
                     val payload = responseBuffer.array().copyOf(responseBuffer.position())
                     if (source.port == DNS_PORT) {
-                        domainRoutingPolicy?.observeDnsResponse(payload)
+                        shaping.observeDnsResponse(payload)
                     }
-                    val allowed = if (
-                        shouldShape(source.address.hostAddress.orEmpty(), source.port)
-                    ) {
-                        shaper.await(
-                            shaper.decide(
-                                TrafficDirection.DOWNLOAD,
-                                payload.size,
-                                isDatagram = true,
-                            ),
+                    val datagram = buildUdpPacket(source, payload)
+                    if (shaping.shouldShape(source.address.hostAddress.orEmpty(), source.port)) {
+                        val decision = shaper.decide(
+                            TrafficDirection.DOWNLOAD,
+                            payload.size,
+                            isDatagram = true,
                         )
+                        if (!decision.drop) {
+                            scheduleDatagram(localChannel, datagram, target, decision.waitNanos)
+                        }
                     } else {
-                        true
-                    }
-                    if (allowed) {
-                        sendDatagram(
-                            channel = localChannel,
-                            payload = buildUdpPacket(source, payload),
-                            target = target,
-                        )
+                        sendDatagram(localChannel, datagram, target)
                     }
                 }
 
@@ -301,6 +372,23 @@ class Socks5Server(
         val buffer = ByteBuffer.wrap(payload)
         while (buffer.hasRemaining() && channel.send(buffer, target) == 0) {
             delay(UDP_SEND_RETRY_DELAY_MS)
+        }
+    }
+
+    /**
+     * Sends a datagram after its shaping delay without blocking the UDP relay loop. Datagrams are
+     * unordered, so each delayed send runs independently; a slow/late datagram never stalls the
+     * others (the previous inline `await` throttled the whole association to one packet per delay).
+     */
+    private fun scheduleDatagram(
+        channel: DatagramChannel,
+        payload: ByteArray,
+        target: InetSocketAddress,
+        waitNanos: Long,
+    ) {
+        scope.launch {
+            if (waitNanos > 0) delay(waitNanos / NANOS_PER_MILLISECOND)
+            runCatching { sendDatagram(channel, payload, target) }
         }
     }
 
@@ -350,25 +438,28 @@ class Socks5Server(
     }
 
     private suspend fun relay(
-        client: Socket,
-        outbound: Socket,
+        client: SocketChannel,
+        outbound: SocketChannel,
         shapeTraffic: Boolean,
+        initialUpload: ByteArray?,
     ) = coroutineScope {
         val upload = launch {
-            copyShaped(
-                input = client.getInputStream(),
-                output = outbound.getOutputStream(),
+            pump(
+                from = client,
+                to = outbound,
                 direction = TrafficDirection.UPLOAD,
                 shapeTraffic = shapeTraffic,
+                initial = initialUpload,
             )
             runCatching { outbound.shutdownOutput() }
         }
         val download = launch {
-            copyShaped(
-                input = outbound.getInputStream(),
-                output = client.getOutputStream(),
+            pump(
+                from = outbound,
+                to = client,
                 direction = TrafficDirection.DOWNLOAD,
                 shapeTraffic = shapeTraffic,
+                initial = null,
             )
             runCatching { client.shutdownOutput() }
         }
@@ -376,33 +467,79 @@ class Socks5Server(
         download.join()
     }
 
-    private suspend fun copyShaped(
-        input: InputStream,
-        output: OutputStream,
+    private suspend fun pump(
+        from: SocketChannel,
+        to: SocketChannel,
         direction: TrafficDirection,
         shapeTraffic: Boolean,
+        initial: ByteArray?,
     ) {
-        val buffer = ByteArray(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
+        if (shapeTraffic) shapedPump(from, to, direction, initial) else copyDirect(from, to, initial)
+    }
+
+    /** Straight non-blocking copy for a direction that is not being shaped. */
+    private suspend fun copyDirect(from: SocketChannel, to: SocketChannel, initial: ByteArray?) {
+        if (initial != null && initial.isNotEmpty()) {
+            relayLoop.writeFully(to, ByteBuffer.wrap(initial), RELAY_WRITE_TIMEOUT_MS)
+        }
+        val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
         while (true) {
-            val count = withContext(Dispatchers.IO) { input.read(buffer) }
-            if (count <= 0) break
-            if (shapeTraffic) {
-                val decision = shaper.decide(
-                    direction = direction,
-                    byteCount = count,
-                    isDatagram = false,
-                )
-                if (!shaper.await(decision)) break
-            }
-            withContext(Dispatchers.IO) {
-                output.write(buffer, 0, count)
-                output.flush()
-            }
+            buffer.clear()
+            val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
+            if (count < 0) break
+            if (count == 0) continue
+            buffer.flip()
+            relayLoop.writeFully(to, buffer, RELAY_WRITE_TIMEOUT_MS)
         }
     }
 
-    private fun shouldShape(host: String, port: Int): Boolean =
-        domainRoutingPolicy?.shouldShape(host, port) ?: true
+    /**
+     * Shaped copy for one direction. Reading is decoupled from the configured delay: the reader
+     * makes the loss decision, stamps each chunk with an absolute release time, and hands it to a
+     * bounded queue, then immediately reads the next chunk. A separate writer releases chunks in
+     * arrival order (preserving the TCP byte stream) once their release time is reached. This keeps
+     * the delay a constant added latency instead of a per-chunk serial wait that would throttle the
+     * flow to ~1 chunk per delay and back up the queue.
+     */
+    private suspend fun shapedPump(
+        from: SocketChannel,
+        to: SocketChannel,
+        direction: TrafficDirection,
+        initial: ByteArray?,
+    ) = coroutineScope {
+        val queue = Channel<DelayedChunk>(capacity = SHAPED_QUEUE_CAPACITY)
+        val writer = launch {
+            for (chunk in queue) {
+                val waitNanos = chunk.releaseNanos - System.nanoTime()
+                if (waitNanos > 0) delay(waitNanos / NANOS_PER_MILLISECOND)
+                relayLoop.writeFully(to, ByteBuffer.wrap(chunk.bytes), RELAY_WRITE_TIMEOUT_MS)
+            }
+        }
+        val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
+        try {
+            if (initial != null && initial.isNotEmpty()) {
+                val decision = shaper.decide(direction, initial.size, isDatagram = false)
+                if (!decision.drop) {
+                    queue.send(DelayedChunk(initial, System.nanoTime() + decision.waitNanos))
+                }
+            }
+            while (true) {
+                buffer.clear()
+                val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
+                if (count < 0) break
+                if (count == 0) continue
+                val decision = shaper.decide(direction, count, isDatagram = false)
+                if (decision.drop) continue
+                val bytes = ByteArray(count)
+                buffer.flip()
+                buffer.get(bytes)
+                queue.send(DelayedChunk(bytes, System.nanoTime() + decision.waitNanos))
+            }
+        } finally {
+            queue.close()
+        }
+        writer.join()
+    }
 
     private fun writeReply(
         output: OutputStream,
@@ -540,6 +677,9 @@ class Socks5Server(
         val payload: ByteArray,
     )
 
+    /** A shaped chunk awaiting its absolute release time in the pipelined TCP relay. */
+    private class DelayedChunk(val bytes: ByteArray, val releaseNanos: Long)
+
     private companion object {
         const val VERSION_SOCKS5 = 5
         const val VERSION_USER_PASS = 1
@@ -557,6 +697,17 @@ class Socks5Server(
         const val DNS_PORT = 53
         const val UDP_POLL_INTERVAL_MS = 5L
         const val UDP_SEND_RETRY_DELAY_MS = 1L
+        // Idle long-lived TCP flows are cheap now (a suspended coroutine), so the read idle
+        // timeout is generous and only reclaims truly dead connections.
+        const val RELAY_IDLE_TIMEOUT_MS = 300_000L
+        const val RELAY_WRITE_TIMEOUT_MS = 60_000L
+        // Short bound on how long domain-filtered flows wait for the client's first bytes (SNI/Host)
+        // before falling back to the destination IP; keeps server-speaks-first protocols responsive.
+        const val PEEK_TIMEOUT_MS = 1_000L
+        const val NANOS_PER_MILLISECOND = 1_000_000L
+        // Bounds in-flight shaped chunks (~one delay-window of data); provides backpressure so a
+        // bandwidth limit slows the reader instead of buffering unboundedly.
+        const val SHAPED_QUEUE_CAPACITY = 128
         const val TAG = "PakomoSocks"
     }
 }
