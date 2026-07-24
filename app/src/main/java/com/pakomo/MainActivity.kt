@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (it.resultCode == RESULT_OK) startSafeValidation()
+            if (it.resultCode == RESULT_OK) startVpn()
         }
 
     private val notificationPermissionLauncher =
@@ -63,18 +63,19 @@ class MainActivity : ComponentActivity() {
     private fun requestVpnPermission() {
         val permissionIntent: Intent? = VpnService.prepare(this)
         if (permissionIntent == null) {
-            startSafeValidation()
+            startVpn()
         } else {
             vpnPermissionLauncher.launch(permissionIntent)
         }
     }
 
-    private fun startSafeValidation() {
+    private fun startVpn() {
         val state = viewModel.state.value
         VpnServiceController.start(
             context = this,
             scope = state.scope,
             selectedPackages = state.selectedApps.map { it.packageName },
+            targetDomains = state.addressDomains,
             rule = state.activeRule,
         )
     }

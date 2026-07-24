@@ -286,7 +286,6 @@ private fun ServiceStatusCard(
                     text = when (stage) {
                         EngineStage.STOPPED -> "服务已停止"
                         EngineStage.STARTING -> "正在启动"
-                        EngineStage.SAFE_VALIDATION -> "安全验证模式"
                         EngineStage.FORWARDING -> "弱网模拟运行中"
                         EngineStage.ERROR -> "启动失败"
                     },
@@ -299,7 +298,6 @@ private fun ServiceStatusCard(
                     text = when (stage) {
                         EngineStage.STOPPED -> "开启后申请系统 VPN 权限"
                         EngineStage.STARTING -> state.engineMessage ?: "正在建立本地转发链路"
-                        EngineStage.SAFE_VALIDATION -> "未注册流量路由，不影响当前网络"
                         EngineStage.FORWARDING ->
                             "↑${state.stats.uploadBytesPerSecond}  ↓${state.stats.downloadBytesPerSecond} B/s"
                         EngineStage.ERROR -> state.engineMessage ?: "请打开诊断页查看原因"

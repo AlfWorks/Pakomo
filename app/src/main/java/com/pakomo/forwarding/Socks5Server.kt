@@ -37,6 +37,7 @@ class Socks5Server(
     private val credentials: SocksCredentials,
     private val protector: SocketProtector,
     private val shaper: TrafficShaper,
+    private val domainRoutingPolicy: DomainRoutingPolicy? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeSessions = AtomicInteger(0)
@@ -124,7 +125,11 @@ class Socks5Server(
             outbound.soTimeout = 0
             outbound.tcpNoDelay = true
             writeReply(output, REPLY_SUCCEEDED, outbound.localSocketAddress as? InetSocketAddress)
-            relay(client, outbound)
+            relay(
+                client = client,
+                outbound = outbound,
+                shapeTraffic = shouldShape(request.host, request.port),
+            )
         } catch (_: Exception) {
             runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
         } finally {
@@ -169,12 +174,14 @@ class Socks5Server(
                     clientEndpoint.compareAndSet(null, sender)
                     if (sender != clientEndpoint.get()) continue
                     val request = parseUdpPacket(packetBuffer, packet.length) ?: continue
-                    val decision = shaper.decide(
-                        TrafficDirection.UPLOAD,
-                        request.payload.size,
-                        isDatagram = true,
-                    )
-                    if (!shaper.await(decision)) continue
+                    if (shouldShape(request.host, request.port)) {
+                        val decision = shaper.decide(
+                            TrafficDirection.UPLOAD,
+                            request.payload.size,
+                            isDatagram = true,
+                        )
+                        if (!shaper.await(decision)) continue
+                    }
                     relaySocket.send(
                         DatagramPacket(
                             request.payload,
@@ -196,14 +203,20 @@ class Socks5Server(
                     relaySocket.receive(response)
                     val target = clientEndpoint.get() ?: continue
                     val payload = responseBuffer.copyOf(response.length)
-                    val decision = shaper.decide(
-                        TrafficDirection.DOWNLOAD,
-                        payload.size,
-                        isDatagram = true,
-                    )
-                    if (!shaper.await(decision)) continue
+                    val source = response.socketAddress as InetSocketAddress
+                    if (source.port == DNS_PORT) {
+                        domainRoutingPolicy?.observeDnsResponse(payload)
+                    }
+                    if (shouldShape(source.address.hostAddress.orEmpty(), source.port)) {
+                        val decision = shaper.decide(
+                            TrafficDirection.DOWNLOAD,
+                            payload.size,
+                            isDatagram = true,
+                        )
+                        if (!shaper.await(decision)) continue
+                    }
                     val wrapped = buildUdpPacket(
-                        source = response.socketAddress as InetSocketAddress,
+                        source = source,
                         payload = payload,
                     )
                     localSocket.send(DatagramPacket(wrapped, wrapped.size, target))
@@ -272,12 +285,17 @@ class Socks5Server(
         return SocksRequest(command, host, port)
     }
 
-    private suspend fun relay(client: Socket, outbound: Socket) = coroutineScope {
+    private suspend fun relay(
+        client: Socket,
+        outbound: Socket,
+        shapeTraffic: Boolean,
+    ) = coroutineScope {
         val upload = launch {
             copyShaped(
                 input = client.getInputStream(),
                 output = outbound.getOutputStream(),
                 direction = TrafficDirection.UPLOAD,
+                shapeTraffic = shapeTraffic,
             )
             runCatching { outbound.shutdownOutput() }
         }
@@ -286,6 +304,7 @@ class Socks5Server(
                 input = outbound.getInputStream(),
                 output = client.getOutputStream(),
                 direction = TrafficDirection.DOWNLOAD,
+                shapeTraffic = shapeTraffic,
             )
             runCatching { client.shutdownOutput() }
         }
@@ -297,23 +316,29 @@ class Socks5Server(
         input: InputStream,
         output: OutputStream,
         direction: TrafficDirection,
+        shapeTraffic: Boolean,
     ) {
         val buffer = ByteArray(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
         while (true) {
             val count = withContext(Dispatchers.IO) { input.read(buffer) }
             if (count <= 0) break
-            val decision = shaper.decide(
-                direction = direction,
-                byteCount = count,
-                isDatagram = false,
-            )
-            if (!shaper.await(decision)) break
+            if (shapeTraffic) {
+                val decision = shaper.decide(
+                    direction = direction,
+                    byteCount = count,
+                    isDatagram = false,
+                )
+                if (!shaper.await(decision)) break
+            }
             withContext(Dispatchers.IO) {
                 output.write(buffer, 0, count)
                 output.flush()
             }
         }
     }
+
+    private fun shouldShape(host: String, port: Int): Boolean =
+        domainRoutingPolicy?.shouldShape(host, port) ?: true
 
     private fun writeReply(
         output: OutputStream,
@@ -454,5 +479,6 @@ class Socks5Server(
         const val REPLY_GENERAL_FAILURE = 1
         const val REPLY_HOST_UNREACHABLE = 4
         const val REPLY_COMMAND_NOT_SUPPORTED = 7
+        const val DNS_PORT = 53
     }
 }

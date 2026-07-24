@@ -15,6 +15,7 @@ import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.TargetScope
 import com.pakomo.forwarding.SocketProtector
+import com.pakomo.forwarding.DomainRoutingPolicy
 import com.pakomo.forwarding.Socks5Server
 import com.pakomo.forwarding.SocksCredentials
 import com.pakomo.security.SecurityPolicy
@@ -57,15 +58,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
             ACTION_START -> {
                 terminalError = null
                 val packages = intent.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES).orEmpty()
+                val targetDomains = intent.getStringArrayListExtra(EXTRA_TARGET_DOMAINS).orEmpty()
                 val scope = intent.readScope()
                 val rule = intent.readRule()
                 VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
                 startForeground(NOTIFICATION_ID, buildNotification("正在启动本地转发"))
-                if (scope == TargetScope.ADDRESSES) {
-                    startSafeValidation(packages)
-                } else {
-                    startForwarding(scope, packages, rule)
-                }
+                startForwarding(scope, packages, targetDomains, rule)
             }
         }
         return START_NOT_STICKY
@@ -88,11 +86,16 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private fun startForwarding(
         scope: TargetScope,
         allowedPackages: List<String>,
+        targetDomains: List<String>,
         rule: NetworkRule,
     ) {
         stopPipeline()
         if (scope == TargetScope.APPLICATIONS && allowedPackages.isEmpty()) {
             stopWithError("请先选择至少一个应用")
+            return
+        }
+        if (scope == TargetScope.ADDRESSES && targetDomains.isEmpty()) {
+            stopWithError("请先添加至少一个域名")
             return
         }
         try {
@@ -102,6 +105,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     UUID.randomUUID().toString().replace("-", ""),
             )
             val shaper = TrafficShaper(rule)
+            val domainPolicy = if (scope == TargetScope.ADDRESSES) {
+                DomainRoutingPolicy(targetDomains)
+            } else {
+                null
+            }
             val localSocks = Socks5Server(
                 credentials = credentials,
                 protector = object : SocketProtector {
@@ -112,6 +120,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                         this@WeakNetworkVpnService.protect(socket)
                 },
                 shaper = shaper,
+                domainRoutingPolicy = domainPolicy,
             )
             val socksPort = localSocks.start()
             socksServer = localSocks
@@ -135,30 +144,6 @@ class WeakNetworkVpnService : android.net.VpnService() {
             Log.e(TAG, "Failed to start local forwarding", error)
             stopWithError(error.toUserMessage())
         }
-    }
-
-    private fun startSafeValidation(allowedPackages: List<String>) {
-        stopPipeline()
-        val builder = Builder()
-            .setSession("Pakomo 安全验证")
-            .setMtu(SecurityPolicy.DEFAULT_MTU)
-            .addAddress(SecurityPolicy.VALIDATION_TUN_ADDRESS, 32)
-            .setBlocking(false)
-
-        allowedPackages
-            .distinct()
-            .take(SecurityPolicy.MAX_SELECTED_APPLICATIONS)
-            .forEach { packageName ->
-                runCatching { builder.addAllowedApplication(packageName) }
-            }
-
-        tunnelInterface = builder.establish()
-        if (tunnelInterface == null) {
-            stopValidation()
-            return
-        }
-        VpnServiceController.publish(EngineStage.SAFE_VALIDATION)
-        updateNotification("指定地址模式尚未接入域名识别，当前不接管流量")
     }
 
     private fun stopValidation() {
@@ -313,6 +298,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val ACTION_START = "com.pakomo.action.START"
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val EXTRA_ALLOWED_PACKAGES = "allowed_packages"
+        const val EXTRA_TARGET_DOMAINS = "target_domains"
         const val EXTRA_SCOPE = "scope"
         const val EXTRA_RULE_ID = "rule_id"
         const val EXTRA_RULE_NAME = "rule_name"

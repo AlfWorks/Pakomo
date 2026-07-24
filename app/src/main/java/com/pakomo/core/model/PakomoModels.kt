@@ -47,7 +47,6 @@ data class RuntimeStats(
 enum class EngineStage(val isActive: Boolean) {
     STOPPED(false),
     STARTING(true),
-    SAFE_VALIDATION(true),
     FORWARDING(true),
     ERROR(false),
 }

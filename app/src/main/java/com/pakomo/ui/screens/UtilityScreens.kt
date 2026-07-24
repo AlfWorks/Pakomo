@@ -68,7 +68,6 @@ fun DiagnosticsScreen(
                     when (state.engineStage) {
                         EngineStage.STOPPED -> "已停止"
                         EngineStage.STARTING -> "正在启动"
-                        EngineStage.SAFE_VALIDATION -> "安全验证模式"
                         EngineStage.FORWARDING -> "弱网模拟运行中"
                         EngineStage.ERROR -> "启动失败"
                     },

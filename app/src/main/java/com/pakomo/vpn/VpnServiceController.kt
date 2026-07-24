@@ -20,6 +20,7 @@ object VpnServiceController {
         context: Context,
         scope: TargetScope,
         selectedPackages: List<String>,
+        targetDomains: List<String>,
         rule: NetworkRule,
     ) {
         val intent = Intent(context, WeakNetworkVpnService::class.java)
@@ -35,6 +36,10 @@ object VpnServiceController {
             .putStringArrayListExtra(
                 WeakNetworkVpnService.EXTRA_ALLOWED_PACKAGES,
                 ArrayList(selectedPackages),
+            )
+            .putStringArrayListExtra(
+                WeakNetworkVpnService.EXTRA_TARGET_DOMAINS,
+                ArrayList(targetDomains),
             )
         ContextCompat.startForegroundService(context, intent)
     }
