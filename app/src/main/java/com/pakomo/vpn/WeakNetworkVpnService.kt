@@ -211,7 +211,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     ),
                     nowNanos = SystemClock.elapsedRealtimeNanos(),
                     activeConnections = localSocks.activeSessionCount(),
-                    droppedPackets = shaper.droppedCount(),
+                    droppedTransfers = shaper.droppedCount(),
                     delayedTransfers = shaper.delayedCount(),
                 )
                 VpnServiceController.publishStats(stats)

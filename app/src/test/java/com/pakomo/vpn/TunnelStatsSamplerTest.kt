@@ -12,22 +12,22 @@ class TunnelStatsSamplerTest {
             counters = TunnelCounters(10, 1_000, 20, 2_000),
             nowNanos = 1_000_000_000,
             activeConnections = 1,
-            droppedPackets = 2,
+            droppedTransfers = 2,
             delayedTransfers = 3,
         )
         val result = sampler.sample(
             counters = TunnelCounters(12, 2_000, 24, 4_000),
             nowNanos = 1_500_000_000,
             activeConnections = 2,
-            droppedPackets = 4,
+            droppedTransfers = 4,
             delayedTransfers = 5,
         )
 
         assertEquals(2_000, result.uploadBytesPerSecond)
         assertEquals(4_000, result.downloadBytesPerSecond)
         assertEquals(2, result.activeConnections)
-        assertEquals(4, result.droppedPackets)
-        assertEquals(5, result.delayedPackets)
+        assertEquals(4, result.droppedTransfers)
+        assertEquals(5, result.delayedTransfers)
     }
 
     @Test
@@ -37,7 +37,7 @@ class TunnelStatsSamplerTest {
             counters = TunnelCounters(10, 10_000, 10, 10_000),
             nowNanos = 1_000_000_000,
             activeConnections = 0,
-            droppedPackets = 0,
+            droppedTransfers = 0,
             delayedTransfers = 0,
         )
 
@@ -45,7 +45,7 @@ class TunnelStatsSamplerTest {
             counters = TunnelCounters(0, 0, 0, 0),
             nowNanos = 2_000_000_000,
             activeConnections = 0,
-            droppedPackets = 0,
+            droppedTransfers = 0,
             delayedTransfers = 0,
         )
 

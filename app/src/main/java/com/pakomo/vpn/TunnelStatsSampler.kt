@@ -16,7 +16,7 @@ class TunnelStatsSampler {
         counters: TunnelCounters,
         nowNanos: Long,
         activeConnections: Int,
-        droppedPackets: Long,
+        droppedTransfers: Long,
         delayedTransfers: Long,
     ): RuntimeStats {
         val current = Sample(counters, nowNanos)
@@ -25,8 +25,8 @@ class TunnelStatsSampler {
         if (last == null || nowNanos <= last.nowNanos) {
             return RuntimeStats(
                 activeConnections = activeConnections,
-                droppedPackets = droppedPackets,
-                delayedPackets = delayedTransfers,
+                droppedTransfers = droppedTransfers,
+                delayedTransfers = delayedTransfers,
             )
         }
 
@@ -43,8 +43,8 @@ class TunnelStatsSampler {
                 elapsedNanos = elapsedNanos,
             ),
             activeConnections = activeConnections,
-            droppedPackets = droppedPackets,
-            delayedPackets = delayedTransfers,
+            droppedTransfers = droppedTransfers,
+            delayedTransfers = delayedTransfers,
         )
     }
 

@@ -172,10 +172,6 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun setDiagnosticMode(enabled: Boolean) {
-        _state.update { it.copy(diagnosticMode = enabled) }
-    }
-
     fun clearLocalData() {
         preferences.clear()
         _state.value = PakomoUiState()

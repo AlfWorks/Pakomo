@@ -156,8 +156,13 @@ fun HomeScreen(
         NavigationRow(
             icon = Icons.Rounded.BugReport,
             title = "诊断",
-            subtitle = "实时统计与本地诊断日志",
-            value = if (state.diagnosticMode) "已开启" else "已关闭",
+            subtitle = "实时统计与本地链路状态",
+            value = if (state.engineStage == EngineStage.FORWARDING) "实时" else "可用",
+            valueColor = if (state.engineStage == EngineStage.FORWARDING) {
+                Accent
+            } else {
+                OnSurfaceVariant
+            },
             onClick = onOpenDiagnostics,
         )
         Hairline()

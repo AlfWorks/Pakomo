@@ -43,12 +43,12 @@ import com.pakomo.ui.theme.Danger
 import com.pakomo.ui.theme.Muted
 import com.pakomo.ui.theme.OnSurface
 import com.pakomo.ui.theme.OnSurfaceVariant
+import java.util.Locale
 
 @Composable
 fun DiagnosticsScreen(
     state: PakomoUiState,
     onBack: () -> Unit,
-    onDiagnosticModeChange: (Boolean) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -80,24 +80,21 @@ fun DiagnosticsScreen(
                 state.engineMessage?.let { message ->
                     InfoRow("链路状态", message)
                 }
+                InfoRow("上行速率", formatRate(state.stats.uploadBytesPerSecond))
+                InfoRow("下行速率", formatRate(state.stats.downloadBytesPerSecond))
                 InfoRow("活跃连接", state.stats.activeConnections.toString())
-                InfoRow("已丢弃数据包", state.stats.droppedPackets.toString())
-                InfoRow("延迟队列", state.stats.delayedPackets.toString())
+                InfoRow("主动丢弃次数", state.stats.droppedTransfers.toString())
+                InfoRow("延迟处理次数", state.stats.delayedTransfers.toString())
             }
 
-            SectionLabel("本地诊断")
+            SectionLabel("统计说明")
             InfoCard {
-                SettingSwitchRow(
-                    title = "诊断模式",
-                    subtitle = "仅记录错误码、规则命中和性能统计，不记录流量内容",
-                    checked = state.diagnosticMode,
-                    onCheckedChange = onDiagnosticModeChange,
-                )
-                InfoRow("日志占用", "0 B")
-                InfoRow("自动关闭", "应用重启后")
+                InfoRow("数据来源", "本地转发链路")
+                InfoRow("流量内容", "不记录")
+                InfoRow("统计保留", "服务停止后清零")
             }
             Text(
-                text = "统计来自设备本地转发链路；未产生目标流量时数值为 0。诊断不会记录流量内容。",
+                text = "主动丢弃和延迟处理是当前规则的累计执行次数；未产生目标流量时数值为 0。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Muted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -165,7 +162,7 @@ fun SecurityScreen(
                 InfoRow("遥测与上报", "无", Accent)
                 InfoRow("广告 SDK", "无", Accent)
                 InfoRow("流量内容记录", "无", Accent)
-                InfoRow("诊断日志", if (state.diagnosticMode) "已开启" else "已关闭")
+                InfoRow("运行统计", "仅保存在内存")
                 InfoRow("云端备份", "已禁用")
             }
             SectionLabel("当前权限")
@@ -215,6 +212,20 @@ fun SecurityScreen(
             },
         )
     }
+}
+
+private fun formatRate(bytesPerSecond: Long): String = when {
+    bytesPerSecond >= 1_000_000 -> String.format(
+        Locale.US,
+        "%.1f MB/s",
+        bytesPerSecond / 1_000_000.0,
+    )
+    bytesPerSecond >= 1_000 -> String.format(
+        Locale.US,
+        "%.1f KB/s",
+        bytesPerSecond / 1_000.0,
+    )
+    else -> "$bytesPerSecond B/s"
 }
 
 @Composable

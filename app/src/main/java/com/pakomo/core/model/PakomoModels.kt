@@ -40,8 +40,8 @@ data class RuntimeStats(
     val uploadBytesPerSecond: Long = 0,
     val downloadBytesPerSecond: Long = 0,
     val activeConnections: Int = 0,
-    val droppedPackets: Long = 0,
-    val delayedPackets: Long = 0,
+    val droppedTransfers: Long = 0,
+    val delayedTransfers: Long = 0,
 )
 
 enum class EngineStage(val isActive: Boolean) {
@@ -69,7 +69,6 @@ data class PakomoUiState(
     val stats: RuntimeStats = RuntimeStats(),
     val engineStage: EngineStage = EngineStage.STOPPED,
     val engineMessage: String? = null,
-    val diagnosticMode: Boolean = false,
 ) {
     val activeRule: NetworkRule
         get() = rules.first { it.id == activeRuleId }

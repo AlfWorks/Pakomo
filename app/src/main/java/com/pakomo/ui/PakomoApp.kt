@@ -109,7 +109,6 @@ fun PakomoApp(
             Screen.Diagnostics -> DiagnosticsScreen(
                 state = state,
                 onBack = goBack,
-                onDiagnosticModeChange = viewModel::setDiagnosticMode,
             )
 
             Screen.Settings -> SettingsScreen(
