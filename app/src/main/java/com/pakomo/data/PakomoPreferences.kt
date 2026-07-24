@@ -79,6 +79,13 @@ class PakomoPreferences(context: Context) {
                     downloadKbps = item.optIntOrNull("downloadKbps"),
                     uploadKbps = item.optIntOrNull("uploadKbps"),
                     isSystem = item.optBoolean("isSystem", false),
+                    advanced = item.optBoolean("advanced", false),
+                    uploadLatencyMs = item.optInt("uploadLatencyMs", 0),
+                    downloadLatencyMs = item.optInt("downloadLatencyMs", 0),
+                    uploadJitterMs = item.optInt("uploadJitterMs", 0),
+                    downloadJitterMs = item.optInt("downloadJitterMs", 0),
+                    uploadLossPercent = item.optInt("uploadLossPercent", 0),
+                    downloadLossPercent = item.optInt("downloadLossPercent", 0),
                 )
             }
         }.getOrDefault(defaultRules)
@@ -96,7 +103,14 @@ class PakomoPreferences(context: Context) {
                     .put("packetLossPercent", rule.packetLossPercent)
                     .put("downloadKbps", rule.downloadKbps ?: JSONObject.NULL)
                     .put("uploadKbps", rule.uploadKbps ?: JSONObject.NULL)
-                    .put("isSystem", rule.isSystem),
+                    .put("isSystem", rule.isSystem)
+                    .put("advanced", rule.advanced)
+                    .put("uploadLatencyMs", rule.uploadLatencyMs)
+                    .put("downloadLatencyMs", rule.downloadLatencyMs)
+                    .put("uploadJitterMs", rule.uploadJitterMs)
+                    .put("downloadJitterMs", rule.downloadJitterMs)
+                    .put("uploadLossPercent", rule.uploadLossPercent)
+                    .put("downloadLossPercent", rule.downloadLossPercent),
             )
         }
         preferences.edit { putString(KEY_RULES, array.toString()) }

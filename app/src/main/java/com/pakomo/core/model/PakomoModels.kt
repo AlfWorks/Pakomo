@@ -15,6 +15,13 @@ data class InstalledApp(
     val domains: List<String>,
     val isExpanded: Boolean = false,
 )
+/**
+ * Weak-network parameters. In simple mode the [latencyMs] / [jitterMs] / [packetLossPercent]
+ * values describe the whole (round-trip) effect and are split evenly across upload and download by
+ * the shaper, so the configured value is what the connection actually experiences. In advanced mode
+ * ([advanced] == true) the per-direction fields are authoritative and set independently. Bandwidth
+ * is already per-direction.
+ */
 data class NetworkRule(
     val id: String,
     val name: String,
@@ -24,16 +31,33 @@ data class NetworkRule(
     val downloadKbps: Int?,
     val uploadKbps: Int?,
     val isSystem: Boolean = true,
+    val advanced: Boolean = false,
+    val uploadLatencyMs: Int = 0,
+    val downloadLatencyMs: Int = 0,
+    val uploadJitterMs: Int = 0,
+    val downloadJitterMs: Int = 0,
+    val uploadLossPercent: Int = 0,
+    val downloadLossPercent: Int = 0,
 ) {
     val summary: String
-        get() = buildList {
-            add("${latencyMs}ms")
-            if (jitterMs > 0) add("抖动 ${jitterMs}ms")
-            add("丢包 $packetLossPercent%")
-            if (downloadKbps != null || uploadKbps != null) {
-                add("${downloadKbps ?: "∞"}/${uploadKbps ?: "∞"} Kbps")
-            }
-        }.joinToString(" · ")
+        get() = if (advanced) {
+            buildList {
+                add("↑${uploadLatencyMs} ↓${downloadLatencyMs}ms")
+                add("丢包 ↑${uploadLossPercent}% ↓${downloadLossPercent}%")
+                if (downloadKbps != null || uploadKbps != null) {
+                    add("${downloadKbps ?: "∞"}/${uploadKbps ?: "∞"} Kbps")
+                }
+            }.joinToString(" · ")
+        } else {
+            buildList {
+                add("${latencyMs}ms")
+                if (jitterMs > 0) add("抖动 ${jitterMs}ms")
+                add("丢包 $packetLossPercent%")
+                if (downloadKbps != null || uploadKbps != null) {
+                    add("${downloadKbps ?: "∞"}/${uploadKbps ?: "∞"} Kbps")
+                }
+            }.joinToString(" · ")
+        }
 }
 
 data class RuntimeStats(
@@ -42,6 +66,21 @@ data class RuntimeStats(
     val activeConnections: Int = 0,
     val droppedTransfers: Long = 0,
     val delayedTransfers: Long = 0,
+    val activeScopeLabel: String? = null,
+    val recentHits: List<ScopeHit> = emptyList(),
+    val attributionAttempts: Long = 0,
+    val attributionMisses: Long = 0,
+    val uptimeMs: Long = 0,
+)
+
+/** A single traffic decision surfaced on the diagnostics screen. */
+data class ScopeHit(
+    val scopeLabel: String,
+    val appLabel: String?,
+    val packageName: String?,
+    val host: String,
+    val attributed: Boolean,
+    val shaped: Boolean,
 )
 
 enum class EngineStage(val isActive: Boolean) {
