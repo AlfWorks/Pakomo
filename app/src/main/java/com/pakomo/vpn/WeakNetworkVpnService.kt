@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -23,6 +25,7 @@ import com.pakomo.shaping.TrafficShaper
 import hev.htproxy.TProxyService
 import java.io.File
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.Socket
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +102,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             return
         }
         try {
+            val underlyingNetwork = readUnderlyingNetwork()
             val credentials = SocksCredentials(
                 username = "pakomo_${UUID.randomUUID().toString().replace("-", "")}",
                 password = UUID.randomUUID().toString().replace("-", "") +
@@ -113,11 +117,25 @@ class WeakNetworkVpnService : android.net.VpnService() {
             val localSocks = Socks5Server(
                 credentials = credentials,
                 protector = object : SocketProtector {
-                    override fun protect(socket: Socket): Boolean =
-                        this@WeakNetworkVpnService.protect(socket)
+                    override fun protect(socket: Socket): Boolean {
+                        return runCatching {
+                            underlyingNetwork.network.bindSocket(socket)
+                            true
+                        }.getOrElse {
+                            Log.w(TAG, "Unable to bind TCP socket to underlying network", it)
+                            false
+                        }
+                    }
 
-                    override fun protect(socket: DatagramSocket): Boolean =
-                        this@WeakNetworkVpnService.protect(socket)
+                    override fun protect(socket: DatagramSocket): Boolean {
+                        return runCatching {
+                            underlyingNetwork.network.bindSocket(socket)
+                            true
+                        }.getOrElse {
+                            Log.w(TAG, "Unable to bind UDP socket to underlying network", it)
+                            false
+                        }
+                    }
                 },
                 shaper = shaper,
                 domainRoutingPolicy = domainPolicy,
@@ -125,9 +143,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
             val socksPort = localSocks.start()
             socksServer = localSocks
 
-            val builder = baseBuilder(allowedPackages, applyAllowedApps = scope == TargetScope.APPLICATIONS)
+            val builder = baseBuilder(
+                allowedPackages = allowedPackages,
+                applyAllowedApps = scope == TargetScope.APPLICATIONS,
+                underlyingNetwork = underlyingNetwork,
+            )
                 .addRoute("0.0.0.0", 0)
-                .setBlocking(true)
+                .setBlocking(false)
             tunnelInterface = builder.establish()
                 ?: error("Android rejected the VPN interface")
 
@@ -215,12 +237,15 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private fun baseBuilder(
         allowedPackages: List<String>,
         applyAllowedApps: Boolean,
+        underlyingNetwork: UnderlyingNetwork,
     ): Builder {
         val builder = Builder()
             .setSession("Pakomo 本地弱网")
             .setMtu(SecurityPolicy.DEFAULT_MTU)
             .addAddress(SecurityPolicy.VALIDATION_TUN_ADDRESS, 32)
             .setMetered(false)
+            .setUnderlyingNetworks(arrayOf(underlyingNetwork.network))
+        underlyingNetwork.dnsServers.forEach(builder::addDnsServer)
         if (applyAllowedApps) {
             allowedPackages
                 .distinct()
@@ -228,8 +253,24 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 .forEach { packageName ->
                     runCatching { builder.addAllowedApplication(packageName) }
                 }
+        } else {
+            builder.addDisallowedApplication(packageName)
         }
         return builder
+    }
+
+    private fun readUnderlyingNetwork(): UnderlyingNetwork {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val network = connectivity.activeNetwork
+            ?: error("当前没有可用的底层网络")
+        val dnsServers = connectivity.getLinkProperties(network)
+            ?.dnsServers
+            .orEmpty()
+            .filterIsInstance<Inet4Address>()
+        if (dnsServers.isEmpty()) {
+            error("底层网络没有可用的 IPv4 DNS")
+        }
+        return UnderlyingNetwork(network, dnsServers)
     }
 
     private fun createNotificationChannel() {
@@ -293,6 +334,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
             isSystem = false,
         )
     }
+
+    private data class UnderlyingNetwork(
+        val network: Network,
+        val dnsServers: List<Inet4Address>,
+    )
 
     companion object {
         const val ACTION_START = "com.pakomo.action.START"

@@ -31,7 +31,7 @@ object HevTunnelConfig {
               connect-timeout: ${SecurityPolicy.OUTBOUND_CONNECT_TIMEOUT_MS}
               tcp-read-write-timeout: 300000
               udp-read-write-timeout: 60000
-              log-file: null
+              log-file: stderr
               log-level: warn
         """.trimIndent()
         return File(directory, "hev-pakomo.yml").apply {

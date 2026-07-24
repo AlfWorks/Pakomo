@@ -1,5 +1,6 @@
 package com.pakomo.forwarding
 
+import android.util.Log
 import com.pakomo.security.SecurityPolicy
 import com.pakomo.shaping.TrafficDirection
 import com.pakomo.shaping.TrafficShaper
@@ -94,9 +95,19 @@ class Socks5Server(
         client.soTimeout = SecurityPolicy.SOCKS_HANDSHAKE_TIMEOUT_MS
         val input = client.getInputStream()
         val output = client.getOutputStream()
-        if (!negotiateAuthentication(input, output)) return
-        if (!authenticate(input, output)) return
-        val request = readRequest(input) ?: return
+        if (!negotiateAuthentication(input, output)) {
+            Log.w(TAG, "SOCKS method negotiation failed")
+            return
+        }
+        if (!authenticate(input, output)) {
+            Log.w(TAG, "SOCKS authentication failed")
+            return
+        }
+        val request = readRequest(input)
+        if (request == null) {
+            Log.w(TAG, "SOCKS request parsing failed")
+            return
+        }
         when (request.command) {
             COMMAND_CONNECT -> handleConnect(client, output, request)
             COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, input, output)
@@ -130,7 +141,8 @@ class Socks5Server(
                 outbound = outbound,
                 shapeTraffic = shouldShape(request.host, request.port),
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w(TAG, "SOCKS TCP connect failed", error)
             runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
         } finally {
             runCatching { outbound.close() }
@@ -480,5 +492,6 @@ class Socks5Server(
         const val REPLY_HOST_UNREACHABLE = 4
         const val REPLY_COMMAND_NOT_SUPPORTED = 7
         const val DNS_PORT = 53
+        const val TAG = "PakomoSocks"
     }
 }
