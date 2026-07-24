@@ -22,6 +22,7 @@ class TrafficShaperTest {
     fun offlineRuleDropsTcpAndUdp() {
         val shaper = TrafficShaper(defaultRules.first { it.id == "offline" })
 
+        assertTrue(shaper.blocksAllTraffic())
         assertTrue(
             shaper.decide(TrafficDirection.UPLOAD, 100, isDatagram = true).drop,
         )
@@ -34,6 +35,7 @@ class TrafficShaperTest {
     fun normalRuleDoesNotDelayOrDrop() {
         val shaper = TrafficShaper(defaultRules.first { it.id == "normal" })
 
+        assertFalse(shaper.blocksAllTraffic())
         val decision = shaper.decide(
             direction = TrafficDirection.DOWNLOAD,
             byteCount = 16_384,

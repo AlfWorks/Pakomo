@@ -91,6 +91,8 @@ class TrafficShaper(
 
     fun delayedCount(): Long = delayedTransfers.get()
 
+    fun blocksAllTraffic(): Boolean = rule.packetLossPercent == 100
+
     private fun Int.kbpsToBytesPerSecond(): Long =
         (toLong() * 1_000L / 8L).coerceAtLeast(1)
 

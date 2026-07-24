@@ -5,27 +5,28 @@ import com.pakomo.security.SecurityPolicy
 import com.pakomo.shaping.TrafficDirection
 import com.pakomo.shaping.TrafficShaper
 import java.io.EOFException
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.nio.ByteBuffer
+import java.nio.channels.DatagramChannel
+import java.nio.channels.ServerSocketChannel
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -42,25 +43,28 @@ class Socks5Server(
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeSessions = AtomicInteger(0)
-    private var serverSocket: ServerSocket? = null
+    private var serverChannel: ServerSocketChannel? = null
     private var acceptJob: Job? = null
 
     val port: Int
-        get() = serverSocket?.localPort ?: 0
+        get() = serverChannel?.socket()?.localPort ?: 0
 
     fun start(): Int {
-        check(serverSocket == null) { "SOCKS server is already running" }
-        val listener = ServerSocket(
-            0,
+        check(serverChannel == null) { "SOCKS server is already running" }
+        val listener = ServerSocketChannel.open()
+        listener.socket().bind(
+            InetSocketAddress(
+                InetAddress.getByName(SecurityPolicy.SOCKS_LOOPBACK_ADDRESS),
+                0,
+            ),
             SecurityPolicy.SOCKS_LISTEN_BACKLOG,
-            InetAddress.getByName(SecurityPolicy.SOCKS_LOOPBACK_ADDRESS),
         )
-        serverSocket = listener
+        serverChannel = listener
         acceptJob = scope.launch {
-            while (!listener.isClosed) {
+            while (listener.isOpen) {
                 val client = try {
-                    listener.accept()
-                } catch (_: SocketException) {
+                    listener.accept().socket()
+                } catch (_: IOException) {
                     break
                 }
                 if (activeSessions.incrementAndGet() > SecurityPolicy.MAX_ACTIVE_FLOWS) {
@@ -80,14 +84,14 @@ class Socks5Server(
                 }
             }
         }
-        return listener.localPort
+        return listener.socket().localPort
     }
 
     fun activeSessionCount(): Int = activeSessions.get()
 
     override fun close() {
-        runCatching { serverSocket?.close() }
-        serverSocket = null
+        runCatching { serverChannel?.close() }
+        serverChannel = null
         acceptJob?.cancel()
         acceptJob = null
         scope.cancel()
@@ -112,7 +116,7 @@ class Socks5Server(
         }
         when (request.command) {
             COMMAND_CONNECT -> handleConnect(client, output, request)
-            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, input, output)
+            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output)
             else -> writeReply(output, REPLY_COMMAND_NOT_SUPPORTED, null)
         }
     }
@@ -122,30 +126,45 @@ class Socks5Server(
         output: OutputStream,
         request: SocksRequest,
     ) {
+        if (shouldShape(request.host, request.port) && shaper.blocksAllTraffic()) {
+            writeReply(output, REPLY_NETWORK_UNREACHABLE, null)
+            return
+        }
         val outbound = Socket()
         try {
             if (!protector.protect(outbound)) {
                 writeReply(output, REPLY_GENERAL_FAILURE, null)
                 return
             }
-            withContext(Dispatchers.IO) {
-                outbound.connect(
-                    InetSocketAddress(request.host, request.port),
-                    SecurityPolicy.OUTBOUND_CONNECT_TIMEOUT_MS,
-                )
+            try {
+                withContext(Dispatchers.IO) {
+                    outbound.connect(
+                        InetSocketAddress(request.host, request.port),
+                        SecurityPolicy.OUTBOUND_CONNECT_TIMEOUT_MS,
+                    )
+                }
+            } catch (error: Exception) {
+                safeLog("SOCKS TCP connect failed", error)
+                runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
+                return
             }
             client.soTimeout = 0
             outbound.soTimeout = 0
             outbound.tcpNoDelay = true
             writeReply(output, REPLY_SUCCEEDED, outbound.localSocketAddress as? InetSocketAddress)
-            relay(
-                client = client,
-                outbound = outbound,
-                shapeTraffic = shouldShape(request.host, request.port),
-            )
+            try {
+                relay(
+                    client = client,
+                    outbound = outbound,
+                    shapeTraffic = shouldShape(request.host, request.port),
+                )
+            } catch (error: SocketException) {
+                safeLog("SOCKS TCP relay closed", error)
+            } catch (error: Exception) {
+                safeLog("SOCKS TCP relay failed", error)
+            }
         } catch (error: Exception) {
-            Log.w(TAG, "SOCKS TCP connect failed", error)
-            runCatching { writeReply(output, REPLY_HOST_UNREACHABLE, null) }
+            safeLog("SOCKS TCP session failed", error)
         } finally {
             runCatching { outbound.close() }
         }
@@ -153,112 +172,135 @@ class Socks5Server(
 
     private suspend fun handleUdpAssociate(
         client: Socket,
-        controlInput: InputStream,
         controlOutput: OutputStream,
-    ) = coroutineScope {
-        val localSocket = DatagramSocket(
+    ) {
+        val controlChannel = checkNotNull(client.channel) {
+            "UDP association requires a channel-backed control socket"
+        }
+        val localChannel = DatagramChannel.open()
+        val relayChannel = DatagramChannel.open()
+        localChannel.bind(
             InetSocketAddress(
                 InetAddress.getByName(SecurityPolicy.SOCKS_LOOPBACK_ADDRESS),
                 0,
             ),
         )
-        val relaySocket = DatagramSocket()
-        if (!protector.protect(relaySocket)) {
-            localSocket.close()
-            relaySocket.close()
+        if (!protector.protect(relayChannel.socket())) {
+            localChannel.close()
+            relayChannel.close()
             safeLog("SOCKS UDP relay socket protection failed")
             writeReply(controlOutput, REPLY_GENERAL_FAILURE, null)
-            return@coroutineScope
+            return
         }
         writeReply(
             controlOutput,
             REPLY_SUCCEEDED,
-            localSocket.localSocketAddress as InetSocketAddress,
+            localChannel.localAddress as InetSocketAddress,
         )
         client.soTimeout = 0
-        val clientEndpoint = AtomicReference<InetSocketAddress?>(null)
+        controlChannel.configureBlocking(false)
+        localChannel.configureBlocking(false)
+        relayChannel.configureBlocking(false)
 
-        val upstream = launch {
-            val packetBuffer = ByteArray(SecurityPolicy.MAX_UDP_PACKET_BYTES)
-            val packet = DatagramPacket(packetBuffer, packetBuffer.size)
-            while (!localSocket.isClosed) {
-                try {
-                    packet.length = packetBuffer.size
-                    localSocket.receive(packet)
-                    val sender = packet.socketAddress as? InetSocketAddress ?: continue
-                    clientEndpoint.compareAndSet(null, sender)
-                    if (sender != clientEndpoint.get()) continue
-                    val request = parseUdpPacket(packetBuffer, packet.length)
-                        ?: continue
-                    if (shouldShape(request.host, request.port)) {
-                        val decision = shaper.decide(
-                            TrafficDirection.UPLOAD,
-                            request.payload.size,
-                            isDatagram = true,
+        val controlBuffer = ByteBuffer.allocate(1)
+        val requestBuffer = ByteBuffer.allocate(SecurityPolicy.MAX_UDP_PACKET_BYTES)
+        val responseBuffer = ByteBuffer.allocate(SecurityPolicy.MAX_UDP_PACKET_BYTES)
+        var clientEndpoint: InetSocketAddress? = null
+
+        try {
+            while (controlChannel.isOpen) {
+                var handledPacket = false
+
+                controlBuffer.clear()
+                if (controlChannel.read(controlBuffer) < 0) break
+
+                requestBuffer.clear()
+                val sender = localChannel.receive(requestBuffer) as? InetSocketAddress
+                if (sender != null) {
+                    handledPacket = true
+                    if (clientEndpoint == null) clientEndpoint = sender
+                    if (sender == clientEndpoint) {
+                        val request = parseUdpPacket(
+                            requestBuffer.array(),
+                            requestBuffer.position(),
                         )
-                        if (!shaper.await(decision)) continue
+                        if (request != null) {
+                            val allowed = if (shouldShape(request.host, request.port)) {
+                                shaper.await(
+                                    shaper.decide(
+                                        TrafficDirection.UPLOAD,
+                                        request.payload.size,
+                                        isDatagram = true,
+                                    ),
+                                )
+                            } else {
+                                true
+                            }
+                            if (allowed) {
+                                sendDatagram(
+                                    channel = relayChannel,
+                                    payload = request.payload,
+                                    target = InetSocketAddress(request.host, request.port),
+                                )
+                            }
+                        }
                     }
-                    relaySocket.send(
-                        DatagramPacket(
-                            request.payload,
-                            request.payload.size,
-                            InetSocketAddress(request.host, request.port),
-                        ),
-                    )
-                } catch (error: Exception) {
-                    if (!localSocket.isClosed) {
-                        safeLog("SOCKS UDP upstream relay failed", error)
-                    }
-                    break
                 }
-            }
-        }
-        val downstream = launch {
-            val responseBuffer = ByteArray(SecurityPolicy.MAX_UDP_PACKET_BYTES)
-            val response = DatagramPacket(responseBuffer, responseBuffer.size)
-            while (!relaySocket.isClosed) {
-                try {
-                    response.length = responseBuffer.size
-                    relaySocket.receive(response)
-                    val target = clientEndpoint.get() ?: continue
-                    val payload = responseBuffer.copyOf(response.length)
-                    val source = response.socketAddress as InetSocketAddress
+
+                responseBuffer.clear()
+                val source = relayChannel.receive(responseBuffer) as? InetSocketAddress
+                val target = clientEndpoint
+                if (source != null && target != null) {
+                    handledPacket = true
+                    val payload = responseBuffer.array().copyOf(responseBuffer.position())
                     if (source.port == DNS_PORT) {
                         domainRoutingPolicy?.observeDnsResponse(payload)
                     }
-                    if (shouldShape(source.address.hostAddress.orEmpty(), source.port)) {
-                        val decision = shaper.decide(
-                            TrafficDirection.DOWNLOAD,
-                            payload.size,
-                            isDatagram = true,
+                    val allowed = if (
+                        shouldShape(source.address.hostAddress.orEmpty(), source.port)
+                    ) {
+                        shaper.await(
+                            shaper.decide(
+                                TrafficDirection.DOWNLOAD,
+                                payload.size,
+                                isDatagram = true,
+                            ),
                         )
-                        if (!shaper.await(decision)) continue
+                    } else {
+                        true
                     }
-                    val wrapped = buildUdpPacket(
-                        source = source,
-                        payload = payload,
-                    )
-                    localSocket.send(DatagramPacket(wrapped, wrapped.size, target))
-                } catch (error: Exception) {
-                    if (!relaySocket.isClosed) {
-                        safeLog("SOCKS UDP downstream relay failed", error)
+                    if (allowed) {
+                        sendDatagram(
+                            channel = localChannel,
+                            payload = buildUdpPacket(source, payload),
+                            target = target,
+                        )
                     }
-                    break
+                }
+
+                if (!handledPacket) {
+                    // Non-blocking channels keep idle associations from consuming IO threads.
+                    delay(UDP_POLL_INTERVAL_MS)
                 }
             }
-        }
-
-        try {
-            withContext(Dispatchers.IO) {
-                while (controlInput.read() >= 0) {
-                    // This TCP stream controls the lifetime of the UDP association.
-                }
+        } catch (error: Exception) {
+            if (controlChannel.isOpen) {
+                safeLog("SOCKS UDP relay failed", error)
             }
         } finally {
-            localSocket.close()
-            relaySocket.close()
-            upstream.join()
-            downstream.join()
+            localChannel.close()
+            relayChannel.close()
+        }
+    }
+
+    private suspend fun sendDatagram(
+        channel: DatagramChannel,
+        payload: ByteArray,
+        target: InetSocketAddress,
+    ) {
+        val buffer = ByteBuffer.wrap(payload)
+        while (buffer.hasRemaining() && channel.send(buffer, target) == 0) {
+            delay(UDP_SEND_RETRY_DELAY_MS)
         }
     }
 
@@ -509,9 +551,12 @@ class Socks5Server(
         const val ADDRESS_IPV6 = 4
         const val REPLY_SUCCEEDED = 0
         const val REPLY_GENERAL_FAILURE = 1
+        const val REPLY_NETWORK_UNREACHABLE = 3
         const val REPLY_HOST_UNREACHABLE = 4
         const val REPLY_COMMAND_NOT_SUPPORTED = 7
         const val DNS_PORT = 53
+        const val UDP_POLL_INTERVAL_MS = 5L
+        const val UDP_SEND_RETRY_DELAY_MS = 1L
         const val TAG = "PakomoSocks"
     }
 }
