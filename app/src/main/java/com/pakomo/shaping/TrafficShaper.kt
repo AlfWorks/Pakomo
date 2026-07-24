@@ -3,6 +3,8 @@ package com.pakomo.shaping
 import com.pakomo.core.model.NetworkRule
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 
@@ -49,21 +51,24 @@ class TrafficShaper(
         isDatagram: Boolean,
         nowNanos: Long = System.nanoTime(),
     ): ShapingDecision {
-        val lossHit = rule.packetLossPercent > 0 &&
-            random.nextInt(100) < rule.packetLossPercent
-        if (lossHit && (isDatagram || rule.packetLossPercent == 100)) {
+        val lossPercent = lossPercentFor(direction)
+        val latencyMs = latencyMsFor(direction)
+        val jitterMs = jitterMsFor(direction)
+
+        val lossHit = lossPercent > 0 && random.nextInt(100) < lossPercent
+        if (lossHit && (isDatagram || lossPercent == 100)) {
             droppedDatagrams.incrementAndGet()
             return ShapingDecision(drop = true, waitNanos = 0)
         }
 
-        val jitter = if (rule.jitterMs == 0) {
+        val jitter = if (jitterMs == 0) {
             0
         } else {
-            random.nextInt(-rule.jitterMs, rule.jitterMs + 1)
+            random.nextInt(-jitterMs, jitterMs + 1)
         }
-        val baseDelayMs = max(0, rule.latencyMs + jitter)
+        val baseDelayMs = max(0, latencyMs + jitter)
         val syntheticTcpRecoveryMs = if (lossHit && !isDatagram) {
-            max(200, rule.latencyMs * 2)
+            max(200, latencyMs * 2)
         } else {
             0
         }
@@ -91,7 +96,37 @@ class TrafficShaper(
 
     fun delayedCount(): Long = delayedTransfers.get()
 
-    fun blocksAllTraffic(): Boolean = rule.packetLossPercent == 100
+    fun blocksAllTraffic(): Boolean =
+        lossPercentFor(TrafficDirection.UPLOAD) >= 100 ||
+            lossPercentFor(TrafficDirection.DOWNLOAD) >= 100
+
+    private fun latencyMsFor(direction: TrafficDirection): Int = when {
+        !rule.advanced -> rule.latencyMs / 2
+        direction == TrafficDirection.UPLOAD -> rule.uploadLatencyMs
+        else -> rule.downloadLatencyMs
+    }
+
+    private fun jitterMsFor(direction: TrafficDirection): Int = when {
+        !rule.advanced -> rule.jitterMs / 2
+        direction == TrafficDirection.UPLOAD -> rule.uploadJitterMs
+        else -> rule.downloadJitterMs
+    }
+
+    private fun lossPercentFor(direction: TrafficDirection): Int = when {
+        !rule.advanced -> splitLoss(rule.packetLossPercent)
+        direction == TrafficDirection.UPLOAD -> rule.uploadLossPercent
+        else -> rule.downloadLossPercent
+    }
+
+    /**
+     * Per-direction loss so the round-trip loss matches the simple value: with independent
+     * per-direction drops, total = 1 - (1 - p_dir)^2, so p_dir = 1 - sqrt(1 - p).
+     */
+    private fun splitLoss(totalPercent: Int): Int = when {
+        totalPercent <= 0 -> 0
+        totalPercent >= 100 -> 100
+        else -> (100.0 * (1.0 - sqrt(1.0 - totalPercent / 100.0))).roundToInt()
+    }
 
     private fun Int.kbpsToBytesPerSecond(): Long =
         (toLong() * 1_000L / 8L).coerceAtLeast(1)

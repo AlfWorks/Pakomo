@@ -1,5 +1,6 @@
 package com.pakomo.shaping
 
+import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.defaultRules
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,5 +46,43 @@ class TrafficShaperTest {
 
         assertFalse(decision.drop)
         assertEquals(0, decision.waitNanos)
+    }
+
+    @Test
+    fun simpleModeSplitsLatencyEvenlyAcrossDirections() {
+        val rule = NetworkRule(
+            id = "t", name = "t",
+            latencyMs = 200, jitterMs = 0, packetLossPercent = 0,
+            downloadKbps = null, uploadKbps = null, isSystem = false,
+        )
+        val shaper = TrafficShaper(rule)
+        // 200ms total -> 100ms per direction.
+        assertEquals(
+            100L * 1_000_000,
+            shaper.decide(TrafficDirection.UPLOAD, 100, isDatagram = false, nowNanos = 0).waitNanos,
+        )
+        assertEquals(
+            100L * 1_000_000,
+            shaper.decide(TrafficDirection.DOWNLOAD, 100, isDatagram = false, nowNanos = 0).waitNanos,
+        )
+    }
+
+    @Test
+    fun advancedModeUsesPerDirectionValues() {
+        val rule = NetworkRule(
+            id = "t", name = "t",
+            latencyMs = 0, jitterMs = 0, packetLossPercent = 0,
+            downloadKbps = null, uploadKbps = null, isSystem = false,
+            advanced = true, uploadLatencyMs = 100, downloadLatencyMs = 300,
+        )
+        val shaper = TrafficShaper(rule)
+        assertEquals(
+            100L * 1_000_000,
+            shaper.decide(TrafficDirection.UPLOAD, 100, isDatagram = false, nowNanos = 0).waitNanos,
+        )
+        assertEquals(
+            300L * 1_000_000,
+            shaper.decide(TrafficDirection.DOWNLOAD, 100, isDatagram = false, nowNanos = 0).waitNanos,
+        )
     }
 }
