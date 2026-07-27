@@ -32,11 +32,15 @@ Android 10+ 非 Root 弱网模拟工具。
 
 ```powershell
 git submodule update --init --recursive
-powershell -ExecutionPolicy Bypass -File .\scripts\restore-third-party-links.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\prepare-third-party.ps1
 .\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-第二条命令用于没有启用 Git 符号链接的 Windows 环境；Linux/macOS 不需要执行。
+第二条命令准备 vendored 转发核心:还原 Windows 上的 Git 符号链接占位符，并打上 HEV 归属前导补丁 `patches/hev-attribution-preamble.patch`（该原生改动存放在补丁里，不在子模块提交中）。脚本幂等，`git submodule update` 之后重跑即可。Linux/macOS（符号链接可用）无需还原链接，但仍需应用补丁：
+
+```bash
+git apply --directory=third_party/hev-socks5-tunnel patches/hev-attribution-preamble.patch
+```
 
 调试 APK 输出：
 
