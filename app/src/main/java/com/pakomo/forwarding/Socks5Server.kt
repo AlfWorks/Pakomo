@@ -39,10 +39,21 @@ data class SocksCredentials(
 class Socks5Server(
     private val credentials: SocksCredentials,
     private val protector: SocketProtector,
-    private val shaper: TrafficShaper,
-    private val shapingPolicy: ShapingPolicy = ShapingPolicy { ShapeEverythingShaping("全局", null) },
+    shaper: TrafficShaper,
+    shapingPolicy: ShapingPolicy = ShapingPolicy { ShapeEverythingShaping("全局", null) },
     private val expectOriginPreamble: Boolean = false,
 ) : AutoCloseable {
+    // Swappable at runtime so a rule/domain edit takes effect on new connections without tearing
+    // down the tunnel. New connections resolve against the current policy; existing flows keep the
+    // shaping they were already assigned. Reads pick up the latest via volatile.
+    @Volatile private var shaper: TrafficShaper = shaper
+    @Volatile private var shapingPolicy: ShapingPolicy = shapingPolicy
+
+    fun reconfigure(shaper: TrafficShaper, shapingPolicy: ShapingPolicy) {
+        this.shaper = shaper
+        this.shapingPolicy = shapingPolicy
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeSessions = AtomicInteger(0)
     private var serverChannel: ServerSocketChannel? = null
@@ -70,18 +81,22 @@ class Socks5Server(
                 } catch (_: IOException) {
                     break
                 }
-                if (activeSessions.incrementAndGet() > SecurityPolicy.MAX_ACTIVE_FLOWS) {
+                val active = activeSessions.incrementAndGet()
+                if (active > SecurityPolicy.MAX_ACTIVE_FLOWS) {
                     activeSessions.decrementAndGet()
+                    safeLog("SOCKS session rejected: active-flow limit reached")
                     client.close()
                     continue
                 }
+                safeLog("SOCKS session accepted: active=$active")
                 launch {
                     try {
                         handleClient(client)
                     } catch (error: Exception) {
                         safeLog("SOCKS session failed", error)
                     } finally {
-                        activeSessions.decrementAndGet()
+                        val remaining = activeSessions.decrementAndGet()
+                        safeLog("SOCKS session closed: active=$remaining")
                         runCatching { client.close() }
                     }
                 }
@@ -183,6 +198,7 @@ class Socks5Server(
             }
             if (shapeTraffic && shaper.blocksAllTraffic()) return // drop the flow → blocked
 
+            safeLog("SOCKS TCP relay started: shaped=$shapeTraffic")
             try {
                 relay(clientChannel, outbound, shapeTraffic, initialUpload)
             } catch (error: Exception) {

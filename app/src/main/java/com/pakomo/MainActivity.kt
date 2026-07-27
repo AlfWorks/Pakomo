@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,7 +24,12 @@ class MainActivity : ComponentActivity() {
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (it.resultCode == RESULT_OK) startVpn()
+            if (it.resultCode == RESULT_OK) {
+                Log.i(TAG, "VPN permission granted")
+                startVpn()
+            } else {
+                Log.w(TAG, "VPN permission denied")
+            }
         }
 
     private val notificationPermissionLauncher =
@@ -31,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i(TAG, "Application started")
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 33) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -63,8 +70,10 @@ class MainActivity : ComponentActivity() {
     private fun requestVpnPermission() {
         val permissionIntent: Intent? = VpnService.prepare(this)
         if (permissionIntent == null) {
+            Log.i(TAG, "VPN permission already granted")
             startVpn()
         } else {
+            Log.i(TAG, "Requesting VPN permission")
             vpnPermissionLauncher.launch(permissionIntent)
         }
     }
@@ -81,5 +90,9 @@ class MainActivity : ComponentActivity() {
                 .associate { it.packageName to it.domains },
             rule = state.activeRule,
         )
+    }
+
+    private companion object {
+        const val TAG = "PakomoApp"
     }
 }

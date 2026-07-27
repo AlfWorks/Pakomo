@@ -17,6 +17,16 @@ object VpnServiceController {
     private val _runtime = MutableStateFlow(EngineRuntime())
     val runtime: StateFlow<EngineRuntime> = _runtime.asStateFlow()
 
+    /**
+     * The running loopback SOCKS proxy, or null when stopped. Lets in-app diagnostics (the latency
+     * test) route through the tunnel's shaping instead of Pakomo's own always-bypassed traffic.
+     */
+    data class ActiveProxy(val port: Int, val username: String, val password: String)
+
+    @Volatile
+    var activeProxy: ActiveProxy? = null
+        internal set
+
     fun start(
         context: Context,
         scope: TargetScope,
@@ -25,13 +35,46 @@ object VpnServiceController {
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
     ) {
+        ContextCompat.startForegroundService(
+            context,
+            buildIntent(context, WeakNetworkVpnService.ACTION_START, scope, selectedPackages, targetDomains, domainsByPackage, rule),
+        )
+    }
+
+    /**
+     * Hot-applies a rule / domain change to the already-running service without rebuilding the
+     * tunnel (no dropped connections). Use [start] for scope / selected-app changes, which require
+     * re-establishing the VPN interface.
+     */
+    fun update(
+        context: Context,
+        scope: TargetScope,
+        selectedPackages: List<String>,
+        targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
+        rule: NetworkRule,
+    ) {
+        context.startService(
+            buildIntent(context, WeakNetworkVpnService.ACTION_UPDATE, scope, selectedPackages, targetDomains, domainsByPackage, rule),
+        )
+    }
+
+    private fun buildIntent(
+        context: Context,
+        action: String,
+        scope: TargetScope,
+        selectedPackages: List<String>,
+        targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
+        rule: NetworkRule,
+    ): Intent {
         val domainsBundle = Bundle().apply {
             domainsByPackage.forEach { (pkg, domains) ->
                 putStringArrayList(pkg, ArrayList(domains))
             }
         }
-        val intent = Intent(context, WeakNetworkVpnService::class.java)
-            .setAction(WeakNetworkVpnService.ACTION_START)
+        return Intent(context, WeakNetworkVpnService::class.java)
+            .setAction(action)
             .putExtra(WeakNetworkVpnService.EXTRA_SCOPE, scope.name)
             .putExtra(WeakNetworkVpnService.EXTRA_DOMAINS_BY_PACKAGE, domainsBundle)
             .putExtra(WeakNetworkVpnService.EXTRA_RULE_ID, rule.id)
@@ -56,7 +99,6 @@ object VpnServiceController {
                 WeakNetworkVpnService.EXTRA_TARGET_DOMAINS,
                 ArrayList(targetDomains),
             )
-        ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {

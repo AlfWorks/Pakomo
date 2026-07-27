@@ -2,6 +2,4 @@
 <resources>
     <string name="app_name">Pakomo</string>
     <string name="vpn_channel_name">弱网模拟状态</string>
-    <string name="vpn_notification_title">Pakomo 验证模式</string>
-    <string name="vpn_notification_body">服务已启动，转发内核接入前不会接管流量</string>
 </resources>
