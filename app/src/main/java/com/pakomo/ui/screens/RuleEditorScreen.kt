@@ -1,5 +1,11 @@
 package com.pakomo.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -7,7 +13,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,7 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -40,7 +44,6 @@ import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.Muted
 import com.pakomo.ui.theme.OnSurfaceVariant
 
 @Composable
@@ -134,22 +137,37 @@ fun RuleEditorScreen(
 
             ModeToggle(advanced = advanced, onChange = { advanced = it; error = null })
 
-            if (!advanced) {
-                NumberField("固定延迟", "ms", latency, Modifier.fillMaxWidth()) { latency = it; error = null }
-                NumberField("抖动", "ms", jitter, Modifier.fillMaxWidth()) { jitter = it; error = null }
-                NumberField("丢包率", "%", loss, Modifier.fillMaxWidth()) { loss = it; error = null }
-                Text(
-                    text = "延迟 / 抖动 / 丢包会平均分配到上下行。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                )
-            } else {
-                DirectionRow("上行延迟", "下行延迟", "ms", upLatency, downLatency,
-                    { upLatency = it; error = null }, { downLatency = it; error = null })
-                DirectionRow("上行抖动", "下行抖动", "ms", upJitter, downJitter,
-                    { upJitter = it; error = null }, { downJitter = it; error = null })
-                DirectionRow("上行丢包", "下行丢包", "%", upLoss, downLoss,
-                    { upLoss = it; error = null }, { downLoss = it; error = null })
+            AnimatedContent(
+                targetState = advanced,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(140))
+                        .togetherWith(fadeOut(animationSpec = tween(90)))
+                },
+                label = "ruleModeContent",
+            ) { advancedMode ->
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (!advancedMode) {
+                        NumberField("固定延迟", "ms", latency, Modifier.fillMaxWidth()) {
+                            latency = it
+                            error = null
+                        }
+                        NumberField("抖动", "ms", jitter, Modifier.fillMaxWidth()) {
+                            jitter = it
+                            error = null
+                        }
+                        NumberField("丢包率", "%", loss, Modifier.fillMaxWidth()) {
+                            loss = it
+                            error = null
+                        }
+                    } else {
+                        DirectionRow("上行延迟", "下行延迟", "ms", upLatency, downLatency,
+                            { upLatency = it; error = null }, { downLatency = it; error = null })
+                        DirectionRow("上行抖动", "下行抖动", "ms", upJitter, downJitter,
+                            { upJitter = it; error = null }, { downJitter = it; error = null })
+                        DirectionRow("上行丢包", "下行丢包", "%", upLoss, downLoss,
+                            { upLoss = it; error = null }, { downLoss = it; error = null })
+                    }
+                }
             }
 
             Row(
@@ -171,19 +189,6 @@ fun RuleEditorScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = {
-                    val result = buildRule()
-                    if (result.rule != null) onSave(result.rule) else error = result.error
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = RoundedCornerShape(10.dp),
-            ) {
-                Text("保存规则")
-            }
         }
     }
 }
@@ -199,12 +204,22 @@ private fun ModeToggle(advanced: Boolean, onChange: (Boolean) -> Unit) {
     ) {
         listOf(false to "简单", true to "高级").forEach { (value, label) ->
             val active = value == advanced
+            val segmentColor by animateColorAsState(
+                targetValue = if (active) Color.White else Color.Transparent,
+                animationSpec = tween(140),
+                label = "modeSegment",
+            )
+            val textColor by animateColorAsState(
+                targetValue = if (active) Accent else OnSurfaceVariant,
+                animationSpec = tween(140),
+                label = "modeText",
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .height(38.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (active) Color.White else Color.Transparent)
+                    .background(segmentColor)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -214,7 +229,7 @@ private fun ModeToggle(advanced: Boolean, onChange: (Boolean) -> Unit) {
             ) {
                 Text(
                     text = label,
-                    color = if (active) Accent else OnSurfaceVariant,
+                    color = textColor,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                     fontSize = 13.sp,
                 )

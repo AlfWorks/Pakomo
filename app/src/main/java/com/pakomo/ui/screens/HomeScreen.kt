@@ -1,7 +1,14 @@
 package com.pakomo.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,27 +26,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +51,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,23 +73,94 @@ import com.pakomo.ui.theme.Muted
 import com.pakomo.ui.theme.OnSurface
 import com.pakomo.ui.theme.OnSurfaceVariant
 import java.util.Locale
+import kotlin.math.ln
 import kotlinx.coroutines.delay
 
 private const val TRAFFIC_HISTORY = 48
+private const val TRAFFIC_SAMPLE_MS = 1_000
+private const val TRAFFIC_SLIDE_MS = 280
+private const val TRAFFIC_CHART_REFERENCE_BPS = 100_000_000.0
+
+internal data class TrafficSample(
+    val slot: Int,
+    val upload: Long,
+    val download: Long,
+)
+
+internal class TrafficChartState {
+    internal val history = mutableStateListOf<TrafficSample>()
+    internal val scrollOffset = Animatable(0f)
+}
 
 @Composable
-fun HomeScreen(
+internal fun rememberTrafficChartState(state: PakomoUiState): TrafficChartState {
+    val chartState = remember { TrafficChartState() }
+    val latestStats = rememberUpdatedState(state.stats)
+    val running = state.engineStage == EngineStage.FORWARDING
+    LaunchedEffect(running) {
+        if (running) {
+            val initial = latestStats.value
+            chartState.history.add(
+                TrafficSample(
+                    slot = 0,
+                    upload = initial.uploadBytesPerSecond,
+                    download = initial.downloadBytesPerSecond,
+                ),
+            )
+            var nextSlot = 1
+            while (true) {
+                val s = latestStats.value
+                chartState.history.add(
+                    TrafficSample(
+                        slot = nextSlot,
+                        upload = s.uploadBytesPerSecond,
+                        download = s.downloadBytesPerSecond,
+                    ),
+                )
+                chartState.scrollOffset.animateTo(
+                    targetValue = nextSlot.toFloat(),
+                    animationSpec = tween(
+                        durationMillis = TRAFFIC_SLIDE_MS,
+                        easing = FastOutSlowInEasing,
+                    ),
+                )
+                if (chartState.history.size > TRAFFIC_HISTORY) {
+                    chartState.history.removeAt(0)
+                }
+                nextSlot += 1
+                delay((TRAFFIC_SAMPLE_MS - TRAFFIC_SLIDE_MS).toLong())
+            }
+        } else {
+            chartState.history.clear()
+            chartState.scrollOffset.snapTo(0f)
+        }
+    }
+    return chartState
+}
+
+@Composable
+internal fun HomeScreen(
     state: PakomoUiState,
+    trafficChartState: TrafficChartState,
     onScopeSelected: (TargetScope) -> Unit,
     onOpenScope: () -> Unit,
     onOpenRules: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenLatencyTest: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenSecurity: () -> Unit,
     onToggleService: () -> Unit,
     onEmergencyStop: () -> Unit,
 ) {
-    var pendingGlobal by remember { mutableStateOf(false) }
+    val activeTargetCount = remember(state.scope, state.apps, state.addressDomains) {
+        when (state.scope) {
+            TargetScope.APPLICATIONS -> state.apps.count { it.isSelected }
+            TargetScope.ADDRESSES -> state.addressDomains.size
+            TargetScope.GLOBAL -> null
+        }
+    }
+    val isIdleRunning = state.engineStage == EngineStage.FORWARDING &&
+        activeTargetCount == 0
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -104,25 +182,36 @@ fun HomeScreen(
                     Text("P", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                 }
                 Spacer(Modifier.size(12.dp))
-                Column {
-                    Text(
-                        text = "Pakomo",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = OnSurface,
-                    )
-                    Text(
-                        text = "非 Root 弱网模拟",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                    )
-                }
+                Text(
+                    text = "Pakomo",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = OnSurface,
+                )
             }
 
             Spacer(Modifier.height(16.dp))
-            TrafficCard(state)
-
-            Spacer(Modifier.height(12.dp))
-            ServiceStatusCard(stage = state.engineStage, state = state, onToggle = onToggleService)
+            ServiceStatusCard(
+                stage = state.engineStage,
+                state = state,
+                isIdleRunning = isIdleRunning,
+                onToggle = onToggleService,
+            )
+            AnimatedVisibility(
+                visible = state.engineStage == EngineStage.FORWARDING,
+                enter = expandVertically(
+                    animationSpec = tween(180),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(animationSpec = tween(100)),
+                exit = shrinkVertically(
+                    animationSpec = tween(160),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(animationSpec = tween(90)),
+            ) {
+                Column {
+                    Spacer(Modifier.height(12.dp))
+                    TrafficCard(state, trafficChartState)
+                }
+            }
 
             Spacer(Modifier.height(18.dp))
             Text(
@@ -133,13 +222,8 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             ScopeCard(
                 state = state,
-                onSelected = { scope ->
-                    if (scope == TargetScope.GLOBAL && state.scope != TargetScope.GLOBAL) {
-                        pendingGlobal = true
-                    } else {
-                        onScopeSelected(scope)
-                    }
-                },
+                activeTargetCount = activeTargetCount,
+                onSelected = onScopeSelected,
                 onOpenScope = onOpenScope,
             )
             Spacer(Modifier.height(12.dp))
@@ -148,35 +232,25 @@ fun HomeScreen(
         NavigationRow(
             icon = Icons.Rounded.Bolt,
             title = "规则",
-            subtitle = state.activeRule.summary,
-            value = "${state.rules.size} 条",
-            valueColor = Accent,
             onClick = onOpenRules,
         )
         Hairline()
         NavigationRow(
             icon = Icons.Rounded.BugReport,
             title = "日志",
-            subtitle = "连接与事件",
-            value = if (state.engineStage == EngineStage.FORWARDING) "实时" else "可用",
-            valueColor = if (state.engineStage == EngineStage.FORWARDING) Accent else OnSurfaceVariant,
             onClick = onOpenDiagnostics,
+        )
+        Hairline()
+        NavigationRow(
+            icon = Icons.Rounded.Public,
+            title = "域名延迟测试",
+            onClick = onOpenLatencyTest,
         )
         Hairline()
         NavigationRow(
             icon = Icons.Rounded.Settings,
             title = "设置",
-            subtitle = "服务行为与界面偏好",
             onClick = onOpenSettings,
-        )
-        Hairline()
-        NavigationRow(
-            icon = Icons.Rounded.Security,
-            title = "安全与隐私",
-            subtitle = "权限、数据与开源说明",
-            value = "无遥测",
-            valueColor = Accent,
-            onClick = onOpenSecurity,
         )
 
         Spacer(Modifier.weight(1f))
@@ -204,45 +278,10 @@ fun HomeScreen(
         }
     }
 
-    if (pendingGlobal) {
-        AlertDialog(
-            onDismissRequest = { pendingGlobal = false },
-            title = { Text("确认全局接管") },
-            text = { Text("全局模式影响范围较大，建议首次测试只选择目标应用。仍要切换到全局吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingGlobal = false
-                        onScopeSelected(TargetScope.GLOBAL)
-                    },
-                ) { Text("继续") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingGlobal = false }) { Text("取消") }
-            },
-        )
-    }
 }
 
 @Composable
-private fun TrafficCard(state: PakomoUiState) {
-    // Ring buffer of recent (upload, download) B/s samples, sampled every second while running.
-    val history = remember { mutableStateListOf<Pair<Long, Long>>() }
-    val latestStats = rememberUpdatedState(state.stats)
-    val running = state.engineStage == EngineStage.FORWARDING
-    LaunchedEffect(running) {
-        if (running) {
-            while (true) {
-                val s = latestStats.value
-                history.add(s.uploadBytesPerSecond to s.downloadBytesPerSecond)
-                if (history.size > TRAFFIC_HISTORY) history.removeAt(0)
-                delay(1000)
-            }
-        } else {
-            history.clear()
-        }
-    }
-
+private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -259,23 +298,58 @@ private fun TrafficCard(state: PakomoUiState) {
                 TrafficLegend(Muted, "下行", state.stats.downloadBytesPerSecond)
             }
             Spacer(Modifier.height(14.dp))
-            Canvas(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(72.dp),
-            ) {
-                // Faint horizontal gridlines so the chart reads as designed even when idle.
-                val gridColor = Border
-                for (i in 0..3) {
-                    val y = size.height * i / 3f
-                    drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-                }
-                val upload = history.map { it.first }
-                val download = history.map { it.second }
-                val peak = (upload + download).maxOrNull()?.coerceAtLeast(1L) ?: 1L
-                drawSpark(download, peak, Muted.copy(alpha = 0.5f))
-                drawSpark(upload, peak, Accent)
-            }
+                    .height(72.dp)
+                    .drawWithCache {
+                        val stepX = size.width / (TRAFFIC_HISTORY - 1)
+                        val samples = chartState.history.toList()
+                        val downloadPath = buildSparkPath(
+                            samples = samples,
+                            chartWidth = size.width,
+                            chartHeight = size.height,
+                            stepX = stepX,
+                        ) { it.download }
+                        val uploadPath = buildSparkPath(
+                            samples = samples,
+                            chartWidth = size.width,
+                            chartHeight = size.height,
+                            stepX = stepX,
+                        ) { it.upload }
+                        onDrawBehind {
+                            for (i in 0..3) {
+                                val y = size.height * i / 3f
+                                drawLine(
+                                    Border,
+                                    Offset(0f, y),
+                                    Offset(size.width, y),
+                                    strokeWidth = 1f,
+                                )
+                            }
+                            val translation = -chartState.scrollOffset.value * stepX
+                            clipRect(
+                                left = 0f,
+                                top = 0f,
+                                right = size.width,
+                                bottom = size.height,
+                            ) {
+                                translate(left = translation) {
+                                    drawPath(
+                                        path = downloadPath,
+                                        color = Muted.copy(alpha = 0.5f),
+                                        style = Stroke(width = 4f),
+                                    )
+                                    drawPath(
+                                        path = uploadPath,
+                                        color = Accent,
+                                        style = Stroke(width = 4f),
+                                    )
+                                }
+                            }
+                        }
+                    },
+            )
         }
     }
 }
@@ -296,35 +370,43 @@ private fun TrafficLegend(color: Color, label: String, bytesPerSecond: Long) {
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSpark(
-    values: List<Long>,
-    peak: Long,
-    color: Color,
-) {
-    if (values.size < 2) return
-    val stepX = size.width / (TRAFFIC_HISTORY - 1)
-    val startIndex = TRAFFIC_HISTORY - values.size
+private fun buildSparkPath(
+    samples: List<TrafficSample>,
+    chartWidth: Float,
+    chartHeight: Float,
+    stepX: Float,
+    valueOf: (TrafficSample) -> Long,
+): Path {
     val path = Path()
-    values.forEachIndexed { i, v ->
-        val x = (startIndex + i) * stepX
-        val y = size.height - (v.toFloat() / peak) * size.height
+    if (samples.size < 2) return path
+    samples.forEachIndexed { i, sample ->
+        val x = chartWidth + sample.slot * stepX
+        val normalized = (
+            ln(valueOf(sample).coerceAtLeast(0L).toDouble() + 1.0) /
+                ln(TRAFFIC_CHART_REFERENCE_BPS + 1.0)
+            ).toFloat().coerceIn(0f, 1f)
+        val y = chartHeight - normalized * chartHeight
         if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
     }
-    drawPath(path = path, color = color, style = Stroke(width = 4f))
+    return path
 }
 
 @Composable
 private fun ServiceStatusCard(
     stage: EngineStage,
     state: PakomoUiState,
+    isIdleRunning: Boolean,
     onToggle: () -> Unit,
 ) {
     val isError = stage == EngineStage.ERROR
     val running = stage == EngineStage.FORWARDING
+    val stopped = stage == EngineStage.STOPPED
 
     val container = when {
         isError -> Color(0xFFFFF5F4)
+        isIdleRunning -> Color(0xFFE5A23B)
         running -> Accent
+        stopped -> Color(0xFF8D8D8D)
         else -> Color.White
     }
     Card(
@@ -334,7 +416,11 @@ private fun ServiceStatusCard(
             .clickable(onClick = onToggle),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = container),
-        border = if (running) null else BorderStroke(1.dp, if (isError) Color(0xFFF0C8C4) else Border),
+        border = if (running || stopped) {
+            null
+        } else {
+            BorderStroke(1.dp, if (isError) Color(0xFFF0C8C4) else Border)
+        },
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Row(
@@ -345,53 +431,82 @@ private fun ServiceStatusCard(
                 modifier = Modifier
                     .size(38.dp)
                     .background(
-                        color = if (running) Color.White.copy(alpha = 0.18f) else Color.Transparent,
+                        color = if (running) {
+                            Color.White.copy(alpha = 0.18f)
+                        } else {
+                            Color.Transparent
+                        },
                         shape = CircleShape,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (isError) Icons.Rounded.PowerSettingsNew else Icons.Rounded.Check,
+                    imageVector = when (stage) {
+                        EngineStage.ERROR -> Icons.Rounded.PowerSettingsNew
+                        EngineStage.STOPPED -> Icons.Rounded.Block
+                        EngineStage.FORWARDING ->
+                            if (isIdleRunning) Icons.Rounded.Pause else Icons.Rounded.Check
+                        else -> Icons.Rounded.Check
+                    },
                     contentDescription = null,
-                    tint = when {
-                        running -> Color.White
-                        isError -> Danger
+                    tint = when (stage) {
+                        EngineStage.FORWARDING, EngineStage.STOPPED -> Color.White
+                        EngineStage.ERROR -> Danger
                         else -> Muted
                     },
-                    modifier = Modifier.size(if (running) 22.dp else 26.dp),
+                    modifier = Modifier.size(
+                        if (stage == EngineStage.FORWARDING) 22.dp else 26.dp,
+                    ),
                 )
             }
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = when (stage) {
-                        EngineStage.STOPPED -> "服务已停止"
+                        EngineStage.STOPPED -> "已停止"
                         EngineStage.STARTING -> "正在启动"
-                        EngineStage.FORWARDING -> "运行中"
+                        EngineStage.FORWARDING ->
+                            if (isIdleRunning) "空闲运行" else "运行中"
                         EngineStage.ERROR -> "启动失败"
                     },
                     fontWeight = FontWeight.Bold,
                     fontSize = 19.sp,
-                    color = if (running) Color.White else OnSurface,
+                    color = if (running || stopped) Color.White else OnSurface,
                 )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = when (stage) {
-                        EngineStage.STOPPED -> "点按开启弱网模拟"
-                        EngineStage.STARTING -> state.engineMessage ?: "正在建立本地转发链路"
-                        EngineStage.FORWARDING -> "已运行 ${formatUptime(state.stats.uptimeMs)}"
-                        EngineStage.ERROR -> state.engineMessage ?: "点按重试，或打开日志查看原因"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when {
-                        running -> Color.White.copy(alpha = 0.82f)
-                        isError -> Danger
-                        else -> OnSurfaceVariant
-                    },
-                    fontFamily = if (running) FontFamily.Monospace else FontFamily.Default,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val detail = when (stage) {
+                    EngineStage.STOPPED -> "点此启动"
+                    EngineStage.STARTING -> state.engineMessage
+                    EngineStage.FORWARDING -> if (isIdleRunning) {
+                        when (state.scope) {
+                            TargetScope.APPLICATIONS -> "请选择应用"
+                            TargetScope.ADDRESSES -> "请添加地址"
+                            TargetScope.GLOBAL -> formatUptime(state.stats.uptimeMs)
+                        }
+                    } else {
+                        formatUptime(state.stats.uptimeMs)
+                    }
+                    EngineStage.ERROR -> state.engineMessage
+                }
+                if (!detail.isNullOrBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when (stage) {
+                            EngineStage.FORWARDING,
+                            EngineStage.STOPPED -> Color.White.copy(alpha = 0.82f)
+                            EngineStage.ERROR -> Danger
+                            EngineStage.STARTING -> OnSurfaceVariant
+                        },
+                        fontFamily = if (running && !isIdleRunning) {
+                            FontFamily.Monospace
+                        } else {
+                            FontFamily.Default
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -401,6 +516,7 @@ private fun ServiceStatusCard(
 @Composable
 private fun ScopeCard(
     state: PakomoUiState,
+    activeTargetCount: Int?,
     onSelected: (TargetScope) -> Unit,
     onOpenScope: () -> Unit,
 ) {
@@ -413,59 +529,74 @@ private fun ScopeCard(
     ) {
         Column(modifier = Modifier.padding(6.dp)) {
             ScopeSelector(selected = state.scope, onSelected = onSelected)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpenScope)
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            AnimatedVisibility(
+                visible = state.scope != TargetScope.GLOBAL,
+                enter = expandVertically(
+                    animationSpec = tween(140),
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(animationSpec = tween(100)),
+                exit = shrinkVertically(
+                    animationSpec = tween(120),
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(animationSpec = tween(80)),
             ) {
-                Box(
+                Row(
                     modifier = Modifier
-                        .size(28.dp)
-                        .background(AccentTint, RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenScope)
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.GridView,
-                        contentDescription = null,
-                        tint = Accent,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    text = when (state.scope) {
-                        TargetScope.APPLICATIONS -> "选择应用"
-                        TargetScope.ADDRESSES -> "管理地址"
-                        TargetScope.GLOBAL -> "全局接管"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = OnSurface,
-                    modifier = Modifier.weight(1f),
-                )
-                val value = when (state.scope) {
-                    TargetScope.APPLICATIONS -> "${state.selectedApps.size} 个"
-                    TargetScope.ADDRESSES -> "${state.addressDomains.size} 个"
-                    TargetScope.GLOBAL -> "已开启"
-                }
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFFF1F3F6), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .background(AccentTint, RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.GridView,
+                            contentDescription = null,
+                            tint = Accent,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(Modifier.size(12.dp))
                     Text(
-                        text = value,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnSurfaceVariant,
+                        text = when (state.scope) {
+                            TargetScope.APPLICATIONS -> "选择应用"
+                            TargetScope.ADDRESSES -> "指定地址"
+                            TargetScope.GLOBAL -> ""
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = OnSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = (activeTargetCount ?: 0).toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (activeTargetCount == 0) {
+                            Color(0xFFB56D00)
+                        } else {
+                            Accent
+                        },
+                        modifier = Modifier
+                            .background(
+                                color = if (activeTargetCount == 0) {
+                                    Color(0xFFFFF1D8)
+                                } else {
+                                    AccentTint
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Muted,
                     )
                 }
-                Spacer(Modifier.size(4.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = Muted,
-                )
             }
         }
     }

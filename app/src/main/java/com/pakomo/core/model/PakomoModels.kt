@@ -1,5 +1,7 @@
 package com.pakomo.core.model
 
+import android.graphics.Bitmap
+
 enum class TargetScope(val label: String, val description: String) {
     GLOBAL("全局", "设备中的 IPv4 流量都按当前规则处理"),
     APPLICATIONS("指定应用", "只处理已选择应用，可为每个应用限定多个域名"),
@@ -9,10 +11,9 @@ enum class TargetScope(val label: String, val description: String) {
 data class InstalledApp(
     val label: String,
     val packageName: String,
-    val isSystem: Boolean,
-    val isSensitive: Boolean,
     val isSelected: Boolean,
     val domains: List<String>,
+    val icon: Bitmap? = null,
     val isExpanded: Boolean = false,
 )
 /**
@@ -100,7 +101,6 @@ data class PakomoUiState(
     val scope: TargetScope = TargetScope.APPLICATIONS,
     val apps: List<InstalledApp> = emptyList(),
     val isLoadingApps: Boolean = true,
-    val showSystemApps: Boolean = false,
     val appQuery: String = "",
     val addressDomains: List<String> = emptyList(),
     val rules: List<NetworkRule> = defaultRules,

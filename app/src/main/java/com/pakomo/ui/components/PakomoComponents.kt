@@ -1,6 +1,9 @@
 package com.pakomo.ui.components
 
-import android.graphics.drawable.Drawable
+import android.graphics.Bitmap
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,11 +11,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,14 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.drawable.toBitmap
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.theme.Accent
 import com.pakomo.ui.theme.AccentTint
@@ -89,35 +92,59 @@ fun ScopeSelector(
     onSelected: (TargetScope) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .background(Color(0xFFF0F2F5), RoundedCornerShape(10.dp))
             .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        TargetScope.entries.forEach { scope ->
-            val active = scope == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (active) Color.White else Color.Transparent)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.RadioButton,
-                    ) { onSelected(scope) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = scope.label,
-                    color = if (active) Accent else OnSurfaceVariant,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 13.sp,
-                    maxLines = 1,
+        val gap = 3.dp
+        val segmentWidth = (maxWidth - gap * 2f) / TargetScope.entries.size.toFloat()
+        val targetOffset =
+            (segmentWidth + gap) * TargetScope.entries.indexOf(selected).toFloat()
+        val indicatorOffset by animateDpAsState(
+            targetValue = targetOffset,
+            animationSpec = tween(180),
+            label = "scopeIndicator",
+        )
+        Box(
+            modifier = Modifier
+                .offset(x = indicatorOffset)
+                .width(segmentWidth)
+                .height(40.dp)
+                .background(Color.White, RoundedCornerShape(8.dp)),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            TargetScope.entries.forEach { scope ->
+                val active = scope == selected
+                val textColor by animateColorAsState(
+                    targetValue = if (active) Accent else OnSurfaceVariant,
+                    animationSpec = tween(120),
+                    label = "scopeText",
                 )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.RadioButton,
+                        ) { onSelected(scope) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = scope.label,
+                        color = textColor,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -127,9 +154,6 @@ fun ScopeSelector(
 fun NavigationRow(
     icon: ImageVector,
     title: String,
-    subtitle: String? = null,
-    value: String? = null,
-    valueColor: Color = OnSurfaceVariant,
     onClick: () -> Unit,
 ) {
     Row(
@@ -146,28 +170,12 @@ fun NavigationRow(
             tint = OnSurfaceVariant,
         )
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = OnSurface)
-            if (subtitle != null) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (value != null) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodySmall,
-                color = valueColor,
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(6.dp))
-        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = OnSurface,
+            modifier = Modifier.weight(1f),
+        )
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             contentDescription = null,
@@ -187,36 +195,34 @@ fun Hairline(modifier: Modifier = Modifier) {
 
 @Composable
 fun AppIcon(
-    packageName: String,
+    bitmap: Bitmap?,
     fallbackLabel: String,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val drawable: Drawable? = remember(packageName) {
-        runCatching { context.packageManager.getApplicationIcon(packageName) }.getOrNull()
-    }
-    if (drawable != null) {
+    val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
+    if (imageBitmap != null) {
         Image(
-            bitmap = remember(drawable) { drawable.toBitmap(96, 96).asImageBitmap() },
+            bitmap = imageBitmap,
             contentDescription = null,
             modifier = modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(10.dp)),
         )
-    } else {
-        Box(
-            modifier = modifier
-                .size(40.dp)
-                .background(AccentTint, RoundedCornerShape(10.dp))
-                .border(1.dp, Border, RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = fallbackLabel.take(1).uppercase(),
-                color = Accent,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+        return
+    }
+    val initial = remember(fallbackLabel) { fallbackLabel.take(1).uppercase() }
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .background(AccentTint, RoundedCornerShape(10.dp))
+            .border(1.dp, Border, RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = initial,
+            color = Accent,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

@@ -1,6 +1,7 @@
 package com.pakomo.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pakomo.core.model.EngineRuntime
@@ -40,6 +41,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     val state: StateFlow<PakomoUiState> = _state.asStateFlow()
 
     init {
+        Log.i(
+            TAG,
+            "State loaded: scope=${_state.value.scope.name}, rules=${storedRules.size}, addressDomains=${_state.value.addressDomains.size}",
+        )
         refreshApps()
     }
 
@@ -53,46 +58,55 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
             _state.update { it.copy(apps = apps, isLoadingApps = false) }
+            Log.i(TAG, "Application catalog loaded: total=${apps.size}, selected=${apps.count { it.isSelected }}")
         }
     }
 
     fun selectScope(scope: TargetScope) {
+        val previous = _state.value.scope
+        if (previous == scope) return
         preferences.writeScope(scope)
         _state.update { it.copy(scope = scope) }
+        Log.i(TAG, "Scope changed: ${previous.name} -> ${scope.name}")
         reapplyIfRunning()
     }
 
-    /**
-     * Config captured at start is a snapshot, so a live rule/scope/domain change is pushed to the
-     * running service by re-sending the current configuration; the service rebuilds the pipeline
-     * (uptime is preserved). No-op unless forwarding is active.
-     */
-    private fun reapplyIfRunning() {
+    // Rule / domain edits hot-swap on the running pipeline (instant, no dropped connections).
+    private fun updateIfRunning() = pushConfigIfRunning(hotSwap = true)
+
+    // Scope / selected-app edits require re-establishing the VPN interface, so rebuild the pipeline.
+    private fun reapplyIfRunning() = pushConfigIfRunning(hotSwap = false)
+
+    private fun pushConfigIfRunning(hotSwap: Boolean) {
         val current = _state.value
         if (current.engineStage != EngineStage.FORWARDING) return
-        VpnServiceController.start(
-            context = getApplication(),
-            scope = current.scope,
-            selectedPackages = current.selectedApps.map { it.packageName },
-            targetDomains = current.addressDomains,
-            domainsByPackage = current.selectedApps
-                .filter { it.domains.isNotEmpty() }
-                .associate { it.packageName to it.domains },
-            rule = current.activeRule,
-        )
+        val context = getApplication<Application>()
+        val packages = current.selectedApps.map { it.packageName }
+        val domainsByPackage = current.selectedApps
+            .filter { it.domains.isNotEmpty() }
+            .associate { it.packageName to it.domains }
+        if (hotSwap) {
+            VpnServiceController.update(
+                context, current.scope, packages, current.addressDomains, domainsByPackage, current.activeRule,
+            )
+        } else {
+            VpnServiceController.start(
+                context, current.scope, packages, current.addressDomains, domainsByPackage, current.activeRule,
+            )
+        }
     }
 
     fun setAppQuery(query: String) {
         _state.update { it.copy(appQuery = query) }
     }
 
-    fun setShowSystemApps(show: Boolean) {
-        _state.update { it.copy(showSystemApps = show) }
-    }
-
     fun toggleApp(packageName: String) {
         updateApp(packageName) { app -> app.copy(isSelected = !app.isSelected) }
         persistApps()
+        val current = _state.value
+        val selected = current.apps.firstOrNull { it.packageName == packageName }?.isSelected == true
+        Log.i(TAG, "Application selection changed: selected=$selected, total=${current.selectedApps.size}")
+        reapplyIfRunning() // changing the selected-app set re-establishes the VPN interface
     }
 
     fun toggleAppExpanded(packageName: String) {
@@ -109,6 +123,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
         updateApp(packageName) { app -> app.copy(domains = app.domains + domain) }
         persistApps()
+        val count = _state.value.apps.firstOrNull { it.packageName == packageName }?.domains?.size ?: 0
+        Log.i(TAG, "Application domain added: count=$count")
+        updateIfRunning()
         return null
     }
 
@@ -117,6 +134,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             app.copy(domains = app.domains.filterNot { it == domain })
         }
         persistApps()
+        val count = _state.value.apps.firstOrNull { it.packageName == packageName }?.domains?.size ?: 0
+        Log.i(TAG, "Application domain removed: count=$count")
+        updateIfRunning()
     }
 
     fun addAddressDomain(input: String): String? {
@@ -128,7 +148,8 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         val updated = _state.value.addressDomains + domain
         preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
-        reapplyIfRunning()
+        Log.i(TAG, "Address domain added: count=${updated.size}")
+        updateIfRunning()
         return null
     }
 
@@ -136,14 +157,16 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         val updated = _state.value.addressDomains.filterNot { it == domain }
         preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
-        reapplyIfRunning()
+        Log.i(TAG, "Address domain removed: count=${updated.size}")
+        updateIfRunning()
     }
 
     fun selectRule(ruleId: String) {
-        if (_state.value.rules.none { it.id == ruleId }) return
+        val rule = _state.value.rules.firstOrNull { it.id == ruleId } ?: return
         preferences.writeActiveRuleId(ruleId)
         _state.update { it.copy(activeRuleId = ruleId) }
-        reapplyIfRunning()
+        Log.i(TAG, "Rule selected: ${rule.name}")
+        updateIfRunning()
     }
 
     fun saveRule(rule: NetworkRule) {
@@ -155,11 +178,16 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
         preferences.writeRules(updated)
         _state.update { it.copy(rules = updated) }
-        if (rule.id == _state.value.activeRuleId) reapplyIfRunning()
+        Log.i(
+            TAG,
+            "Rule saved: ${rule.name}, created=${current.rules.none { it.id == rule.id }}, total=${updated.size}",
+        )
+        if (rule.id == _state.value.activeRuleId) updateIfRunning()
     }
 
     fun duplicateRule(ruleId: String): NetworkRule? {
         val source = _state.value.rules.firstOrNull { it.id == ruleId } ?: return null
+        Log.i(TAG, "Rule duplicated: ${source.name}")
         return source.copy(
             id = UUID.randomUUID().toString(),
             name = "${source.name}副本",
@@ -167,16 +195,19 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun newRule(): NetworkRule = NetworkRule(
-        id = UUID.randomUUID().toString(),
-        name = "新规则",
-        latencyMs = 100,
-        jitterMs = 20,
-        packetLossPercent = 1,
-        downloadKbps = 1_024,
-        uploadKbps = 512,
-        isSystem = false,
-    )
+    fun newRule(): NetworkRule {
+        Log.i(TAG, "New rule draft created")
+        return NetworkRule(
+            id = UUID.randomUUID().toString(),
+            name = "新规则",
+            latencyMs = 100,
+            jitterMs = 20,
+            packetLossPercent = 1,
+            downloadKbps = 1_024,
+            uploadKbps = 512,
+            isSystem = false,
+        )
+    }
 
     fun deleteRule(ruleId: String) {
         val current = _state.value
@@ -187,6 +218,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         preferences.writeRules(updated)
         preferences.writeActiveRuleId(active)
         _state.update { it.copy(rules = updated, activeRuleId = active) }
+        Log.i(TAG, "Rule deleted: ${target.name}, total=${updated.size}")
     }
 
     fun setEngineRuntime(runtime: EngineRuntime) {
@@ -200,6 +232,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearLocalData() {
+        Log.w(TAG, "Clearing all local configuration")
         preferences.clear()
         _state.value = PakomoUiState()
         refreshApps()
@@ -223,7 +256,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         preferences.writeDomainsByPackage(
             apps.filter { it.domains.isNotEmpty() }.associate { it.packageName to it.domains },
         )
-        reapplyIfRunning()
     }
 
+    private companion object {
+        const val TAG = "PakomoState"
+    }
 }

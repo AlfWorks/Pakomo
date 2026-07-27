@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,28 +24,44 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pakomo.BuildConfig
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Security
+import com.pakomo.ui.components.NavigationRow
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.components.SectionLabel
 import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.AccentTint
 import com.pakomo.ui.theme.Border
 import com.pakomo.ui.theme.Danger
 import com.pakomo.ui.theme.Muted
 import com.pakomo.ui.theme.OnSurface
 import com.pakomo.ui.theme.OnSurfaceVariant
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 @Composable
 fun DiagnosticsScreen(
@@ -55,85 +73,31 @@ fun DiagnosticsScreen(
             .fillMaxSize()
             .statusBarsPadding(),
     ) {
-        ScreenHeader(title = "诊断", onBack = onBack)
+        ScreenHeader(title = "日志与诊断", onBack = onBack)
         Column(
             modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp),
+                .fillMaxSize()
+                .padding(bottom = 12.dp),
         ) {
             SectionLabel("当前状态")
-            InfoCard {
-                InfoRow(
-                    "服务",
-                    when (state.engineStage) {
-                        EngineStage.STOPPED -> "已停止"
-                        EngineStage.STARTING -> "正在启动"
-                        EngineStage.FORWARDING -> "弱网模拟运行中"
-                        EngineStage.ERROR -> "启动失败"
-                    },
-                    valueColor = when (state.engineStage) {
-                        EngineStage.ERROR -> Danger
-                        EngineStage.STOPPED -> OnSurfaceVariant
-                        else -> Accent
-                    },
-                )
-                state.engineMessage?.let { message ->
-                    InfoRow("链路状态", message)
-                }
-                InfoRow("接管范围", state.stats.activeScopeLabel ?: state.scope.label)
-                if (state.stats.attributionAttempts > 0) {
-                    InfoRow("归属命中率", formatAttribution(state.stats))
-                }
-                InfoRow("上行速率", formatRate(state.stats.uploadBytesPerSecond))
-                InfoRow("下行速率", formatRate(state.stats.downloadBytesPerSecond))
-                InfoRow("活跃连接", state.stats.activeConnections.toString())
-                InfoRow("主动丢弃次数", state.stats.droppedTransfers.toString())
-                InfoRow("延迟处理次数", state.stats.delayedTransfers.toString())
-            }
+            CompactDiagnosticsCard(state)
 
-            SectionLabel("命中的应用与域名")
-            InfoCard {
-                val hits = state.stats.recentHits
-                if (hits.isEmpty()) {
-                    InfoRow(
-                        "命中记录",
-                        if (state.engineStage == EngineStage.FORWARDING) "等待目标流量" else "未运行",
-                    )
-                } else {
-                    hits.forEach { hit ->
-                        InfoRow(
-                            label = hit.appLabel
-                                ?: hit.packageName
-                                ?: (if (hit.attributed) "未知应用" else "未归属"),
-                            value = if (hit.shaped) hit.host else "${hit.host} · 旁路",
-                            valueColor = when {
-                                !hit.shaped -> Muted
-                                hit.attributed -> Accent
-                                else -> Danger
-                            },
-                        )
-                    }
-                }
-            }
-
-            SectionLabel("统计说明")
-            InfoCard {
-                InfoRow("数据来源", "本地转发链路")
-                InfoRow("流量内容", "不记录")
-                InfoRow("统计保留", "服务停止后清零")
-            }
-            Text(
-                text = "主动丢弃和延迟处理是当前规则的累计执行次数；未产生目标流量时数值为 0。",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            SectionLabel("原始运行日志")
+            RawLogcatPanel(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
             )
         }
     }
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenSecurity: () -> Unit,
+) {
     var resumeLast by remember { mutableStateOf(false) }
     var showSystemWarning by remember { mutableStateOf(true) }
     Column(
@@ -143,17 +107,21 @@ fun SettingsScreen(onBack: () -> Unit) {
     ) {
         ScreenHeader(title = "设置", onBack = onBack)
         Column {
+            SectionLabel("安全")
+            NavigationRow(
+                icon = Icons.Rounded.Security,
+                title = "安全与隐私",
+                onClick = onOpenSecurity,
+            )
             SectionLabel("服务")
             InfoCard {
                 SettingSwitchRow(
                     title = "恢复上次运行状态",
-                    subtitle = "默认关闭，避免启动应用后自动接管网络",
                     checked = resumeLast,
                     onCheckedChange = { resumeLast = it },
                 )
                 SettingSwitchRow(
                     title = "敏感应用提醒",
-                    subtitle = "选择电话、认证、密码管理等应用时给出提示",
                     checked = showSystemWarning,
                     onCheckedChange = { showSystemWarning = it },
                 )
@@ -196,9 +164,9 @@ fun SecurityScreen(
             }
             SectionLabel("当前权限")
             InfoCard {
-                InfoRow("VPN 服务", "启动时由系统授权")
-                InfoRow("应用列表", "用于选择测试目标")
-                InfoRow("通知", "显示前台服务状态")
+                InfoRow("VPN 服务", "按需授权")
+                InfoRow("应用列表", "本地读取")
+                InfoRow("通知", "前台服务")
             }
             SectionLabel("本地数据")
             InfoCard {
@@ -218,7 +186,6 @@ fun SecurityScreen(
             InfoCard {
                 InfoRow("版本", BuildConfig.VERSION_NAME)
                 InfoRow("最低系统", "Android 10")
-                InfoRow("实现状态", "IPv4 本地弱网转发")
             }
         }
     }
@@ -266,6 +233,127 @@ private fun formatRate(bytesPerSecond: Long): String = when {
 }
 
 @Composable
+private fun CompactDiagnosticsCard(state: PakomoUiState) {
+    val service = when (state.engineStage) {
+        EngineStage.STOPPED -> "已停止"
+        EngineStage.STARTING -> "正在启动"
+        EngineStage.FORWARDING -> "运行中"
+        EngineStage.ERROR -> "启动失败"
+    }
+    val serviceColor = when (state.engineStage) {
+        EngineStage.ERROR -> Danger
+        EngineStage.STOPPED -> OnSurfaceVariant
+        else -> Accent
+    }
+    val scope = buildString {
+        append(state.stats.activeScopeLabel ?: state.scope.label)
+        if (state.stats.attributionAttempts > 0) {
+            append(" · ")
+            append(formatAttribution(state.stats))
+        }
+    }
+    val latestHit = state.stats.recentHits.firstOrNull()
+    val latestTarget = latestHit?.let { hit ->
+        val app = hit.appLabel ?: hit.packageName
+        buildString {
+            if (!app.isNullOrBlank()) append("$app · ")
+            append(hit.host)
+            if (!hit.shaped) append(" · 旁路")
+        }
+    } ?: if (state.engineStage == EngineStage.FORWARDING) {
+        "等待目标流量"
+    } else {
+        "未运行"
+    }
+
+    InfoCard {
+        CompactMetricRow(
+            leftLabel = "服务",
+            leftValue = state.engineMessage?.takeIf { state.engineStage != EngineStage.FORWARDING }
+                ?.let { "$service · $it" }
+                ?: service,
+            rightLabel = "接管范围",
+            rightValue = scope,
+            leftColor = serviceColor,
+        )
+        CompactMetricRow(
+            leftLabel = "上行",
+            leftValue = formatRate(state.stats.uploadBytesPerSecond),
+            rightLabel = "下行",
+            rightValue = formatRate(state.stats.downloadBytesPerSecond),
+        )
+        CompactMetricRow(
+            leftLabel = "连接",
+            leftValue = state.stats.activeConnections.toString(),
+            rightLabel = "处理",
+            rightValue = "丢弃 ${state.stats.droppedTransfers} · 延迟 ${state.stats.delayedTransfers}",
+        )
+        CompactValueRow(label = "最近目标", value = latestTarget)
+    }
+}
+
+@Composable
+private fun CompactMetricRow(
+    leftLabel: String,
+    leftValue: String,
+    rightLabel: String,
+    rightValue: String,
+    leftColor: Color = OnSurface,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CompactMetric(leftLabel, leftValue, leftColor, Modifier.weight(1f))
+        CompactMetric(rightLabel, rightValue, OnSurface, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun CompactMetric(
+    label: String,
+    value: String,
+    valueColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.padding(horizontal = 4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = valueColor,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun CompactValueRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
+        Spacer(Modifier.padding(horizontal = 4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurface,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
 private fun InfoCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier
@@ -306,10 +394,146 @@ private fun InfoRow(
     }
 }
 
+private const val MAX_RAW_LOG_LINES = 1_000
+private const val RAW_LOG_BATCH_SIZE = 32
+private const val INITIAL_RAW_LOG_LINES = 80
+
+private data class RawLogState(
+    val lines: List<String> = emptyList(),
+    val failure: String? = null,
+    val revision: Long = 0,
+)
+
+private object RawLogcatStore {
+    private val started = AtomicBoolean(false)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _state = MutableStateFlow(RawLogState())
+    val state: StateFlow<RawLogState> = _state.asStateFlow()
+
+    fun start() {
+        if (!started.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                val process = ProcessBuilder(
+                    "logcat",
+                    "--pid=${android.os.Process.myPid()}",
+                    "-T",
+                    INITIAL_RAW_LOG_LINES.toString(),
+                    "-v",
+                    "brief",
+                    "PakomoApp:V",
+                    "PakomoState:V",
+                    "PakomoLatency:V",
+                    "PakomoVpn:V",
+                    "PakomoSocks:V",
+                    "System.err:V",
+                    "AndroidRuntime:V",
+                    "*:S",
+                )
+                    .redirectErrorStream(true)
+                    .start()
+                val pending = ArrayList<String>(RAW_LOG_BATCH_SIZE)
+                fun flushPending() {
+                    if (pending.isEmpty()) return
+                    val batch = pending.toList()
+                    pending.clear()
+                    _state.update { current ->
+                        current.copy(
+                            lines = (current.lines + batch).takeLast(MAX_RAW_LOG_LINES),
+                            failure = null,
+                            revision = current.revision + 1,
+                        )
+                    }
+                }
+                process.inputStream.bufferedReader().use { reader ->
+                    while (isActive) {
+                        val line = reader.readLine() ?: break
+                        if (line.startsWith("--------- beginning of") ||
+                            line.startsWith("--------- switch to")
+                        ) {
+                            continue
+                        }
+                        pending.add(line)
+                        if (pending.size >= RAW_LOG_BATCH_SIZE || !reader.ready()) {
+                            flushPending()
+                        }
+                    }
+                    flushPending()
+                }
+            } catch (error: Throwable) {
+                if (isActive) {
+                    _state.update { current ->
+                        current.copy(
+                            failure = error.message ?: error.javaClass.simpleName,
+                            revision = current.revision + 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RawLogcatPanel(modifier: Modifier = Modifier) {
+    val logState by RawLogcatStore.state.collectAsState()
+    val lines = logState.lines
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = lines.lastIndex.coerceAtLeast(0),
+    )
+    LaunchedEffect(Unit) {
+        RawLogcatStore.start()
+    }
+
+    LaunchedEffect(logState.revision) {
+        if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex)
+    }
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Border),
+        elevation = CardDefaults.cardElevation(0.dp),
+    ) {
+        when {
+            logState.failure != null -> Text(
+                text = "无法读取 Logcat：${logState.failure}",
+                color = Danger,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(12.dp),
+            )
+            lines.isEmpty() -> Text(
+                text = "等待原始日志输出…",
+                color = OnSurface,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(12.dp),
+            )
+            else -> LazyColumn(
+                state = listState,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(lines) { line ->
+                    Text(
+                        text = line,
+                        color = OnSurface,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        softWrap = true,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingSwitchRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -319,20 +543,12 @@ private fun SettingSwitchRow(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = OnSurface,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-            )
-        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = OnSurface,
+            modifier = Modifier.weight(1f),
+        )
         Spacer(Modifier.padding(horizontal = 6.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }

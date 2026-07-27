@@ -1,7 +1,9 @@
 package com.pakomo.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -28,25 +32,23 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pakomo.core.model.InstalledApp
@@ -60,8 +62,14 @@ import com.pakomo.ui.theme.AccentTint
 import com.pakomo.ui.theme.Border
 import com.pakomo.ui.theme.Muted
 import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
 import com.pakomo.ui.theme.SurfaceFold
+
+@Immutable
+private data class ApplicationScopeUiState(
+    val apps: List<InstalledApp>,
+    val query: String,
+    val isLoading: Boolean,
+)
 
 @Composable
 fun ScopeScreen(
@@ -69,7 +77,6 @@ fun ScopeScreen(
     onBack: () -> Unit,
     onScopeSelected: (TargetScope) -> Unit,
     onQueryChange: (String) -> Unit,
-    onShowSystemAppsChange: (Boolean) -> Unit,
     onRefreshApps: () -> Unit,
     onToggleApp: (String) -> Unit,
     onToggleExpanded: (String) -> Unit,
@@ -79,6 +86,13 @@ fun ScopeScreen(
     onRemoveAddress: (String) -> Unit,
 ) {
     var domainTarget by remember { mutableStateOf<String?>(null) }
+    val applicationState = remember(state.apps, state.appQuery, state.isLoadingApps) {
+        ApplicationScopeUiState(
+            apps = state.apps,
+            query = state.appQuery,
+            isLoading = state.isLoadingApps,
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -103,11 +117,10 @@ fun ScopeScreen(
         Spacer(Modifier.height(4.dp))
 
         when (state.scope) {
-            TargetScope.GLOBAL -> GlobalScopeNotice()
+            TargetScope.GLOBAL -> Unit
             TargetScope.APPLICATIONS -> ApplicationScopeContent(
-                state = state,
+                state = applicationState,
                 onQueryChange = onQueryChange,
-                onShowSystemAppsChange = onShowSystemAppsChange,
                 onToggleApp = onToggleApp,
                 onToggleExpanded = onToggleExpanded,
                 onRequestAddDomain = { domainTarget = it },
@@ -139,31 +152,32 @@ fun ScopeScreen(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun ApplicationScopeContent(
-    state: PakomoUiState,
+    state: ApplicationScopeUiState,
     onQueryChange: (String) -> Unit,
-    onShowSystemAppsChange: (Boolean) -> Unit,
     onToggleApp: (String) -> Unit,
     onToggleExpanded: (String) -> Unit,
     onRequestAddDomain: (String) -> Unit,
     onRemoveDomain: (String, String) -> Unit,
 ) {
+    val cacheWindow = remember {
+        LazyLayoutCacheWindow(aheadFraction = 2f, behindFraction = 2f)
+    }
+    val listState = rememberLazyListState(cacheWindow = cacheWindow)
     val visibleApps = remember(
         state.apps,
-        state.appQuery,
-        state.showSystemApps,
+        state.query,
     ) {
         state.apps.filter { app ->
-            (state.showSystemApps || !app.isSystem) &&
-                (
-                    state.appQuery.isBlank() ||
-                        app.label.contains(state.appQuery, ignoreCase = true) ||
-                        app.packageName.contains(state.appQuery, ignoreCase = true)
-                    )
+            state.query.isBlank() ||
+                app.label.contains(state.query, ignoreCase = true) ||
+                app.packageName.contains(state.query, ignoreCase = true)
         }
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             start = 16.dp,
@@ -174,7 +188,7 @@ private fun ApplicationScopeContent(
     ) {
         item {
             OutlinedTextField(
-                value = state.appQuery,
+                value = state.query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -183,25 +197,7 @@ private fun ApplicationScopeContent(
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
             )
         }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "已选择 ${state.selectedApps.size} 个应用",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                FilterChip(
-                    selected = state.showSystemApps,
-                    onClick = { onShowSystemAppsChange(!state.showSystemApps) },
-                    label = { Text("系统应用") },
-                )
-            }
-        }
-        if (state.isLoadingApps) {
+        if (state.isLoading) {
             item {
                 Box(
                     modifier = Modifier
@@ -217,7 +213,11 @@ private fun ApplicationScopeContent(
                 EmptyMessage("没有找到应用")
             }
         } else {
-            items(visibleApps, key = InstalledApp::packageName) { app ->
+            items(
+                items = visibleApps,
+                key = InstalledApp::packageName,
+                contentType = { "application" },
+            ) { app ->
                 ApplicationCard(
                     app = app,
                     onToggle = { onToggleApp(app.packageName) },
@@ -238,12 +238,15 @@ private fun ApplicationCard(
     onRequestAddDomain: () -> Unit,
     onRemoveDomain: (String) -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, if (app.isSelected) Color(0xFFD6DFF5) else Border),
-        elevation = CardDefaults.cardElevation(0.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .border(
+                width = 1.dp,
+                color = if (app.isSelected) Color(0xFFD6DFF5) else Border,
+                shape = RoundedCornerShape(12.dp),
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -253,7 +256,7 @@ private fun ApplicationCard(
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppIcon(packageName = app.packageName, fallbackLabel = app.label)
+            AppIcon(bitmap = app.icon, fallbackLabel = app.label)
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -265,26 +268,18 @@ private fun ApplicationCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (app.domains.isNotEmpty()) {
-                        Spacer(Modifier.size(6.dp))
-                        Text(
-                            text = "${app.domains.size} 个域名",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Muted,
-                        )
-                    }
                 }
                 Spacer(Modifier.height(2.dp))
                 MonoText(app.packageName)
             }
             Spacer(Modifier.size(10.dp))
-            Switch(
+            Checkbox(
                 checked = app.isSelected,
                 onCheckedChange = { onToggle() },
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = Accent,
-                    uncheckedTrackColor = Color(0xFFD7DBE0),
-                    uncheckedBorderColor = Color.Transparent,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = Accent,
+                    uncheckedColor = Muted,
+                    checkmarkColor = Color.White,
                 ),
             )
         }
@@ -296,6 +291,14 @@ private fun ApplicationCard(
                     .background(SurfaceFold)
                     .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
             ) {
+                if (app.domains.isEmpty()) {
+                    Text(
+                        text = "全部流量",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Muted,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                }
                 app.domains.forEachIndexed { index, domain ->
                     DomainRow(
                         domain = domain,
@@ -409,25 +412,6 @@ private fun AddressScopeContent(
                 Text("添加域名")
             }
         }
-    }
-}
-
-@Composable
-private fun GlobalScopeNotice() {
-    Column(
-        modifier = Modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(10.dp))
-            .padding(16.dp),
-    ) {
-        Text("全局接管", fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "设备中的 IPv4 流量都会按当前规则处理。",
-            style = MaterialTheme.typography.bodySmall,
-            color = OnSurfaceVariant,
-        )
     }
 }
 
