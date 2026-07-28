@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,6 +22,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.pakomo.core.model.AppListAccess
+import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.PakomoApp
 import com.pakomo.ui.PakomoViewModel
 import com.pakomo.ui.theme.PakomoTheme
@@ -75,7 +78,19 @@ class MainActivity : ComponentActivity() {
                     notificationPermissionGranted = notificationPermissionGranted,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
-                            requestVpnPermission(startAfterGrant = true)
+                            val current = viewModel.state.value
+                            if (
+                                current.scope == TargetScope.APPLICATIONS &&
+                                current.appListAccess != AppListAccess.AVAILABLE
+                            ) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "正在检查应用列表，请稍后再启动",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                requestVpnPermission(startAfterGrant = true)
+                            }
                         } else {
                             VpnServiceController.stop(this@MainActivity)
                         }

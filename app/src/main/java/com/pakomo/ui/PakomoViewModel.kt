@@ -68,8 +68,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
                     domainsByPackage = preferences.readDomainsByPackage(),
                 )
             }
-            _state.update {
-                it.copy(
+            val shouldFallbackToAddresses =
+                !result.isAvailable && _state.value.scope == TargetScope.APPLICATIONS
+            _state.update { current ->
+                current.copy(
                     apps = result.apps,
                     isLoadingApps = false,
                     appListAccess = if (result.isAvailable) {
@@ -77,7 +79,17 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         AppListAccess.UNAVAILABLE
                     },
+                    scope = if (shouldFallbackToAddresses) {
+                        TargetScope.ADDRESSES
+                    } else {
+                        current.scope
+                    },
                 )
+            }
+            if (shouldFallbackToAddresses) {
+                preferences.writeScope(TargetScope.ADDRESSES)
+                Log.w(TAG, "Application list unavailable; scope changed to ADDRESSES")
+                reapplyIfRunning()
             }
             Log.i(
                 TAG,
@@ -88,6 +100,12 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectScope(scope: TargetScope) {
+        if (
+            scope == TargetScope.APPLICATIONS &&
+            _state.value.appListAccess == AppListAccess.UNAVAILABLE
+        ) {
+            return
+        }
         val previous = _state.value.scope
         if (previous == scope) return
         preferences.writeScope(scope)
