@@ -14,6 +14,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.core.validation.DomainInputValidator
 import com.pakomo.data.InstalledAppCatalog
 import com.pakomo.data.PakomoPreferences
+import com.pakomo.ui.theme.ThemeMode
 import com.pakomo.vpn.VpnServiceController
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,15 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         ),
     )
     val state: StateFlow<PakomoUiState> = _state.asStateFlow()
+
+    // Theme lives in its own flow so switching it never recomposes the tree keyed on `state`
+    // (stats update once per second, so folding theme into PakomoUiState would be wasteful).
+    private val _themeMode = MutableStateFlow(
+        runCatching { ThemeMode.valueOf(preferences.readThemeMode() ?: ThemeMode.Standard.name) }
+            .getOrDefault(ThemeMode.Standard),
+    )
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
     private var configPushJob: Job? = null
     private var appPersistJob: Job? = null
     private var addressPersistJob: Job? = null
@@ -291,10 +301,18 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setThemeMode(mode: ThemeMode) {
+        if (_themeMode.value == mode) return
+        _themeMode.value = mode
+        Log.i(TAG, "Theme mode changed: ${mode.name}")
+        viewModelScope.launch(Dispatchers.IO) { preferences.writeThemeMode(mode.name) }
+    }
+
     fun clearLocalData() {
         Log.w(TAG, "Clearing all local configuration")
         preferences.clear()
         _state.value = PakomoUiState()
+        _themeMode.value = ThemeMode.Standard
         refreshApps()
     }
 

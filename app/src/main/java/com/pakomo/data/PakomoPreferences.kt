@@ -71,6 +71,13 @@ class PakomoPreferences(context: Context) {
         preferences.edit { putBoolean(KEY_QUICK_CONTROL_ENABLED, enabled) }
     }
 
+    /** Stored as the [com.pakomo.ui.theme.ThemeMode] name; null when never set (→ default Standard). */
+    fun readThemeMode(): String? = preferences.getString(KEY_THEME_MODE, null)
+
+    fun writeThemeMode(mode: String) {
+        preferences.edit { putString(KEY_THEME_MODE, mode) }
+    }
+
     fun readRules(): List<NetworkRule> {
         val raw = preferences.getString(KEY_RULES, null) ?: return defaultRules
         return runCatching {
@@ -144,5 +151,6 @@ class PakomoPreferences(context: Context) {
         const val KEY_ACTIVE_RULE = "active_rule"
         const val KEY_RULES = "rules"
         const val KEY_QUICK_CONTROL_ENABLED = "quick_control_enabled"
+        const val KEY_THEME_MODE = "theme_mode"
     }
 }

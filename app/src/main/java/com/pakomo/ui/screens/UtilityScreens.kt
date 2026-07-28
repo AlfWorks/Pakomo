@@ -55,12 +55,15 @@ import androidx.compose.material.icons.rounded.Security
 import com.pakomo.ui.components.NavigationRow
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.components.SectionLabel
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Danger
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.ThemeMode
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -109,6 +112,8 @@ fun SettingsScreen(
     onOpenSecurity: () -> Unit,
     quickControlEnabled: Boolean,
     onQuickControlChanged: (Boolean) -> Unit,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
 ) {
     var resumeLast by remember { mutableStateOf(false) }
     var showSystemWarning by remember { mutableStateOf(true) }
@@ -125,6 +130,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 16.dp),
         ) {
+            SectionLabel("外观")
+            ThemeModeSelector(current = themeMode, onChange = onThemeModeChange)
             SectionLabel("安全")
             NavigationRow(
                 icon = Icons.Rounded.Security,
@@ -162,6 +169,46 @@ fun SettingsScreen(
             InfoCard {
                 InfoRow("当前连接", "${network.connection} · ${network.protocols}")
                 InfoRow("DNS", network.dns)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeSelector(current: ThemeMode, onChange: (ThemeMode) -> Unit) {
+    val colors = LocalPakomoColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .background(colors.scopeTrack, RoundedCornerShape(10.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        listOf(
+            ThemeMode.Standard to "标准",
+            ThemeMode.Companion to "Pakomo 陪伴",
+        ).forEach { (mode, label) ->
+            val active = mode == current
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (active) colors.surface else Color.Transparent)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.RadioButton,
+                    ) { onChange(mode) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    color = if (active) colors.accent else colors.textSecondary,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    fontSize = 13.sp,
+                )
             }
         }
     }
@@ -236,6 +283,7 @@ fun SecurityScreen(
     onNotificationPermissionClick: () -> Unit,
     onAppListPermissionClick: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     var confirmClear by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -254,14 +302,14 @@ fun SecurityScreen(
                     title = "VPN 服务",
                     detail = "建立本地网络接管",
                     status = if (vpnPermissionGranted) "已授权" else "未授权",
-                    statusColor = if (vpnPermissionGranted) Accent else Danger,
+                    statusColor = if (vpnPermissionGranted) colors.accent else colors.danger,
                     onClick = onVpnPermissionClick,
                 )
                 PermissionStatusRow(
                     title = "通知",
                     detail = "显示 VPN 运行状态",
                     status = if (notificationPermissionGranted) "已授权" else "未授权",
-                    statusColor = if (notificationPermissionGranted) Accent else Danger,
+                    statusColor = if (notificationPermissionGranted) colors.accent else colors.danger,
                     onClick = onNotificationPermissionClick,
                 )
                 PermissionStatusRow(
@@ -273,9 +321,9 @@ fun SecurityScreen(
                         AppListAccess.UNAVAILABLE -> "不可用"
                     },
                     statusColor = when (appListAccess) {
-                        AppListAccess.CHECKING -> Muted
-                        AppListAccess.AVAILABLE -> Accent
-                        AppListAccess.UNAVAILABLE -> Danger
+                        AppListAccess.CHECKING -> colors.muted
+                        AppListAccess.AVAILABLE -> colors.accent
+                        AppListAccess.UNAVAILABLE -> colors.danger
                     },
                     onClick = onAppListPermissionClick,
                 )
@@ -291,7 +339,7 @@ fun SecurityScreen(
                     onClick = { confirmClear = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("清除全部本地数据", color = Danger)
+                    Text("清除全部本地数据", color = colors.danger)
                 }
             }
         }
@@ -308,7 +356,7 @@ fun SecurityScreen(
                         onClearData()
                         confirmClear = false
                     },
-                ) { Text("清除", color = Danger) }
+                ) { Text("清除", color = colors.danger) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmClear = false }) { Text("取消") }
@@ -325,6 +373,7 @@ private fun PermissionStatusRow(
     statusColor: Color,
     onClick: (() -> Unit)?,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,12 +385,12 @@ private fun PermissionStatusRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
-                color = OnSurface,
+                color = colors.textPrimary,
             )
             Text(
                 text = detail,
                 style = MaterialTheme.typography.bodySmall,
-                color = Muted,
+                color = colors.muted,
             )
         }
         Spacer(Modifier.padding(horizontal = 6.dp))
@@ -354,7 +403,7 @@ private fun PermissionStatusRow(
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
-                tint = Muted,
+                tint = colors.muted,
             )
         }
     }
@@ -390,10 +439,11 @@ private fun CompactDiagnosticsCard(state: PakomoUiState) {
         EngineStage.FORWARDING -> "运行中"
         EngineStage.ERROR -> "启动失败"
     }
+    val colors = LocalPakomoColors.current
     val serviceColor = when (state.engineStage) {
-        EngineStage.ERROR -> Danger
-        EngineStage.STOPPED -> OnSurfaceVariant
-        else -> Accent
+        EngineStage.ERROR -> colors.danger
+        EngineStage.STOPPED -> colors.textSecondary
+        else -> colors.accent
     }
     val scope = buildString {
         append(state.stats.activeScopeLabel ?: state.scope.label)
@@ -448,8 +498,9 @@ private fun CompactMetricRow(
     leftValue: String,
     rightLabel: String,
     rightValue: String,
-    leftColor: Color = OnSurface,
+    leftColor: Color = LocalPakomoColors.current.textPrimary,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -457,7 +508,7 @@ private fun CompactMetricRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         CompactMetric(leftLabel, leftValue, leftColor, Modifier.weight(1f))
-        CompactMetric(rightLabel, rightValue, OnSurface, Modifier.weight(1f))
+        CompactMetric(rightLabel, rightValue, colors.textPrimary, Modifier.weight(1f))
     }
 }
 
@@ -469,7 +520,7 @@ private fun CompactMetric(
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = LocalPakomoColors.current.muted)
         Spacer(Modifier.padding(horizontal = 4.dp))
         Text(
             text = value,
@@ -484,18 +535,19 @@ private fun CompactMetric(
 
 @Composable
 private fun CompactValueRow(label: String, value: String) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = colors.muted)
         Spacer(Modifier.padding(horizontal = 4.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
-            color = OnSurface,
+            color = colors.textPrimary,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -505,13 +557,14 @@ private fun CompactValueRow(label: String, value: String) {
 
 @Composable
 private fun InfoCard(content: @Composable ColumnScope.() -> Unit) {
+    val colors = LocalPakomoColors.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(
@@ -525,7 +578,7 @@ private fun InfoCard(content: @Composable ColumnScope.() -> Unit) {
 private fun InfoRow(
     label: String,
     value: String,
-    valueColor: Color = OnSurfaceVariant,
+    valueColor: Color = LocalPakomoColors.current.textSecondary,
 ) {
     Row(
         modifier = Modifier
@@ -533,7 +586,7 @@ private fun InfoRow(
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = OnSurface)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = LocalPakomoColors.current.textPrimary)
         Spacer(Modifier.padding(horizontal = 8.dp))
         Text(
             text = value,
@@ -630,6 +683,7 @@ private object RawLogcatStore {
 
 @Composable
 private fun RawLogcatPanel(modifier: Modifier = Modifier) {
+    val colors = LocalPakomoColors.current
     val logState by RawLogcatStore.state.collectAsState()
     val lines = logState.lines
     val listState = rememberLazyListState(
@@ -646,21 +700,21 @@ private fun RawLogcatPanel(modifier: Modifier = Modifier) {
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         when {
             logState.failure != null -> Text(
                 text = "无法读取 Logcat：${logState.failure}",
-                color = Danger,
+                color = colors.danger,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(12.dp),
             )
             lines.isEmpty() -> Text(
                 text = "等待原始日志输出…",
-                color = OnSurface,
+                color = colors.textPrimary,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(12.dp),
@@ -673,7 +727,7 @@ private fun RawLogcatPanel(modifier: Modifier = Modifier) {
                 items(lines) { line ->
                     Text(
                         text = line,
-                        color = OnSurface,
+                        color = colors.textPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 10.sp,
                         lineHeight = 13.sp,
@@ -700,7 +754,7 @@ private fun SettingSwitchRow(
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
-            color = OnSurface,
+            color = LocalPakomoColors.current.textPrimary,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.padding(horizontal = 6.dp))

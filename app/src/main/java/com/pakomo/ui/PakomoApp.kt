@@ -34,7 +34,8 @@ import com.pakomo.ui.screens.ScopeScreen
 import com.pakomo.ui.screens.SecurityScreen
 import com.pakomo.ui.screens.SettingsScreen
 import com.pakomo.ui.screens.rememberTrafficChartState
-import com.pakomo.ui.theme.Background
+import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.ThemeMode
 
 private sealed interface Screen {
     data object Home : Screen
@@ -54,6 +55,8 @@ fun PakomoApp(
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
     quickControlEnabled: Boolean,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
     onToggleService: () -> Unit,
     onVpnPermissionClick: () -> Unit,
     onNotificationPermissionClick: () -> Unit,
@@ -113,7 +116,7 @@ fun PakomoApp(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Background) {
+    Surface(modifier = Modifier.fillMaxSize(), color = LocalPakomoColors.current.background) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -276,6 +279,8 @@ fun PakomoApp(
                 onOpenSecurity = { navigate(Screen.Security) },
                 quickControlEnabled = quickControlEnabled,
                 onQuickControlChanged = onQuickControlChanged,
+                themeMode = themeMode,
+                onThemeModeChange = onThemeModeChange,
             )
 
             Screen.Security -> SecurityScreen(

@@ -85,16 +85,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val serviceRuntime by VpnServiceController.runtime.collectAsState()
+            val themeMode by viewModel.themeMode.collectAsState()
             LaunchedEffect(serviceRuntime) {
                 viewModel.setEngineRuntime(serviceRuntime)
             }
 
-            PakomoTheme {
+            PakomoTheme(themeMode = themeMode) {
                 PakomoApp(
                     viewModel = viewModel,
                     vpnPermissionGranted = vpnPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
                     quickControlEnabled = quickControlEnabled,
+                    themeMode = themeMode,
+                    onThemeModeChange = viewModel::setThemeMode,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
                             val current = viewModel.state.value
