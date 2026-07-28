@@ -1,6 +1,7 @@
 package com.pakomo.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -19,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Security
 import com.pakomo.ui.components.NavigationRow
 import com.pakomo.ui.components.ScreenHeader
@@ -142,8 +145,8 @@ fun SecurityScreen(
     notificationPermissionGranted: Boolean,
     onBack: () -> Unit,
     onClearData: () -> Unit,
-    onVpnPermissionChange: (Boolean) -> Unit,
-    onNotificationPermissionChange: (Boolean) -> Unit,
+    onVpnPermissionClick: () -> Unit,
+    onNotificationPermissionClick: () -> Unit,
 ) {
     var confirmClear by remember { mutableStateOf(false) }
     Column(
@@ -159,17 +162,17 @@ fun SecurityScreen(
         ) {
             SectionLabel("授权")
             InfoCard {
-                PermissionSwitchRow(
+                PermissionStatusRow(
                     title = "VPN 服务",
                     detail = "建立本地网络接管",
-                    checked = vpnPermissionGranted,
-                    onCheckedChange = onVpnPermissionChange,
+                    granted = vpnPermissionGranted,
+                    onClick = onVpnPermissionClick,
                 )
-                PermissionSwitchRow(
+                PermissionStatusRow(
                     title = "通知",
                     detail = "显示 VPN 运行状态",
-                    checked = notificationPermissionGranted,
-                    onCheckedChange = onNotificationPermissionChange,
+                    granted = notificationPermissionGranted,
+                    onClick = onNotificationPermissionClick,
                 )
                 InfoRow("应用列表", "用于选择接管应用")
             }
@@ -211,15 +214,16 @@ fun SecurityScreen(
 }
 
 @Composable
-private fun PermissionSwitchRow(
+private fun PermissionStatusRow(
     title: String,
     detail: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    granted: Boolean,
+    onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -236,9 +240,15 @@ private fun PermissionSwitchRow(
             )
         }
         Spacer(Modifier.padding(horizontal = 6.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
+        Text(
+            text = if (granted) "已授权" else "未授权",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (granted) Accent else Danger,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Muted,
         )
     }
 }

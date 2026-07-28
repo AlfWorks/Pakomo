@@ -76,15 +76,19 @@ class MainActivity : ComponentActivity() {
                     onEmergencyStop = {
                         VpnServiceController.stop(this@MainActivity)
                     },
-                    onVpnPermissionChange = { enabled ->
-                        if (enabled) {
-                            requestVpnPermission(startAfterGrant = false)
-                        } else {
+                    onVpnPermissionClick = {
+                        if (vpnPermissionGranted) {
                             startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                        } else {
+                            requestVpnPermission(startAfterGrant = false)
                         }
                     },
-                    onNotificationPermissionChange = { enabled ->
-                        if (enabled) requestNotificationPermission() else openNotificationSettings()
+                    onNotificationPermissionClick = {
+                        if (notificationPermissionGranted) {
+                            openNotificationSettings()
+                        } else {
+                            requestNotificationPermission()
+                        }
                     },
                 )
             }

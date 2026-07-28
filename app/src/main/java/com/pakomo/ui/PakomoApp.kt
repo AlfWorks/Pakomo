@@ -54,8 +54,8 @@ fun PakomoApp(
     notificationPermissionGranted: Boolean,
     onToggleService: () -> Unit,
     onEmergencyStop: () -> Unit,
-    onVpnPermissionChange: (Boolean) -> Unit,
-    onNotificationPermissionChange: (Boolean) -> Unit,
+    onVpnPermissionClick: () -> Unit,
+    onNotificationPermissionClick: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val trafficChartState = rememberTrafficChartState(state)
@@ -278,8 +278,8 @@ fun PakomoApp(
                 notificationPermissionGranted = notificationPermissionGranted,
                 onBack = goBack,
                 onClearData = viewModel::clearLocalData,
-                onVpnPermissionChange = onVpnPermissionChange,
-                onNotificationPermissionChange = onNotificationPermissionChange,
+                onVpnPermissionClick = onVpnPermissionClick,
+                onNotificationPermissionClick = onNotificationPermissionClick,
             )
 
             Screen.LatencyTest -> LatencyTestScreen(onBack = goBack)
