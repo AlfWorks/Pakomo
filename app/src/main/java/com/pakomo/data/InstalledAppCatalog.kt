@@ -7,6 +7,11 @@ import com.pakomo.core.model.InstalledApp
 import java.text.Collator
 import java.util.Locale
 
+data class InstalledAppCatalogResult(
+    val apps: List<InstalledApp>,
+    val isAvailable: Boolean,
+)
+
 class InstalledAppCatalog(private val context: Context) {
     private val packageManager: PackageManager = context.packageManager
 
@@ -14,17 +19,24 @@ class InstalledAppCatalog(private val context: Context) {
     fun load(
         selectedPackages: Set<String>,
         domainsByPackage: Map<String, List<String>>,
-    ): List<InstalledApp> {
-        val applications = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            packageManager.getInstalledApplications(
-                PackageManager.ApplicationInfoFlags.of(0L),
+    ): InstalledAppCatalogResult {
+        val applications = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                packageManager.getInstalledApplications(
+                    PackageManager.ApplicationInfoFlags.of(0L),
+                )
+            } else {
+                packageManager.getInstalledApplications(0)
+            }
+        }.getOrElse {
+            return InstalledAppCatalogResult(
+                apps = emptyList(),
+                isAvailable = false,
             )
-        } else {
-            packageManager.getInstalledApplications(0)
         }
 
         val collator = Collator.getInstance(Locale.getDefault())
-        return applications
+        val apps = applications
             .asSequence()
             .filterNot { it.packageName == context.packageName }
             .map { info ->
@@ -46,5 +58,9 @@ class InstalledAppCatalog(private val context: Context) {
                     .thenComparator { left, right -> collator.compare(left.label, right.label) },
             )
             .toList()
+        return InstalledAppCatalogResult(
+            apps = apps,
+            isAvailable = apps.isNotEmpty(),
+        )
     }
 }

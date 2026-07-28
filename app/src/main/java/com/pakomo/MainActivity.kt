@@ -30,7 +30,6 @@ class MainActivity : ComponentActivity() {
     private val viewModel: PakomoViewModel by viewModels()
     private var vpnPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(false)
-    private var appListPermissionGranted by mutableStateOf(false)
     private var startAfterVpnPermission = false
 
     private val vpnPermissionLauncher =
@@ -49,12 +48,6 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             refreshPermissionStates()
-        }
-
-    private val appListPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            refreshPermissionStates()
-            viewModel.refreshApps()
         }
 
     private val appPermissionSettingsLauncher =
@@ -80,7 +73,6 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     vpnPermissionGranted = vpnPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
-                    appListPermissionGranted = appListPermissionGranted,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
                             requestVpnPermission(startAfterGrant = true)
@@ -106,11 +98,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onAppListPermissionClick = {
-                        if (!appListPermissionGranted && supportsMiuiAppListPermission()) {
-                            appListPermissionLauncher.launch(MIUI_GET_INSTALLED_APPS)
-                        } else {
-                            openAppPermissionSettings()
-                        }
+                        openAppPermissionSettings()
                     },
                 )
             }
@@ -161,19 +149,6 @@ class MainActivity : ComponentActivity() {
         vpnPermissionGranted = VpnService.prepare(this) == null
         notificationPermissionGranted =
             NotificationManagerCompat.from(this).areNotificationsEnabled()
-        appListPermissionGranted = when {
-            supportsMiuiAppListPermission() ->
-                ContextCompat.checkSelfPermission(
-                    this,
-                    MIUI_GET_INSTALLED_APPS,
-                ) == PackageManager.PERMISSION_GRANTED
-            Build.VERSION.SDK_INT < 30 -> true
-            else ->
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.QUERY_ALL_PACKAGES,
-                ) == PackageManager.PERMISSION_GRANTED
-        }
     }
 
     private fun openAppPermissionSettings() {
@@ -184,13 +159,6 @@ class MainActivity : ComponentActivity() {
             ),
         )
     }
-
-    @Suppress("DEPRECATION")
-    private fun supportsMiuiAppListPermission(): Boolean =
-        runCatching {
-            packageManager.getPermissionInfo(MIUI_GET_INSTALLED_APPS, 0)
-                .packageName == MIUI_PERMISSION_CONTROLLER
-        }.getOrDefault(false)
 
     private fun startVpn() {
         val state = viewModel.state.value
@@ -209,7 +177,5 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "PakomoApp"
-        const val MIUI_GET_INSTALLED_APPS = "com.android.permission.GET_INSTALLED_APPS"
-        const val MIUI_PERMISSION_CONTROLLER = "com.lbe.security.miui"
     }
 }

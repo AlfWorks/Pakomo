@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
 import androidx.compose.material.icons.Icons
@@ -143,7 +144,7 @@ fun SecurityScreen(
     state: PakomoUiState,
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
-    appListPermissionGranted: Boolean,
+    appListAccess: AppListAccess,
     onBack: () -> Unit,
     onClearData: () -> Unit,
     onVpnPermissionClick: () -> Unit,
@@ -167,19 +168,30 @@ fun SecurityScreen(
                 PermissionStatusRow(
                     title = "VPN 服务",
                     detail = "建立本地网络接管",
-                    granted = vpnPermissionGranted,
+                    status = if (vpnPermissionGranted) "已授权" else "未授权",
+                    statusColor = if (vpnPermissionGranted) Accent else Danger,
                     onClick = onVpnPermissionClick,
                 )
                 PermissionStatusRow(
                     title = "通知",
                     detail = "显示 VPN 运行状态",
-                    granted = notificationPermissionGranted,
+                    status = if (notificationPermissionGranted) "已授权" else "未授权",
+                    statusColor = if (notificationPermissionGranted) Accent else Danger,
                     onClick = onNotificationPermissionClick,
                 )
                 PermissionStatusRow(
                     title = "应用列表",
                     detail = "用于选择接管应用",
-                    granted = appListPermissionGranted,
+                    status = when (appListAccess) {
+                        AppListAccess.CHECKING -> "检查中"
+                        AppListAccess.AVAILABLE -> "可用"
+                        AppListAccess.UNAVAILABLE -> "不可用"
+                    },
+                    statusColor = when (appListAccess) {
+                        AppListAccess.CHECKING -> Muted
+                        AppListAccess.AVAILABLE -> Accent
+                        AppListAccess.UNAVAILABLE -> Danger
+                    },
                     onClick = onAppListPermissionClick,
                 )
             }
@@ -224,7 +236,8 @@ fun SecurityScreen(
 private fun PermissionStatusRow(
     title: String,
     detail: String,
-    granted: Boolean,
+    status: String,
+    statusColor: Color,
     onClick: (() -> Unit)?,
 ) {
     Row(
@@ -248,9 +261,9 @@ private fun PermissionStatusRow(
         }
         Spacer(Modifier.padding(horizontal = 6.dp))
         Text(
-            text = if (granted) "已授权" else "未授权",
+            text = status,
             style = MaterialTheme.typography.labelMedium,
-            color = if (granted) Accent else Danger,
+            color = statusColor,
         )
         if (onClick != null) {
             Icon(

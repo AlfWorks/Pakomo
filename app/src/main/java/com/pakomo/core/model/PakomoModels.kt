@@ -181,10 +181,17 @@ data class EngineRuntime(
     val message: String? = null,
 )
 
+enum class AppListAccess {
+    CHECKING,
+    AVAILABLE,
+    UNAVAILABLE,
+}
+
 data class PakomoUiState(
     val scope: TargetScope = TargetScope.APPLICATIONS,
     val apps: List<InstalledApp> = emptyList(),
     val isLoadingApps: Boolean = true,
+    val appListAccess: AppListAccess = AppListAccess.CHECKING,
     val appQuery: String = "",
     val addressDomains: List<String> = emptyList(),
     val rules: List<NetworkRule> = defaultRules,

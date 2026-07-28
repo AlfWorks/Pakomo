@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import com.pakomo.core.model.AppFaultTarget
+import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.SpecialFault
@@ -52,7 +53,6 @@ fun PakomoApp(
     viewModel: PakomoViewModel,
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
-    appListPermissionGranted: Boolean,
     onToggleService: () -> Unit,
     onEmergencyStop: () -> Unit,
     onVpnPermissionClick: () -> Unit,
@@ -123,7 +123,7 @@ fun PakomoApp(
             Screen.Home -> HomeScreen(
                 state = state,
                 trafficChartState = trafficChartState,
-                appScopeEnabled = appListPermissionGranted,
+                appScopeEnabled = state.appListAccess == AppListAccess.AVAILABLE,
                 onScopeSelected = viewModel::selectScope,
                 onOpenScope = { navigate(Screen.Scope) },
                 onOpenRules = { navigate(Screen.Rules) },
@@ -279,7 +279,7 @@ fun PakomoApp(
                 state = state,
                 vpnPermissionGranted = vpnPermissionGranted,
                 notificationPermissionGranted = notificationPermissionGranted,
-                appListPermissionGranted = appListPermissionGranted,
+                appListAccess = state.appListAccess,
                 onBack = goBack,
                 onClearData = viewModel::clearLocalData,
                 onVpnPermissionClick = onVpnPermissionClick,

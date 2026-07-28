@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.EngineRuntime
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.InstalledApp
@@ -55,15 +56,34 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun refreshApps() {
         viewModelScope.launch {
-            _state.update { it.copy(isLoadingApps = true) }
-            val apps = withContext(Dispatchers.IO) {
+            _state.update {
+                it.copy(
+                    isLoadingApps = true,
+                    appListAccess = AppListAccess.CHECKING,
+                )
+            }
+            val result = withContext(Dispatchers.IO) {
                 appCatalog.load(
                     selectedPackages = preferences.readSelectedPackages(),
                     domainsByPackage = preferences.readDomainsByPackage(),
                 )
             }
-            _state.update { it.copy(apps = apps, isLoadingApps = false) }
-            Log.i(TAG, "Application catalog loaded: total=${apps.size}, selected=${apps.count { it.isSelected }}")
+            _state.update {
+                it.copy(
+                    apps = result.apps,
+                    isLoadingApps = false,
+                    appListAccess = if (result.isAvailable) {
+                        AppListAccess.AVAILABLE
+                    } else {
+                        AppListAccess.UNAVAILABLE
+                    },
+                )
+            }
+            Log.i(
+                TAG,
+                "Application catalog loaded: available=${result.isAvailable}, " +
+                    "total=${result.apps.size}, selected=${result.apps.count { it.isSelected }}",
+            )
         }
     }
 
