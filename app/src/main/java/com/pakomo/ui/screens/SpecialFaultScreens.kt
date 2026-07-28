@@ -289,8 +289,8 @@ private fun FaultBehaviorRow(text: String) {
 
 private fun DnsFailureResult.behaviorLabel(): String = when (this) {
     DnsFailureResult.NXDOMAIN -> "NXDOMAIN（-105）"
-    DnsFailureResult.SERVFAIL -> "SERVFAIL（通常 -137）"
-    DnsFailureResult.REFUSED -> "REFUSED（通常 -137）"
+    DnsFailureResult.SERVFAIL -> "SERVFAIL（-137）"
+    DnsFailureResult.REFUSED -> "REFUSED（-137）"
     DnsFailureResult.TIMEOUT -> "DNS 超时（不固定）"
 }
 
