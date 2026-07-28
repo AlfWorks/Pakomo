@@ -86,6 +86,7 @@ class PakomoPreferences(context: Context) {
                     downloadJitterMs = item.optInt("downloadJitterMs", 0),
                     uploadLossPercent = item.optInt("uploadLossPercent", 0),
                     downloadLossPercent = item.optInt("downloadLossPercent", 0),
+                    specialFaults = SpecialFaultCodec.fromJson(item.optJSONObject("specialFaults")),
                 )
             }
         }.getOrDefault(defaultRules)
@@ -110,7 +111,8 @@ class PakomoPreferences(context: Context) {
                     .put("uploadJitterMs", rule.uploadJitterMs)
                     .put("downloadJitterMs", rule.downloadJitterMs)
                     .put("uploadLossPercent", rule.uploadLossPercent)
-                    .put("downloadLossPercent", rule.downloadLossPercent),
+                    .put("downloadLossPercent", rule.downloadLossPercent)
+                    .put("specialFaults", SpecialFaultCodec.toJson(rule.specialFaults)),
             )
         }
         preferences.edit { putString(KEY_RULES, array.toString()) }

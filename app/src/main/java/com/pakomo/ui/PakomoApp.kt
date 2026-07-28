@@ -17,8 +17,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
+import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.ui.screens.DiagnosticsScreen
+import com.pakomo.ui.screens.FaultTargetScreen
 import com.pakomo.ui.screens.HomeScreen
 import com.pakomo.ui.screens.LatencyTestScreen
 import com.pakomo.ui.screens.RuleEditorScreen
@@ -34,6 +37,7 @@ private sealed interface Screen {
     data object Scope : Screen
     data object Rules : Screen
     data class RuleEditor(val draft: NetworkRule) : Screen
+    data class FaultTarget(val ruleId: String, val type: SpecialFaultType) : Screen
     data object Diagnostics : Screen
     data object Settings : Screen
     data object Security : Screen
@@ -136,15 +140,72 @@ fun PakomoApp(
                 onDeleteRule = viewModel::deleteRule,
             )
 
-            is Screen.RuleEditor -> RuleEditorScreen(
-                draft = current.draft,
-                onBack = goBack,
-                onSave = { rule ->
-                    viewModel.saveRule(rule)
-                    viewModel.selectRule(rule.id)
-                    goBack()
-                },
-            )
+            is Screen.RuleEditor -> {
+                val editing = current
+                val selectedAppDomains = remember(state.apps) {
+                    state.apps.asSequence()
+                        .filter(InstalledApp::isSelected)
+                        .associate { it.packageName to it.domains }
+                }
+                val appLabels = remember(state.apps) {
+                    state.apps.associate { it.packageName to it.label }
+                }
+                RuleEditorScreen(
+                    draft = editing.draft,
+                    onBack = goBack,
+                    onSave = { rule ->
+                        viewModel.saveRule(rule)
+                        viewModel.selectRule(rule.id)
+                        goBack()
+                    },
+                    savedRule = state.rules.firstOrNull { it.id == editing.draft.id },
+                    scope = state.scope,
+                    selectedAppDomains = selectedAppDomains,
+                    addressDomains = state.addressDomains,
+                    appLabels = appLabels,
+                    onToggleFault = { type, enabled ->
+                        viewModel.setFaultEnabled(editing.draft.id, type, enabled)
+                    },
+                    onOpenFaultTarget = { type ->
+                        navigate(Screen.FaultTarget(editing.draft.id, type))
+                    },
+                )
+            }
+
+            is Screen.FaultTarget -> {
+                val faultNav = current
+                val rule = state.rules.firstOrNull { it.id == faultNav.ruleId }
+                if (rule == null) {
+                    LaunchedEffect(faultNav.ruleId) { goBack() }
+                } else {
+                    FaultTargetScreen(
+                        rule = rule,
+                        type = faultNav.type,
+                        scope = state.scope,
+                        apps = state.apps,
+                        addressDomains = state.addressDomains,
+                        onBack = goBack,
+                        onSetAppEnabled = { pkg, enabled ->
+                            viewModel.setFaultAppEnabled(faultNav.ruleId, faultNav.type, pkg, enabled)
+                        },
+                        onToggleAppDomain = { pkg, domain, on ->
+                            viewModel.toggleFaultAppDomain(faultNav.ruleId, faultNav.type, pkg, domain, on)
+                        },
+                        onToggleAddress = { domain, on ->
+                            viewModel.toggleFaultAddress(faultNav.ruleId, faultNav.type, domain, on)
+                        },
+                        onBlackoutMode = { mode ->
+                            viewModel.setFaultBlackoutMode(faultNav.ruleId, mode)
+                        },
+                        onDnsResult = { result ->
+                            viewModel.setFaultDnsResult(faultNav.ruleId, result)
+                        },
+                        onDnsCacheGuard = { enabled ->
+                            viewModel.setFaultDnsCacheGuard(faultNav.ruleId, enabled)
+                        },
+                    )
+                }
+            }
 
             Screen.Diagnostics -> DiagnosticsScreen(
                 state = state,

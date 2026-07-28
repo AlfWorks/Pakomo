@@ -41,8 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.HorizontalDivider
 import com.pakomo.core.model.NetworkRule
+import com.pakomo.core.model.SpecialFaultType
+import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.Border
 import com.pakomo.ui.theme.Accent
 import com.pakomo.ui.theme.OnSurfaceVariant
 
@@ -51,6 +55,13 @@ fun RuleEditorScreen(
     draft: NetworkRule,
     onBack: () -> Unit,
     onSave: (NetworkRule) -> Unit,
+    savedRule: NetworkRule?,
+    scope: TargetScope,
+    selectedAppDomains: Map<String, List<String>>,
+    addressDomains: List<String>,
+    appLabels: Map<String, String>,
+    onToggleFault: (SpecialFaultType, Boolean) -> Unit,
+    onOpenFaultTarget: (SpecialFaultType) -> Unit,
 ) {
     var name by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
     var advanced by rememberSaveable(draft.id) { mutableStateOf(draft.advanced) }
@@ -189,6 +200,17 @@ fun RuleEditorScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+
+            HorizontalDivider(color = Border, thickness = 1.dp)
+            SpecialFaultSection(
+                rule = savedRule,
+                scope = scope,
+                selectedAppDomains = selectedAppDomains,
+                addressDomains = addressDomains,
+                appLabels = appLabels,
+                onToggle = onToggleFault,
+                onOpenTarget = onOpenFaultTarget,
+            )
         }
     }
 }

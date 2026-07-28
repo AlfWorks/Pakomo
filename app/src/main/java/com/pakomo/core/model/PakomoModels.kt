@@ -39,6 +39,7 @@ data class NetworkRule(
     val downloadJitterMs: Int = 0,
     val uploadLossPercent: Int = 0,
     val downloadLossPercent: Int = 0,
+    val specialFaults: SpecialFaultConfig = SpecialFaultConfig(),
 ) {
     val summary: String
         get() = if (advanced) {
@@ -59,6 +60,89 @@ data class NetworkRule(
                 }
             }.joinToString(" · ")
         }
+}
+
+/** The three independently-toggleable special faults. */
+enum class SpecialFaultType(val label: String, val entryLabel: String) {
+    CONNECTION_RESET("连接重置", "连接重置"),
+    DNS_FAILURE("DNS 失败", "DNS 失败"),
+    NETWORK_BLACKOUT("网络中断", "网络中断"),
+}
+
+/** DNS 解析失败的返回结果。 */
+enum class DnsFailureResult(val label: String) {
+    NXDOMAIN("域名不存在 (NXDOMAIN)"),
+    SERVFAIL("服务失败 (SERVFAIL)"),
+    REFUSED("拒绝解析 (REFUSED)"),
+    TIMEOUT("超时不响应"),
+}
+
+/** 网络中断的两种表现。 */
+enum class BlackoutMode(val label: String) {
+    SILENT("静默中断（丢弃流量，等待超时）"),
+    IMMEDIATE("立即失败（拒绝新连接并关闭已有连接）"),
+}
+
+/** Connection Reset 触发时机；第一阶段仅立即重置。 */
+enum class ResetTiming(val label: String) {
+    IMMEDIATE("立即重置"),
+}
+
+/**
+ * 单个应用在“指定应用”模式下对某项特殊故障的目标选择。
+ *
+ * [enabled] 是应用父开关。[domains] 是该应用被选中的域名子集：
+ * - 应用未开启域名限制（scope 里该应用无域名配置）时，[domains] 为空且故障对整应用生效。
+ * - 应用有域名配置时，[domains] 必须至少包含一个域名才生效；为空表示未选择、不生效。
+ */
+data class AppFaultTarget(
+    val packageName: String,
+    val enabled: Boolean = false,
+    val domains: List<String> = emptyList(),
+)
+
+/**
+ * 一项特殊故障的完整配置：启用状态、故障参数，以及分别保存的“指定应用”与“指定域名”目标。
+ * 全局模式不保存额外目标，仅由 [enabled] 决定是否对整个接管范围生效。
+ * 运行时只读取当前接管模式对应的目标字段。
+ */
+data class SpecialFault(
+    val type: SpecialFaultType,
+    val enabled: Boolean = false,
+    // 类型相关参数：仅与 [type] 匹配的字段有意义。
+    val dnsResult: DnsFailureResult = DnsFailureResult.NXDOMAIN,
+    val dnsCacheGuard: Boolean = false,
+    val blackoutMode: BlackoutMode = BlackoutMode.SILENT,
+    val resetTiming: ResetTiming = ResetTiming.IMMEDIATE,
+    // 指定应用模式：按包名保存每个应用的父开关与选中域名。
+    val appTargets: Map<String, AppFaultTarget> = emptyMap(),
+    // 指定域名模式：被选中的指定域名列表。
+    val addressTargets: List<String> = emptyList(),
+)
+
+/**
+ * 一条规则携带的三套特殊故障配置。三者互不互斥，可同时启用。
+ * 该配置随 [NetworkRule] 一起保存、复制与升级。
+ */
+data class SpecialFaultConfig(
+    val connectionReset: SpecialFault = SpecialFault(SpecialFaultType.CONNECTION_RESET),
+    val dnsFailure: SpecialFault = SpecialFault(SpecialFaultType.DNS_FAILURE),
+    val networkBlackout: SpecialFault = SpecialFault(SpecialFaultType.NETWORK_BLACKOUT),
+) {
+    val all: List<SpecialFault>
+        get() = listOf(connectionReset, dnsFailure, networkBlackout)
+
+    fun fault(type: SpecialFaultType): SpecialFault = when (type) {
+        SpecialFaultType.CONNECTION_RESET -> connectionReset
+        SpecialFaultType.DNS_FAILURE -> dnsFailure
+        SpecialFaultType.NETWORK_BLACKOUT -> networkBlackout
+    }
+
+    fun withFault(fault: SpecialFault): SpecialFaultConfig = when (fault.type) {
+        SpecialFaultType.CONNECTION_RESET -> copy(connectionReset = fault)
+        SpecialFaultType.DNS_FAILURE -> copy(dnsFailure = fault)
+        SpecialFaultType.NETWORK_BLACKOUT -> copy(networkBlackout = fault)
+    }
 }
 
 data class RuntimeStats(
