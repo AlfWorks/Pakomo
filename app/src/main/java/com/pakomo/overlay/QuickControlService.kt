@@ -10,10 +10,12 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.Shader
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -111,8 +113,8 @@ class QuickControlService : Service() {
                 }
             }
         }
-        val width = dp(42)
-        val height = dp(54)
+        val width = dp(48)
+        val height = dp(68)
         val screen = screenBounds()
         val storedY = overlayState.getInt(KEY_Y, screen.height() / 3)
         val onRight = overlayState.getBoolean(KEY_RIGHT, true)
@@ -311,7 +313,6 @@ class QuickControlService : Service() {
 
     private class QuickControlView(context: Context) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val iconPath = Path()
         private val backgroundPath = Path()
         var attachedRight: Boolean = true
             set(value) {
@@ -338,86 +339,160 @@ class QuickControlService : Service() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val density = resources.displayMetrics.density
-            val shadowInset = 3f * density
-            val bounds = RectF(
-                if (attachedRight) shadowInset else 0f,
-                shadowInset,
-                if (attachedRight) width.toFloat() else width - shadowInset,
-                height - shadowInset,
-            )
-            val innerRadius = 11f * density
-            val edgeRadius = 3f * density
+            // Room on the inward side / top / bottom for the soft shadow and active glow; the docked
+            // edge stays flush to the screen.
+            val pad = 7f * density
+            val press = if (isPressed) 1f * density else 0f
+            val left: Float
+            val right: Float
+            if (attachedRight) {
+                left = pad + press
+                right = width.toFloat() // flush to the right screen edge
+            } else {
+                left = 0f // flush to the left screen edge
+                right = width - pad - press
+            }
+            val bounds = RectF(left, pad + press, right, height - pad - press)
+            val innerRadius = 18f * density
+            val edgeRadius = 5f * density
             val radii = if (attachedRight) {
                 floatArrayOf(
-                    innerRadius, innerRadius,
-                    edgeRadius, edgeRadius,
-                    edgeRadius, edgeRadius,
-                    innerRadius, innerRadius,
+                    innerRadius, innerRadius, edgeRadius, edgeRadius,
+                    edgeRadius, edgeRadius, innerRadius, innerRadius,
                 )
             } else {
                 floatArrayOf(
-                    edgeRadius, edgeRadius,
-                    innerRadius, innerRadius,
-                    innerRadius, innerRadius,
-                    edgeRadius, edgeRadius,
+                    edgeRadius, edgeRadius, innerRadius, innerRadius,
+                    innerRadius, innerRadius, edgeRadius, edgeRadius,
                 )
             }
             backgroundPath.reset()
             backgroundPath.addRoundRect(bounds, radii, Path.Direction.CW)
+
+            val active = stage == EngineStage.FORWARDING
+            val (topColor, bottomColor) = fillColors()
+
+            // Soft drop shadow behind the tab; when active it becomes a slowly breathing brand glow
+            // so "running" is unmistakable at a glance (the only state that pulses).
             paint.style = Paint.Style.FILL
-            paint.color = when (stage) {
-                EngineStage.FORWARDING -> Color.rgb(59, 111, 224)
-                EngineStage.STARTING -> Color.rgb(229, 162, 59)
-                EngineStage.ERROR -> Color.rgb(192, 57, 46)
-                EngineStage.STOPPED -> Color.rgb(112, 116, 124)
-            }
-            paint.alpha = if (isPressed) 215 else 245
-            paint.setShadowLayer(2.5f * density, 0f, density, 0x28000000)
-            canvas.drawPath(backgroundPath, paint)
-            paint.clearShadowLayer()
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = density
-            paint.color = 0x24FFFFFF
+            paint.shader = null
             paint.alpha = 255
+            if (active) {
+                val t = (android.os.SystemClock.uptimeMillis() % 2600L) / 2600f
+                val breathe = 0.5f + 0.5f * kotlin.math.sin(t * 2f * Math.PI).toFloat()
+                val glowAlpha = (0x3A + 0x50 * breathe).toInt() and 0xFF
+                paint.color = 0x2A3B6FE0
+                paint.setShadowLayer(
+                    (7f + 5f * breathe) * density, 0f, 1.5f * density,
+                    (glowAlpha shl 24) or 0x3B6FE0,
+                )
+                canvas.drawPath(backgroundPath, paint)
+                paint.clearShadowLayer()
+                postInvalidateOnAnimation()
+            } else {
+                paint.color = 0x33000000
+                paint.setShadowLayer(6f * density, 0f, 1.5f * density, 0x38000000)
+                canvas.drawPath(backgroundPath, paint)
+                paint.clearShadowLayer()
+            }
+
+            // Glass fill: a gentle top-to-bottom sheen.
+            paint.shader = LinearGradient(
+                0f, bounds.top, 0f, bounds.bottom, topColor, bottomColor, Shader.TileMode.CLAMP,
+            )
+            paint.alpha = if (isPressed) 235 else 255
             canvas.drawPath(backgroundPath, paint)
-            paint.style = Paint.Style.FILL
-            paint.color = Color.WHITE
-            val cx = bounds.centerX()
-            val cy = bounds.centerY()
+            paint.shader = null
+            paint.alpha = 255
+
+            // Hairline body edge + a brighter top highlight rim for a lit-from-above glass feel.
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f * density
+            paint.color = 0x1FFFFFFF
+            canvas.drawPath(backgroundPath, paint)
+            paint.strokeWidth = 1.4f * density
+            paint.shader = LinearGradient(
+                0f, bounds.top, 0f, bounds.top + bounds.height() * 0.55f,
+                0x73FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP,
+            )
+            canvas.drawPath(backgroundPath, paint)
+            paint.shader = null
+
+            drawGlyph(canvas, bounds.centerX(), bounds.centerY(), density)
+        }
+
+        private fun fillColors(): Pair<Int, Int> = when (stage) {
+            // bright blue → accent, reads solid and "on"
+            EngineStage.FORWARDING -> 0xFF5A86EE.toInt() to 0xFF3B6FE0.toInt()
+            // frosted dark glass (the sweeping arc carries the "starting" meaning)
+            EngineStage.STARTING -> 0xF23C434D.toInt() to 0xF6272C33.toInt()
+            EngineStage.ERROR -> 0xFFCE5A50.toInt() to 0xFFB8463C.toInt()
+            // translucent slate — unobtrusive when idle, works over light or dark apps
+            EngineStage.STOPPED -> 0xE63C434D.toInt() to 0xF0272C33.toInt()
+        }
+
+        /**
+         * Each state gets a distinct silhouette (not just a background colour), so it stays legible
+         * over any app and regardless of colour perception:
+         *  - stopped  → play triangle  (tap to start)
+         *  - starting → sweeping arc   (spinner)
+         *  - running  → stop square    (active · tap to stop) + the breathing glow
+         *  - error    → exclamation
+         */
+        private fun drawGlyph(canvas: Canvas, cx: Float, cy: Float, density: Float) {
             when (stage) {
-                EngineStage.FORWARDING -> {
-                    val half = 6f * density
-                    canvas.drawRoundRect(
-                        RectF(cx - half, cy - half, cx + half, cy + half),
-                        2.5f * density,
-                        2.5f * density,
-                        paint,
-                    )
-                }
                 EngineStage.STARTING -> {
                     paint.style = Paint.Style.STROKE
-                    paint.strokeWidth = 2.5f * density
                     paint.strokeCap = Paint.Cap.ROUND
+                    paint.color = Color.WHITE
+                    paint.strokeWidth = 2.6f * density
                     val half = 8f * density
                     val angle = (android.os.SystemClock.uptimeMillis() / 4L % 360L).toFloat()
                     canvas.drawArc(
                         RectF(cx - half, cy - half, cx + half, cy + half),
-                        angle,
-                        250f,
-                        false,
-                        paint,
+                        angle, 250f, false, paint,
                     )
                     postInvalidateOnAnimation()
                 }
-                EngineStage.ERROR, EngineStage.STOPPED -> {
-                    val halfHeight = 8f * density
-                    val halfWidth = 6f * density
-                    iconPath.reset()
-                    iconPath.moveTo(cx - halfWidth, cy - halfHeight)
-                    iconPath.lineTo(cx + halfWidth + 2f * density, cy)
-                    iconPath.lineTo(cx - halfWidth, cy + halfHeight)
-                    iconPath.close()
-                    canvas.drawPath(iconPath, paint)
+
+                EngineStage.FORWARDING -> {
+                    paint.style = Paint.Style.FILL
+                    paint.color = Color.WHITE
+                    val h = 6.5f * density
+                    canvas.drawRoundRect(
+                        RectF(cx - h, cy - h, cx + h, cy + h),
+                        2.6f * density, 2.6f * density, paint,
+                    )
+                }
+
+                EngineStage.STOPPED -> {
+                    paint.style = Paint.Style.FILL
+                    paint.color = 0xF2FFFFFF.toInt()
+                    paint.strokeJoin = Paint.Join.ROUND
+                    paint.strokeCap = Paint.Cap.ROUND
+                    paint.strokeWidth = 3f * density
+                    // play triangle, nudged right so it reads optically centred
+                    val hw = 6f * density
+                    val hh = 7.5f * density
+                    backgroundPath.reset()
+                    backgroundPath.moveTo(cx - hw + 1f * density, cy - hh)
+                    backgroundPath.lineTo(cx + hw + 2.5f * density, cy)
+                    backgroundPath.lineTo(cx - hw + 1f * density, cy + hh)
+                    backgroundPath.close()
+                    paint.style = Paint.Style.FILL_AND_STROKE // stroke rounds the corners
+                    canvas.drawPath(backgroundPath, paint)
+                    paint.style = Paint.Style.FILL
+                }
+
+                EngineStage.ERROR -> {
+                    paint.style = Paint.Style.FILL
+                    paint.color = Color.WHITE
+                    val barW = 3f * density
+                    canvas.drawRoundRect(
+                        RectF(cx - barW / 2f, cy - 8.5f * density, cx + barW / 2f, cy + 2.5f * density),
+                        barW / 2f, barW / 2f, paint,
+                    )
+                    canvas.drawCircle(cx, cy + 7f * density, 1.9f * density, paint)
                 }
             }
         }
