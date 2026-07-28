@@ -107,6 +107,8 @@ fun DiagnosticsScreen(
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSecurity: () -> Unit,
+    quickControlEnabled: Boolean,
+    onQuickControlChanged: (Boolean) -> Unit,
 ) {
     var resumeLast by remember { mutableStateOf(false) }
     var showSystemWarning by remember { mutableStateOf(true) }
@@ -118,7 +120,11 @@ fun SettingsScreen(
             .statusBarsPadding(),
     ) {
         ScreenHeader(title = "设置", onBack = onBack)
-        Column {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 16.dp),
+        ) {
             SectionLabel("安全")
             NavigationRow(
                 icon = Icons.Rounded.Security,
@@ -137,6 +143,11 @@ fun SettingsScreen(
                     checked = showSystemWarning,
                     onCheckedChange = { showSystemWarning = it },
                 )
+                SettingSwitchRow(
+                    title = "快捷悬浮控制",
+                    checked = quickControlEnabled,
+                    onCheckedChange = onQuickControlChanged,
+                )
             }
             SectionLabel("应用与系统")
             InfoCard {
@@ -149,8 +160,7 @@ fun SettingsScreen(
             }
             SectionLabel("网络")
             InfoCard {
-                InfoRow("当前连接", network.connection)
-                InfoRow("IP 协议", network.protocols)
+                InfoRow("当前连接", "${network.connection} · ${network.protocols}")
                 InfoRow("DNS", network.dns)
             }
         }

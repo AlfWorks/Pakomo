@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Required by an internal network-testing tool to let the user select any installed app. -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -42,6 +43,15 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local, user-controlled network condition simulation for selected test traffic." />
+        </service>
+
+        <service
+            android:name=".overlay.QuickControlService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled visible overlay for immediate VPN start and stop control." />
         </service>
     </application>
 </manifest>

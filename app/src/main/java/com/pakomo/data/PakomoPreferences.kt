@@ -64,6 +64,13 @@ class PakomoPreferences(context: Context) {
         preferences.edit { putString(KEY_ACTIVE_RULE, id) }
     }
 
+    fun readQuickControlEnabled(): Boolean =
+        preferences.getBoolean(KEY_QUICK_CONTROL_ENABLED, false)
+
+    fun writeQuickControlEnabled(enabled: Boolean) {
+        preferences.edit { putBoolean(KEY_QUICK_CONTROL_ENABLED, enabled) }
+    }
+
     fun readRules(): List<NetworkRule> {
         val raw = preferences.getString(KEY_RULES, null) ?: return defaultRules
         return runCatching {
@@ -136,5 +143,6 @@ class PakomoPreferences(context: Context) {
         const val KEY_ADDRESS_DOMAINS = "address_domains"
         const val KEY_ACTIVE_RULE = "active_rule"
         const val KEY_RULES = "rules"
+        const val KEY_QUICK_CONTROL_ENABLED = "quick_control_enabled"
     }
 }

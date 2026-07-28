@@ -53,10 +53,13 @@ fun PakomoApp(
     viewModel: PakomoViewModel,
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
+    quickControlEnabled: Boolean,
     onToggleService: () -> Unit,
     onVpnPermissionClick: () -> Unit,
     onNotificationPermissionClick: () -> Unit,
     onAppListPermissionClick: () -> Unit,
+    onQuickControlChanged: (Boolean) -> Unit,
+    onClearData: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val trafficChartState = rememberTrafficChartState(state)
@@ -271,6 +274,8 @@ fun PakomoApp(
             Screen.Settings -> SettingsScreen(
                 onBack = goBack,
                 onOpenSecurity = { navigate(Screen.Security) },
+                quickControlEnabled = quickControlEnabled,
+                onQuickControlChanged = onQuickControlChanged,
             )
 
             Screen.Security -> SecurityScreen(
@@ -279,7 +284,7 @@ fun PakomoApp(
                 notificationPermissionGranted = notificationPermissionGranted,
                 appListAccess = state.appListAccess,
                 onBack = goBack,
-                onClearData = viewModel::clearLocalData,
+                onClearData = onClearData,
                 onVpnPermissionClick = onVpnPermissionClick,
                 onNotificationPermissionClick = onNotificationPermissionClick,
                 onAppListPermissionClick = onAppListPermissionClick,

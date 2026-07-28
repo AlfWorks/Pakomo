@@ -24,6 +24,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.TargetScope
+import com.pakomo.data.PakomoPreferences
+import com.pakomo.overlay.QuickControlService
 import com.pakomo.ui.PakomoApp
 import com.pakomo.ui.PakomoViewModel
 import com.pakomo.ui.theme.PakomoTheme
@@ -31,9 +33,12 @@ import com.pakomo.vpn.VpnServiceController
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PakomoViewModel by viewModels()
+    private val preferences by lazy { PakomoPreferences(this) }
     private var vpnPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(false)
+    private var quickControlEnabled by mutableStateOf(false)
     private var startAfterVpnPermission = false
+    private var enableQuickControlAfterPermission = false
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -59,11 +64,24 @@ class MainActivity : ComponentActivity() {
             viewModel.refreshApps()
         }
 
+    private val overlayPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            val granted = Settings.canDrawOverlays(this)
+            if (enableQuickControlAfterPermission && granted) {
+                enableQuickControl()
+            } else {
+                quickControlEnabled = false
+            }
+            enableQuickControlAfterPermission = false
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "Application started")
         enableEdgeToEdge()
         refreshPermissionStates()
+        QuickControlService.setHostVisible(true)
+        if (quickControlEnabled) QuickControlService.start(this)
 
         setContent {
             val serviceRuntime by VpnServiceController.runtime.collectAsState()
@@ -76,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     vpnPermissionGranted = vpnPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
+                    quickControlEnabled = quickControlEnabled,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
                             val current = viewModel.state.value
@@ -112,9 +131,31 @@ class MainActivity : ComponentActivity() {
                     onAppListPermissionClick = {
                         openAppPermissionSettings()
                     },
+                    onQuickControlChanged = ::updateQuickControlEnabled,
+                    onClearData = {
+                        viewModel.clearLocalData()
+                        updateQuickControlEnabled(false)
+                    },
                 )
             }
         }
+        handleQuickControlIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleQuickControlIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        QuickControlService.setHostVisible(true)
+    }
+
+    override fun onStop() {
+        QuickControlService.setHostVisible(false)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -161,6 +202,51 @@ class MainActivity : ComponentActivity() {
         vpnPermissionGranted = VpnService.prepare(this) == null
         notificationPermissionGranted =
             NotificationManagerCompat.from(this).areNotificationsEnabled()
+        val overlayGranted = Settings.canDrawOverlays(this)
+        val storedQuickControl = preferences.readQuickControlEnabled()
+        if (storedQuickControl && !overlayGranted) {
+            preferences.writeQuickControlEnabled(false)
+            QuickControlService.stop(this)
+        }
+        quickControlEnabled = storedQuickControl && overlayGranted
+    }
+
+    private fun updateQuickControlEnabled(enabled: Boolean) {
+        if (!enabled) {
+            enableQuickControlAfterPermission = false
+            preferences.writeQuickControlEnabled(false)
+            quickControlEnabled = false
+            QuickControlService.stop(this)
+            return
+        }
+        if (Settings.canDrawOverlays(this)) {
+            enableQuickControl()
+            return
+        }
+        enableQuickControlAfterPermission = true
+        runCatching {
+            overlayPermissionLauncher.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.onFailure {
+            enableQuickControlAfterPermission = false
+            Toast.makeText(this, "无法打开悬浮窗授权页面", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun enableQuickControl() {
+        preferences.writeQuickControlEnabled(true)
+        quickControlEnabled = true
+        QuickControlService.start(this)
+    }
+
+    private fun handleQuickControlIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_START_FROM_QUICK_CONTROL, false) != true) return
+        intent.removeExtra(EXTRA_START_FROM_QUICK_CONTROL)
+        requestVpnPermission(startAfterGrant = true)
     }
 
     private fun openAppPermissionSettings() {
@@ -187,7 +273,8 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private companion object {
+    companion object {
+        const val EXTRA_START_FROM_QUICK_CONTROL = "start_from_quick_control"
         const val TAG = "PakomoApp"
     }
 }
