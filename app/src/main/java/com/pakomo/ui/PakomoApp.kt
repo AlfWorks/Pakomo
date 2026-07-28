@@ -171,9 +171,6 @@ fun PakomoApp(
                         .filter(InstalledApp::isSelected)
                         .associate { it.packageName to it.domains }
                 }
-                val appLabels = remember(state.apps) {
-                    state.apps.associate { it.packageName to it.label }
-                }
                 editorStateHolder.SaveableStateProvider("rule-editor-${editing.id}") {
                     RuleEditorScreen(
                         draft = editing,
@@ -186,7 +183,6 @@ fun PakomoApp(
                         scope = state.scope,
                         selectedAppDomains = selectedAppDomains,
                         addressDomains = state.addressDomains,
-                        appLabels = appLabels,
                         onToggleFault = { type, enabled ->
                             mutateDraftFault(type) { it.copy(enabled = enabled) }
                         },

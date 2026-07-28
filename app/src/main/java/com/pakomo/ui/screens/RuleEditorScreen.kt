@@ -16,10 +16,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -34,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,7 +61,6 @@ fun RuleEditorScreen(
     scope: TargetScope,
     selectedAppDomains: Map<String, List<String>>,
     addressDomains: List<String>,
-    appLabels: Map<String, String>,
     onToggleFault: (SpecialFaultType, Boolean) -> Unit,
     onDnsResult: (DnsFailureResult) -> Unit,
     onBlackoutMode: (BlackoutMode) -> Unit,
@@ -97,6 +98,8 @@ fun RuleEditorScreen(
         mutableStateOf(draft.uploadKbps?.toString().orEmpty())
     }
     var error by remember { mutableStateOf<String?>(null) }
+    var showNameDialog by rememberSaveable(draft.id) { mutableStateOf(false) }
+    var pendingName by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
 
     fun buildRule(): RuleValidation = validateRule(
         draft = draft,
@@ -124,14 +127,30 @@ fun RuleEditorScreen(
             title = name,
             onBack = onBack,
             titleContent = {
-                BasicTextField(
-                    value = name,
-                    onValueChange = { name = it; error = null },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.headlineSmall.copy(color = Color.Black),
-                    cursorBrush = SolidColor(Accent),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            pendingName = name
+                            showNameDialog = true
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = "修改规则名称",
+                        tint = OnSurfaceVariant,
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp)
+                            .height(20.dp),
+                    )
+                }
             },
             action = {
                 TextButton(
@@ -207,13 +226,42 @@ fun RuleEditorScreen(
                 scope = scope,
                 selectedAppDomains = selectedAppDomains,
                 addressDomains = addressDomains,
-                appLabels = appLabels,
                 onToggle = onToggleFault,
                 onDnsResult = onDnsResult,
                 onBlackoutMode = onBlackoutMode,
                 onOpenTarget = onOpenFaultTarget,
             )
         }
+    }
+
+    if (showNameDialog) {
+        AlertDialog(
+            onDismissRequest = { showNameDialog = false },
+            title = { Text("修改规则名称") },
+            text = {
+                OutlinedTextField(
+                    value = pendingName,
+                    onValueChange = { pendingName = it },
+                    label = { Text("规则名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = pendingName.isNotBlank(),
+                    onClick = {
+                        name = pendingName.trim()
+                        error = null
+                        showNameDialog = false
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNameDialog = false }) { Text("取消") }
+            },
+        )
     }
 }
 
