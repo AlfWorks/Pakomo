@@ -19,6 +19,10 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.forwarding.SocketProtector
 import com.pakomo.forwarding.DomainRoutingPolicy
 import com.pakomo.forwarding.DomainScopedShaping
+import com.pakomo.forwarding.FaultHit
+import com.pakomo.forwarding.FaultHitReporter
+import com.pakomo.forwarding.FaultPolicy
+import com.pakomo.forwarding.FaultRuntime
 import com.pakomo.forwarding.PerAppShapingPolicy
 import com.pakomo.forwarding.ShapeEverythingShaping
 import com.pakomo.forwarding.ShapedApplication
@@ -34,6 +38,7 @@ import java.net.Inet4Address
 import java.net.Socket
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,6 +59,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var tunnelConfig: File? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var statsJob: Job? = null
+    private var reconfigureJob: Job? = null
+    private val runtimeGeneration = AtomicLong(0L)
     private var terminalError: String? = null
     private var hitTracker: RecentHitTracker? = null
     private var activeScopeLabel: String? = null
@@ -63,6 +70,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var latestUploadBytesPerSecond: Long = 0L
     private var latestDownloadBytesPerSecond: Long = 0L
     private var startedAtElapsedMs: Long = 0L
+    private val faultHitLogger = FaultHitLogger(TAG)
 
     override fun onCreate() {
         super.onCreate()
@@ -77,27 +85,42 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 stopValidation()
             }
             ACTION_START -> {
+                val config = intent.consumeRuntimeConfig()
+                if (config == null) {
+                    Log.e(TAG, "Start configuration is no longer available")
+                    stopWithError("启动配置已失效，请重试")
+                    return START_NOT_STICKY
+                }
                 terminalError = null
-                val packages = intent.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES).orEmpty()
-                val targetDomains = intent.getStringArrayListExtra(EXTRA_TARGET_DOMAINS).orEmpty()
-                val domainsByPackage = intent.readDomainsByPackage()
-                val scope = intent.readScope()
-                val rule = intent.readRule()
                 Log.i(
                     TAG,
-                    "Starting forwarding: scope=${scope.name}, apps=${packages.size}, domains=${targetDomains.size}",
+                    "Starting forwarding: scope=${config.scope.name}, " +
+                        "apps=${config.selectedPackages.size}, domains=${config.targetDomains.size}",
                 )
                 VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
                 startForeground(
                     NOTIFICATION_ID,
                     buildNotification(
-                        notificationTitle(rule.name, scope.label),
+                        notificationTitle(config.rule.name, config.scope.label),
                         trafficNotificationText(0L, 0L),
                     ),
                 )
-                startForwarding(scope, packages, targetDomains, domainsByPackage, rule)
+                startForwarding(
+                    config.scope,
+                    config.selectedPackages,
+                    config.targetDomains,
+                    config.domainsByPackage,
+                    config.rule,
+                )
             }
-            ACTION_UPDATE -> reconfigure(intent)
+            ACTION_UPDATE -> {
+                val config = intent.consumeRuntimeConfig()
+                if (config == null) {
+                    Log.w(TAG, "Ignoring an expired runtime update")
+                } else {
+                    reconfigure(config)
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -108,22 +131,29 @@ class WeakNetworkVpnService : android.net.VpnService() {
      * active connection is dropped. Scope / selected-app changes still go through ACTION_START
      * because the VPN interface's allowed-app set can only be set when it is established.
      */
-    private fun reconfigure(intent: Intent) {
-        val socks = socksServer ?: return
-        val scope = intent.readScope()
-        val rule = intent.readRule()
-        val allowedPackages = intent.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES).orEmpty()
-        val targetDomains = intent.getStringArrayListExtra(EXTRA_TARGET_DOMAINS).orEmpty()
-        val (shaper, shapingPolicy) = buildRuntime(
-            scope = scope,
-            allowedPackages = allowedPackages,
-            targetDomains = targetDomains,
-            domainsByPackage = intent.readDomainsByPackage(),
-            rule = rule,
-        )
-        socks.reconfigure(shaper, shapingPolicy)
-        Log.i(TAG, "Runtime configuration updated: scope=${scope.name}")
-        updateRuntimeNotification()
+    private fun reconfigure(config: VpnRuntimeConfig) {
+        reconfigureJob?.cancel()
+        val generation = runtimeGeneration.incrementAndGet()
+        reconfigureJob = serviceScope.launch {
+            val socks = socksServer ?: return@launch
+            runCatching {
+                buildRuntime(
+                    scope = config.scope,
+                    allowedPackages = config.selectedPackages,
+                    targetDomains = config.targetDomains,
+                    domainsByPackage = config.domainsByPackage,
+                    rule = config.rule,
+                )
+            }.onSuccess { runtime ->
+                if (runtimeGeneration.get() != generation) return@onSuccess
+                applyRuntime(runtime)
+                socks.reconfigure(runtime.shaper, runtime.shapingPolicy, runtime.faultPolicy)
+                Log.i(TAG, "Runtime configuration updated: scope=${config.scope.name}")
+                updateRuntimeNotification()
+            }.onFailure { error ->
+                Log.e(TAG, "Runtime configuration update failed", error)
+            }
+        }
     }
 
     override fun onRevoke() {
@@ -157,9 +187,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 password = UUID.randomUUID().toString().replace("-", "") +
                     UUID.randomUUID().toString().replace("-", ""),
             )
-            val (shaper, shapingPolicy) = buildRuntime(
+            val runtime = buildRuntime(
                 scope, allowedPackages, targetDomains, domainsByPackage, rule,
             )
+            applyRuntime(runtime)
             val localSocks = Socks5Server(
                 credentials = credentials,
                 protector = object : SocketProtector {
@@ -183,8 +214,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
                         }
                     }
                 },
-                shaper = shaper,
-                shapingPolicy = shapingPolicy,
+                shaper = runtime.shaper,
+                shapingPolicy = runtime.shapingPolicy,
+                faultPolicy = runtime.faultPolicy,
                 expectOriginPreamble = true,
             )
             val socksPort = localSocks.start()
@@ -238,8 +270,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun stopPipeline() {
+        runtimeGeneration.incrementAndGet()
         statsJob?.cancel()
         statsJob = null
+        reconfigureJob?.cancel()
+        reconfigureJob = null
         runCatching { nativeTunnel?.stop() }
         nativeTunnel = null
         runCatching { tunnelInterface?.close() }
@@ -349,22 +384,71 @@ class WeakNetworkVpnService : android.net.VpnService() {
         return builder
     }
 
-    /** Builds the shaper + shaping policy for a config and refreshes the diagnostics fields. */
+    /** Builds the shaper + shaping policy + fault policy for a config and refreshes diagnostics. */
     private fun buildRuntime(
         scope: TargetScope,
         allowedPackages: List<String>,
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
-    ): Pair<TrafficShaper, ShapingPolicy> {
+    ): RuntimeComponents {
         val shaper = TrafficShaper(rule)
         val hits = RecentHitTracker()
-        hitTracker = hits
-        activeScopeLabel = scope.label
-        activeShaper = shaper
-        activeRuleName = rule.name
-        val policy = buildShapingPolicy(scope, allowedPackages, targetDomains, domainsByPackage, hits)
-        return shaper to policy
+        val shaping = buildShapingPolicy(
+            scope, allowedPackages, targetDomains, domainsByPackage, hits,
+        )
+        val faultPolicy = buildFaultPolicy(
+            scope,
+            allowedPackages,
+            targetDomains,
+            domainsByPackage,
+            rule,
+            shaping.attributor,
+        )
+        return RuntimeComponents(
+            shaper = shaper,
+            shapingPolicy = shaping.policy,
+            faultPolicy = faultPolicy,
+            hitTracker = hits,
+            scopeLabel = scope.label,
+            attributor = shaping.attributor,
+            ruleName = rule.name,
+        )
+    }
+
+    private fun applyRuntime(runtime: RuntimeComponents) {
+        hitTracker = runtime.hitTracker
+        activeScopeLabel = runtime.scopeLabel
+        activeShaper = runtime.shaper
+        activeRuleName = runtime.ruleName
+        attributor = runtime.attributor
+    }
+
+    /**
+     * Builds the special-fault enforcement layer for the active scope, reusing the same
+     * [ConnectionAttributor] as shaping so a connection is attributed to the same app(s). Returns
+     * [FaultPolicy.NONE] when no fault is enabled, so the normal path pays nothing.
+     */
+    private fun buildFaultPolicy(
+        scope: TargetScope,
+        allowedPackages: List<String>,
+        targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
+        rule: NetworkRule,
+        connectionAttributor: AndroidConnectionAttributor?,
+    ): FaultPolicy {
+        if (rule.specialFaults.all.none { it.enabled }) return FaultPolicy.NONE
+        val selectedAppDomains = allowedPackages.distinct()
+            .associateWith { domainsByPackage[it].orEmpty() }
+        val reporter = FaultHitReporter(faultHitLogger::report)
+        return FaultRuntime(
+            scope = scope,
+            config = rule.specialFaults,
+            selectedAppDomains = selectedAppDomains,
+            addressDomains = targetDomains,
+            attributor = connectionAttributor,
+            reporter = reporter,
+        )
     }
 
     /**
@@ -378,21 +462,27 @@ class WeakNetworkVpnService : android.net.VpnService() {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         hits: RecentHitTracker,
-    ): ShapingPolicy = when (scope) {
-        TargetScope.GLOBAL -> ShapingPolicy { ShapeEverythingShaping(scope.label, hits) }
+    ): RuntimeShaping = when (scope) {
+        TargetScope.GLOBAL -> RuntimeShaping(
+            policy = ShapingPolicy { ShapeEverythingShaping(scope.label, hits) },
+            attributor = null,
+        )
 
         TargetScope.ADDRESSES -> {
             val policy = DomainRoutingPolicy(targetDomains)
-            ShapingPolicy {
-                DomainScopedShaping(
-                    scope = scope.label,
-                    policy = policy,
-                    packageName = null,
-                    appLabel = null,
-                    attributed = true,
-                    reporter = hits,
-                )
-            }
+            RuntimeShaping(
+                policy = ShapingPolicy {
+                    DomainScopedShaping(
+                        scope = scope.label,
+                        policy = policy,
+                        packageName = null,
+                        appLabel = null,
+                        attributed = true,
+                        reporter = hits,
+                    )
+                },
+                attributor = null,
+            )
         }
 
         TargetScope.APPLICATIONS -> {
@@ -411,8 +501,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 packageManager = pm,
                 knownPackages = allowedPackages,
             )
-            attributor = appAttributor
-            PerAppShapingPolicy(apps, appAttributor, hits, scope.label)
+            RuntimeShaping(
+                policy = PerAppShapingPolicy(apps, appAttributor, hits, scope.label),
+                attributor = appAttributor,
+            )
         }
     }
 
@@ -500,37 +592,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
         }
     }
 
-    private fun Intent.readDomainsByPackage(): Map<String, List<String>> {
-        val bundle = getBundleExtra(EXTRA_DOMAINS_BY_PACKAGE) ?: return emptyMap()
-        return bundle.keySet().associateWith { key ->
-            bundle.getStringArrayList(key).orEmpty().toList()
-        }
-    }
-
-    private fun Intent.readScope(): TargetScope = runCatching {
-        TargetScope.valueOf(getStringExtra(EXTRA_SCOPE) ?: TargetScope.APPLICATIONS.name)
-    }.getOrDefault(TargetScope.APPLICATIONS)
-
-    private fun Intent.readRule(): NetworkRule {
-        val download = getIntExtra(EXTRA_DOWNLOAD_KBPS, -1).takeIf { it > 0 }
-        val upload = getIntExtra(EXTRA_UPLOAD_KBPS, -1).takeIf { it > 0 }
-        return NetworkRule(
-            id = getStringExtra(EXTRA_RULE_ID) ?: "runtime",
-            name = getStringExtra(EXTRA_RULE_NAME) ?: "当前规则",
-            latencyMs = getIntExtra(EXTRA_LATENCY_MS, 0).coerceIn(0, 60_000),
-            jitterMs = getIntExtra(EXTRA_JITTER_MS, 0).coerceIn(0, 30_000),
-            packetLossPercent = getIntExtra(EXTRA_LOSS_PERCENT, 0).coerceIn(0, 100),
-            downloadKbps = download,
-            uploadKbps = upload,
-            isSystem = false,
-            advanced = getBooleanExtra(EXTRA_ADVANCED, false),
-            uploadLatencyMs = getIntExtra(EXTRA_UP_LATENCY_MS, 0).coerceIn(0, 60_000),
-            downloadLatencyMs = getIntExtra(EXTRA_DOWN_LATENCY_MS, 0).coerceIn(0, 60_000),
-            uploadJitterMs = getIntExtra(EXTRA_UP_JITTER_MS, 0).coerceIn(0, 30_000),
-            downloadJitterMs = getIntExtra(EXTRA_DOWN_JITTER_MS, 0).coerceIn(0, 30_000),
-            uploadLossPercent = getIntExtra(EXTRA_UP_LOSS_PERCENT, 0).coerceIn(0, 100),
-            downloadLossPercent = getIntExtra(EXTRA_DOWN_LOSS_PERCENT, 0).coerceIn(0, 100),
-        )
+    private fun Intent.consumeRuntimeConfig(): VpnRuntimeConfig? {
+        val id = getLongExtra(EXTRA_CONFIG_ID, NO_CONFIG_ID)
+        return if (id == NO_CONFIG_ID) null else VpnRuntimeConfigStore.consume(id)
     }
 
     private data class UnderlyingNetwork(
@@ -538,31 +602,68 @@ class WeakNetworkVpnService : android.net.VpnService() {
         val dnsServers: List<Inet4Address>,
     )
 
+    private data class RuntimeShaping(
+        val policy: ShapingPolicy,
+        val attributor: AndroidConnectionAttributor?,
+    )
+
+    private data class RuntimeComponents(
+        val shaper: TrafficShaper,
+        val shapingPolicy: ShapingPolicy,
+        val faultPolicy: FaultPolicy,
+        val hitTracker: RecentHitTracker,
+        val scopeLabel: String,
+        val attributor: AndroidConnectionAttributor?,
+        val ruleName: String,
+    )
+
     companion object {
         const val ACTION_START = "com.pakomo.action.START"
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val ACTION_UPDATE = "com.pakomo.action.UPDATE"
-        const val EXTRA_ALLOWED_PACKAGES = "allowed_packages"
-        const val EXTRA_TARGET_DOMAINS = "target_domains"
-        const val EXTRA_DOMAINS_BY_PACKAGE = "domains_by_package"
-        const val EXTRA_SCOPE = "scope"
-        const val EXTRA_RULE_ID = "rule_id"
-        const val EXTRA_RULE_NAME = "rule_name"
-        const val EXTRA_LATENCY_MS = "latency_ms"
-        const val EXTRA_JITTER_MS = "jitter_ms"
-        const val EXTRA_LOSS_PERCENT = "loss_percent"
-        const val EXTRA_DOWNLOAD_KBPS = "download_kbps"
-        const val EXTRA_UPLOAD_KBPS = "upload_kbps"
-        const val EXTRA_ADVANCED = "advanced"
-        const val EXTRA_UP_LATENCY_MS = "up_latency_ms"
-        const val EXTRA_DOWN_LATENCY_MS = "down_latency_ms"
-        const val EXTRA_UP_JITTER_MS = "up_jitter_ms"
-        const val EXTRA_DOWN_JITTER_MS = "down_jitter_ms"
-        const val EXTRA_UP_LOSS_PERCENT = "up_loss_percent"
-        const val EXTRA_DOWN_LOSS_PERCENT = "down_loss_percent"
+        const val EXTRA_CONFIG_ID = "runtime_config_id"
+        private const val NO_CONFIG_ID = -1L
         private const val CHANNEL_ID = "pakomo_vpn_status"
         private const val NOTIFICATION_ID = 4101
         private const val STATS_INTERVAL_MS = 1_000L
         private const val TAG = "PakomoVpn"
+    }
+}
+
+/**
+ * Faults can deliberately trigger aggressive reconnect loops. Keep the raw first hits visible,
+ * then summarize bursts so logging itself cannot become the workload that destabilizes the app.
+ */
+private class FaultHitLogger(private val tag: String) {
+    private var windowStartedAtMs = 0L
+    private var emitted = 0
+    private var suppressed = 0
+
+    @Synchronized
+    fun report(hit: FaultHit) {
+        val now = SystemClock.elapsedRealtime()
+        if (windowStartedAtMs == 0L || now - windowStartedAtMs >= WINDOW_MS) {
+            if (suppressed > 0) {
+                Log.i(tag, "Fault hits: $suppressed additional events suppressed in the last second")
+            }
+            windowStartedAtMs = now
+            emitted = 0
+            suppressed = 0
+        }
+        if (emitted >= MAX_LOGS_PER_WINDOW) {
+            suppressed++
+            return
+        }
+        emitted++
+        Log.i(
+            tag,
+            "Fault enforced: type=${hit.type.name}, scope=${hit.scope}, " +
+                "pkg=${hit.packageName ?: "-"}, target=${hit.target}, result=${hit.result}",
+        )
+    }
+
+    private companion object {
+        const val WINDOW_MS = 1_000L
+        const val MAX_LOGS_PER_WINDOW = 6
     }
 }

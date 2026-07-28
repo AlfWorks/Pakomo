@@ -26,7 +26,12 @@ class AndroidConnectionAttributor(
     knownPackages: Collection<String>,
 ) : ConnectionAttributor {
     private val knownPackages = knownPackages.toSet()
+    private val soleKnownPackage = this.knownPackages.singleOrNull()?.let(::listOf)
     private val uidToPackages = ConcurrentHashMap<Int, List<String>>()
+    // Same connection is attributed twice per flow (shaping + fault). Caching the 5-tuple result
+    // makes the second lookup free and guarantees both layers see the same app(s). Bounded so a
+    // long session's ever-changing ephemeral ports can't grow it without limit.
+    private val originToPackages = ConcurrentHashMap<ConnectionOrigin, List<String>>()
     private val attempts = AtomicLong(0)
     private val misses = AtomicLong(0)
 
@@ -36,6 +41,10 @@ class AndroidConnectionAttributor(
     fun stats(): Stats = Stats(attempts.get(), misses.get())
 
     override fun packagesFor(origin: ConnectionOrigin): List<String> {
+        // The VPN allow-list guarantees that a one-app tunnel can only contain this application's
+        // traffic. Avoid an expensive platform connection-table lookup for every new flow.
+        soleKnownPackage?.let { return it }
+        originToPackages[origin]?.let { return it }
         val protocol = when (origin.protocol) {
             ConnectionOrigin.PROTOCOL_TCP -> OsConstants.IPPROTO_TCP
             ConnectionOrigin.PROTOCOL_UDP -> OsConstants.IPPROTO_UDP
@@ -49,10 +58,10 @@ class AndroidConnectionAttributor(
         )
         if (uid == INVALID_UID) {
             misses.incrementAndGet()
-            return emptyList()
+            return cacheOrigin(origin, emptyList())
         }
 
-        uidToPackages[uid]?.let { return it }
+        uidToPackages[uid]?.let { return cacheOrigin(origin, it) }
         // A transient PackageManager failure (null) must not be cached, or the app would show
         // as unattributed for the rest of the session; only cache a real resolved set.
         val packages = runCatching { packageManager.getPackagesForUid(uid) }.getOrNull()
@@ -60,7 +69,13 @@ class AndroidConnectionAttributor(
         // Only packages the user actually selected are relevant; the rest cannot reach the tunnel.
         val selected = packages.filter { it in knownPackages }
         if (selected.isNotEmpty()) uidToPackages[uid] = selected
-        return selected
+        return cacheOrigin(origin, selected)
+    }
+
+    private fun cacheOrigin(origin: ConnectionOrigin, packages: List<String>): List<String> {
+        if (originToPackages.size >= ORIGIN_CACHE_LIMIT) originToPackages.clear()
+        originToPackages[origin] = packages
+        return packages
     }
 
     private fun resolveUid(
@@ -88,5 +103,6 @@ class AndroidConnectionAttributor(
         const val INVALID_UID = -1
         const val MAX_RETRIES = 5
         const val RETRY_DELAY_MS = 2L
+        const val ORIGIN_CACHE_LIMIT = 2_048
     }
 }

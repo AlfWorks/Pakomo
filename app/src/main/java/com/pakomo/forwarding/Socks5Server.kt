@@ -1,6 +1,8 @@
 package com.pakomo.forwarding
 
 import android.util.Log
+import com.pakomo.core.model.BlackoutMode
+import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.security.SecurityPolicy
 import com.pakomo.shaping.TrafficDirection
 import com.pakomo.shaping.TrafficShaper
@@ -41,6 +43,7 @@ class Socks5Server(
     private val protector: SocketProtector,
     shaper: TrafficShaper,
     shapingPolicy: ShapingPolicy = ShapingPolicy { ShapeEverythingShaping("全局", null) },
+    faultPolicy: FaultPolicy = FaultPolicy.NONE,
     private val expectOriginPreamble: Boolean = false,
 ) : AutoCloseable {
     // Swappable at runtime so a rule/domain edit takes effect on new connections without tearing
@@ -48,10 +51,12 @@ class Socks5Server(
     // shaping they were already assigned. Reads pick up the latest via volatile.
     @Volatile private var shaper: TrafficShaper = shaper
     @Volatile private var shapingPolicy: ShapingPolicy = shapingPolicy
+    @Volatile private var faultPolicy: FaultPolicy = faultPolicy
 
-    fun reconfigure(shaper: TrafficShaper, shapingPolicy: ShapingPolicy) {
+    fun reconfigure(shaper: TrafficShaper, shapingPolicy: ShapingPolicy, faultPolicy: FaultPolicy) {
         this.shaper = shaper
         this.shapingPolicy = shapingPolicy
+        this.faultPolicy = faultPolicy
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -88,15 +93,13 @@ class Socks5Server(
                     client.close()
                     continue
                 }
-                safeLog("SOCKS session accepted: active=$active")
                 launch {
                     try {
                         handleClient(client)
                     } catch (error: Exception) {
                         safeLog("SOCKS session failed", error)
                     } finally {
-                        val remaining = activeSessions.decrementAndGet()
-                        safeLog("SOCKS session closed: active=$remaining")
+                        activeSessions.decrementAndGet()
                         runCatching { client.close() }
                     }
                 }
@@ -138,6 +141,7 @@ class Socks5Server(
             null
         }
         val shaping = shapingPolicy.resolve(origin)
+        val fault = faultPolicy.resolve(origin)
         if (!negotiateAuthentication(input, output)) {
             Log.w(TAG, "SOCKS method negotiation failed")
             return
@@ -152,8 +156,8 @@ class Socks5Server(
             return
         }
         when (request.command) {
-            COMMAND_CONNECT -> handleConnect(client, output, request, shaping)
-            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping)
+            COMMAND_CONNECT -> handleConnect(client, output, request, shaping, fault)
+            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping, fault)
             else -> writeReply(output, REPLY_COMMAND_NOT_SUPPORTED, null)
         }
     }
@@ -163,11 +167,22 @@ class Socks5Server(
         output: OutputStream,
         request: SocksRequest,
         shaping: ConnectionShaping,
+        fault: ConnectionFault,
     ) {
         val clientChannel = client.channel ?: run {
             writeReply(output, REPLY_GENERAL_FAILURE, null)
             return
         }
+
+        // Always try the request host before connecting. For domain-scoped faults this can match a
+        // destination IP learned from plaintext DNS, allowing an immediate refused response instead
+        // of connecting first and degrading to a reset. A miss still falls back to SNI/Host sniffing.
+        val preConnectFault = fault.decideTcp(request.host, request.port)
+        if (preConnectFault !is TcpFault.None) {
+            applyTcpFaultBeforeConnect(client, clientChannel, output, preConnectFault)
+            return
+        }
+
         // When the decision doesn't depend on the host, decide up front (one hit report) and refuse
         // fast on a full block. Domain-filtered flows decide after sniffing the real host.
         val nonDomainShape =
@@ -187,18 +202,33 @@ class Socks5Server(
             outbound.configureBlocking(false)
 
             var initialUpload: ByteArray? = null
-            val shapeTraffic = if (nonDomainShape != null) {
-                nonDomainShape
-            } else {
+            // Sniff the real host when either a domain-scoped fault or domain-scoped shaping needs it.
+            val needHost = fault.usesDomainFilter || nonDomainShape == null
+            val shapeTraffic: Boolean
+            if (needHost) {
                 // Sniff the real hostname (TLS SNI / HTTP Host) so domain matching works regardless
                 // of how the app resolved the name (DoH / DoT / cached DNS the tunnel can't see).
                 val (peeked, sniffed) = resolveClientHost(clientChannel)
                 initialUpload = peeked
-                shaping.shouldShape(sniffed ?: request.host, request.port)
+                val host = sniffed ?: request.host
+                if (fault.usesDomainFilter) {
+                    val decision = fault.decideTcp(
+                        host,
+                        request.port,
+                        TcpDecisionPhase.POST_CONNECT,
+                    )
+                    if (decision !is TcpFault.None) {
+                        runCatching { outbound.close() }
+                        applyTcpFaultAfterConnect(client, clientChannel, decision)
+                        return
+                    }
+                }
+                shapeTraffic = nonDomainShape ?: shaping.shouldShape(host, request.port)
+            } else {
+                shapeTraffic = nonDomainShape == true
             }
             if (shapeTraffic && shaper.blocksAllTraffic()) return // drop the flow → blocked
 
-            safeLog("SOCKS TCP relay started: shaped=$shapeTraffic")
             try {
                 relay(clientChannel, outbound, shapeTraffic, initialUpload)
             } catch (error: Exception) {
@@ -208,6 +238,77 @@ class Socks5Server(
             safeLog("SOCKS TCP session failed", error)
         } finally {
             runCatching { outbound.close() }
+        }
+    }
+
+    /** Applies a TCP fault before the outbound connect (host-independent global / whole-app case). */
+    private suspend fun applyTcpFaultBeforeConnect(
+        client: Socket,
+        clientChannel: SocketChannel,
+        output: OutputStream,
+        fault: TcpFault,
+    ) {
+        when (fault) {
+            is TcpFault.Blackout -> if (fault.mode == BlackoutMode.IMMEDIATE) {
+                // Reject the new connection outright.
+                writeReply(output, REPLY_CONNECTION_REFUSED, null)
+            } else {
+                // Silent: accept, then hold the connection with no response so the app waits/timeouts.
+                writeReply(output, REPLY_SUCCEEDED, null)
+                client.soTimeout = 0
+                runCatching { clientChannel.configureBlocking(false) }
+                parkSilently(clientChannel)
+            }
+            TcpFault.Reset -> {
+                // Establish then reset, so the app observes a TCP reset on the connection.
+                writeReply(output, REPLY_SUCCEEDED, null)
+                resetClient(client)
+            }
+            TcpFault.None -> Unit
+        }
+    }
+
+    /** Applies a TCP fault after outbound was connected and success already replied. */
+    private suspend fun applyTcpFaultAfterConnect(
+        client: Socket,
+        clientChannel: SocketChannel,
+        fault: TcpFault,
+    ) {
+        when (fault) {
+            is TcpFault.Blackout -> if (fault.mode == BlackoutMode.SILENT) {
+                parkSilently(clientChannel)
+            } else {
+                // Immediate blackout after success can no longer send an unreachable reply; the
+                // closest equivalent is an abrupt reset of the established connection.
+                resetClient(client)
+            }
+            TcpFault.Reset -> resetClient(client)
+            TcpFault.None -> Unit
+        }
+    }
+
+    /** Closes the client connection with SO_LINGER 0 so the tunnel forwards a TCP reset (RST). */
+    private fun resetClient(client: Socket) {
+        runCatching { client.setSoLinger(true, 0) }
+        runCatching { client.channel?.close() }
+        runCatching { client.close() }
+    }
+
+    /** Holds a connection open without ever responding, until the app closes it or it goes idle. */
+    private suspend fun parkSilently(clientChannel: SocketChannel) {
+        // Silent faults may hold many retrying connections at once; only a small drain buffer is
+        // needed because payload is discarded. Avoid reserving the normal 16 KiB relay buffer for
+        // every parked connection.
+        val buffer = ByteBuffer.allocate(SILENT_DRAIN_BUFFER_BYTES)
+        try {
+            while (true) {
+                buffer.clear()
+                val count = relayLoop.read(clientChannel, buffer, RELAY_IDLE_TIMEOUT_MS)
+                if (count < 0) break // the app gave up and closed the connection
+                // Discard whatever the app sends; a silent blackout never writes anything back.
+            }
+        } catch (_: Exception) {
+            // Idle timeout or read error: stop holding the connection.
         }
     }
 
@@ -272,6 +373,7 @@ class Socks5Server(
         client: Socket,
         controlOutput: OutputStream,
         shaping: ConnectionShaping,
+        fault: ConnectionFault,
     ) {
         val controlChannel = checkNotNull(client.channel) {
             "UDP association requires a channel-backed control socket"
@@ -324,18 +426,32 @@ class Socks5Server(
                             requestBuffer.position(),
                         )
                         if (request != null) {
-                            val target = InetSocketAddress(request.host, request.port)
-                            if (shaping.shouldShape(request.host, request.port)) {
-                                val decision = shaper.decide(
-                                    TrafficDirection.UPLOAD,
-                                    request.payload.size,
-                                    isDatagram = true,
-                                )
-                                if (!decision.drop) {
-                                    scheduleDatagram(relayChannel, request.payload, target, decision.waitNanos)
-                                }
+                            val dnsName = if (request.port == DNS_PORT) {
+                                DnsMessage.queryName(request.payload)
                             } else {
-                                sendDatagram(relayChannel, request.payload, target)
+                                null
+                            }
+                            when (val udpFault = fault.decideUdp(request.host, request.port, dnsName)) {
+                                // Blackout (or a DNS timeout): forward nothing and send no reply, so
+                                // the datagram is lost and a DNS query eventually times out.
+                                UdpFault.Drop -> Unit
+                                is UdpFault.Dns ->
+                                    sendDnsFailure(localChannel, sender, request, udpFault.result)
+                                UdpFault.None -> {
+                                    val target = InetSocketAddress(request.host, request.port)
+                                    if (shaping.shouldShape(request.host, request.port)) {
+                                        val decision = shaper.decide(
+                                            TrafficDirection.UPLOAD,
+                                            request.payload.size,
+                                            isDatagram = true,
+                                        )
+                                        if (!decision.drop) {
+                                            scheduleDatagram(relayChannel, request.payload, target, decision.waitNanos)
+                                        }
+                                    } else {
+                                        sendDatagram(relayChannel, request.payload, target)
+                                    }
+                                }
                             }
                         }
                     }
@@ -349,6 +465,9 @@ class Socks5Server(
                     val payload = responseBuffer.array().copyOf(responseBuffer.position())
                     if (source.port == DNS_PORT) {
                         shaping.observeDnsResponse(payload)
+                        // Let domain-scoped faults learn the target's IPs so they can match QUIC /
+                        // no-SNI flows by destination IP, the same way domain shaping does.
+                        fault.observeDnsResponse(payload)
                     }
                     val datagram = buildUdpPacket(source, payload)
                     if (shaping.shouldShape(source.address.hostAddress.orEmpty(), source.port)) {
@@ -406,6 +525,30 @@ class Socks5Server(
             if (waitNanos > 0) delay(waitNanos / NANOS_PER_MILLISECOND)
             runCatching { sendDatagram(channel, payload, target) }
         }
+    }
+
+    /**
+     * Synthesizes a DNS failure reply back to the app. NXDOMAIN / SERVFAIL / REFUSED send a same-id
+     * error response that appears to come from the queried resolver; TIMEOUT sends nothing so the
+     * query times out on its own.
+     */
+    private suspend fun sendDnsFailure(
+        localChannel: DatagramChannel,
+        clientEndpoint: InetSocketAddress,
+        request: UdpRequest,
+        result: DnsFailureResult,
+    ) {
+        val rcode = when (result) {
+            DnsFailureResult.NXDOMAIN -> DnsMessage.RCODE_NXDOMAIN
+            DnsFailureResult.SERVFAIL -> DnsMessage.RCODE_SERVFAIL
+            DnsFailureResult.REFUSED -> DnsMessage.RCODE_REFUSED
+            DnsFailureResult.TIMEOUT -> return
+        }
+        val reply = DnsMessage.failureResponse(request.payload, request.payload.size, rcode) ?: return
+        val source = runCatching {
+            InetSocketAddress(InetAddress.getByName(request.host), request.port)
+        }.getOrNull() ?: return
+        runCatching { sendDatagram(localChannel, buildUdpPacket(source, reply), clientEndpoint) }
     }
 
     private fun negotiateAuthentication(input: InputStream, output: OutputStream): Boolean {
@@ -709,8 +852,10 @@ class Socks5Server(
         const val REPLY_GENERAL_FAILURE = 1
         const val REPLY_NETWORK_UNREACHABLE = 3
         const val REPLY_HOST_UNREACHABLE = 4
+        const val REPLY_CONNECTION_REFUSED = 5
         const val REPLY_COMMAND_NOT_SUPPORTED = 7
         const val DNS_PORT = 53
+        const val SILENT_DRAIN_BUFFER_BYTES = 1_024
         const val UDP_POLL_INTERVAL_MS = 5L
         const val UDP_SEND_RETRY_DELAY_MS = 1L
         // Idle long-lived TCP flows are cheap now (a suspended coroutine), so the read idle

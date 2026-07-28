@@ -1,6 +1,7 @@
 package com.pakomo.forwarding
 
 import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Matches configured domains directly and remembers IPv4 addresses learned from plain DNS replies.
@@ -12,28 +13,35 @@ class DomainRoutingPolicy(
 ) {
     private val configuredDomains = domains
         .mapNotNull(::normalizeDomain)
-        .distinct()
-    private val resolvedAddresses = mutableMapOf<String, Resolution>()
+        .toSet()
+    private val resolvedAddresses = ConcurrentHashMap<String, Resolution>()
 
-    @Synchronized
     fun shouldShape(host: String, port: Int): Boolean {
         if (port == DNS_PORT) return false
-        val normalized = host.trim().trimEnd('.').lowercase()
-        if (configuredDomains.any { normalized.matchesDomain(it) }) return true
+        val normalized = normalizeDomain(host) ?: return false
+        if (matchesConfigured(normalized)) return true
         val resolution = resolvedAddresses[normalized] ?: return false
         if (resolution.expiresAtSeconds <= nowSeconds()) {
-            resolvedAddresses.remove(normalized)
+            resolvedAddresses.remove(normalized, resolution)
             return false
         }
-        return configuredDomains.any { resolution.domain.matchesDomain(it) }
+        return matchesConfigured(resolution.domain)
     }
 
-    @Synchronized
+    /**
+     * Whether [host] matches a configured domain (or subdomain) by name alone — no port guard and
+     * no learned-IP lookup. Used to match a DNS query's questioned name against the target domains.
+     */
+    fun matchesConfiguredDomain(host: String): Boolean {
+        val normalized = normalizeDomain(host) ?: return false
+        return matchesConfigured(normalized)
+    }
+
     fun observeDnsResponse(message: ByteArray) {
         val parsed = runCatching { DnsResponseParser.parse(message) }.getOrNull() ?: return
         val now = nowSeconds()
         parsed.forEach { answer ->
-            if (configuredDomains.none { answer.domain.matchesDomain(it) }) return@forEach
+            if (!matchesConfigured(answer.domain)) return@forEach
             resolvedAddresses[answer.address] = Resolution(
                 domain = answer.domain,
                 expiresAtSeconds = now + answer.ttlSeconds.coerceIn(1, MAX_TTL_SECONDS),
@@ -41,8 +49,16 @@ class DomainRoutingPolicy(
         }
     }
 
-    private fun String.matchesDomain(configured: String): Boolean =
-        this == configured || endsWith(".$configured")
+    /** Exact/subdomain lookup without scanning every configured domain for every packet. */
+    private fun matchesConfigured(domain: String): Boolean {
+        var candidate = domain
+        while (true) {
+            if (candidate in configuredDomains) return true
+            val separator = candidate.indexOf('.')
+            if (separator < 0) return false
+            candidate = candidate.substring(separator + 1)
+        }
+    }
 
     private data class Resolution(
         val domain: String,
