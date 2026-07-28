@@ -97,6 +97,7 @@ fun ScopeSelector(
     selected: TargetScope,
     onSelected: (TargetScope) -> Unit,
     modifier: Modifier = Modifier,
+    disabledScopes: Set<TargetScope> = emptySet(),
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -118,7 +119,10 @@ fun ScopeSelector(
                 .offset(x = indicatorOffset)
                 .width(segmentWidth)
                 .height(40.dp)
-                .background(Color.White, RoundedCornerShape(8.dp)),
+                .background(
+                    if (selected in disabledScopes) Color(0xFFE2E5E9) else Color.White,
+                    RoundedCornerShape(8.dp),
+                ),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -126,8 +130,13 @@ fun ScopeSelector(
         ) {
             TargetScope.entries.forEach { scope ->
                 val active = scope == selected
+                val enabled = scope !in disabledScopes
                 val textColor by animateColorAsState(
-                    targetValue = if (active) Accent else OnSurfaceVariant,
+                    targetValue = when {
+                        !enabled -> Muted
+                        active -> Accent
+                        else -> OnSurfaceVariant
+                    },
                     animationSpec = tween(120),
                     label = "scopeText",
                 )
@@ -137,6 +146,7 @@ fun ScopeSelector(
                         .height(40.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .clickable(
+                            enabled = enabled,
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             role = Role.RadioButton,

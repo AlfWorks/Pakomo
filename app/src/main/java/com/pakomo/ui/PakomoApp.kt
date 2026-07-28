@@ -123,6 +123,7 @@ fun PakomoApp(
             Screen.Home -> HomeScreen(
                 state = state,
                 trafficChartState = trafficChartState,
+                appScopeEnabled = appListPermissionGranted,
                 onScopeSelected = viewModel::selectScope,
                 onOpenScope = { navigate(Screen.Scope) },
                 onOpenRules = { navigate(Screen.Rules) },

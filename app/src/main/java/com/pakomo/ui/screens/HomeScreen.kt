@@ -142,6 +142,7 @@ internal fun rememberTrafficChartState(state: PakomoUiState): TrafficChartState 
 internal fun HomeScreen(
     state: PakomoUiState,
     trafficChartState: TrafficChartState,
+    appScopeEnabled: Boolean,
     onScopeSelected: (TargetScope) -> Unit,
     onOpenScope: () -> Unit,
     onOpenRules: () -> Unit,
@@ -223,6 +224,7 @@ internal fun HomeScreen(
             ScopeCard(
                 state = state,
                 activeTargetCount = activeTargetCount,
+                appScopeEnabled = appScopeEnabled,
                 onSelected = onScopeSelected,
                 onOpenScope = onOpenScope,
             )
@@ -517,6 +519,7 @@ private fun ServiceStatusCard(
 private fun ScopeCard(
     state: PakomoUiState,
     activeTargetCount: Int?,
+    appScopeEnabled: Boolean,
     onSelected: (TargetScope) -> Unit,
     onOpenScope: () -> Unit,
 ) {
@@ -528,7 +531,15 @@ private fun ScopeCard(
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(modifier = Modifier.padding(6.dp)) {
-            ScopeSelector(selected = state.scope, onSelected = onSelected)
+            ScopeSelector(
+                selected = state.scope,
+                onSelected = onSelected,
+                disabledScopes = if (appScopeEnabled) {
+                    emptySet()
+                } else {
+                    setOf(TargetScope.APPLICATIONS)
+                },
+            )
             AnimatedVisibility(
                 visible = state.scope != TargetScope.GLOBAL,
                 enter = expandVertically(
@@ -540,23 +551,28 @@ private fun ScopeCard(
                     shrinkTowards = Alignment.Top,
                 ) + fadeOut(animationSpec = tween(80)),
             ) {
+                val targetPickerEnabled =
+                    state.scope != TargetScope.APPLICATIONS || appScopeEnabled
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onOpenScope)
+                        .clickable(enabled = targetPickerEnabled, onClick = onOpenScope)
                         .padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
                         modifier = Modifier
                             .size(28.dp)
-                            .background(AccentTint, RoundedCornerShape(8.dp)),
+                            .background(
+                                if (targetPickerEnabled) AccentTint else Color(0xFFE7E9EC),
+                                RoundedCornerShape(8.dp),
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.GridView,
                             contentDescription = null,
-                            tint = Accent,
+                            tint = if (targetPickerEnabled) Accent else Muted,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -568,20 +584,24 @@ private fun ScopeCard(
                             TargetScope.GLOBAL -> ""
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = OnSurface,
+                        color = if (targetPickerEnabled) OnSurface else Muted,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
                         text = (activeTargetCount ?: 0).toString(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (activeTargetCount == 0) {
+                        color = if (!targetPickerEnabled) {
+                            Muted
+                        } else if (activeTargetCount == 0) {
                             Color(0xFFB56D00)
                         } else {
                             Accent
                         },
                         modifier = Modifier
                             .background(
-                                color = if (activeTargetCount == 0) {
+                                color = if (!targetPickerEnabled) {
+                                    Color(0xFFE7E9EC)
+                                } else if (activeTargetCount == 0) {
                                     Color(0xFFFFF1D8)
                                 } else {
                                     AccentTint
