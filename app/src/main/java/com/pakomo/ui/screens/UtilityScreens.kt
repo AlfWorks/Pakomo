@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pakomo.BuildConfig
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
 import androidx.compose.material.icons.Icons
@@ -139,8 +138,12 @@ fun SettingsScreen(
 @Composable
 fun SecurityScreen(
     state: PakomoUiState,
+    vpnPermissionGranted: Boolean,
+    notificationPermissionGranted: Boolean,
     onBack: () -> Unit,
     onClearData: () -> Unit,
+    onVpnPermissionChange: (Boolean) -> Unit,
+    onNotificationPermissionChange: (Boolean) -> Unit,
 ) {
     var confirmClear by remember { mutableStateOf(false) }
     Column(
@@ -154,19 +157,21 @@ fun SecurityScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            SectionLabel("隐私状态")
+            SectionLabel("授权")
             InfoCard {
-                InfoRow("遥测与上报", "无", Accent)
-                InfoRow("广告 SDK", "无", Accent)
-                InfoRow("流量内容记录", "无", Accent)
-                InfoRow("运行统计", "仅保存在内存")
-                InfoRow("云端备份", "已禁用")
-            }
-            SectionLabel("当前权限")
-            InfoCard {
-                InfoRow("VPN 服务", "按需授权")
-                InfoRow("应用列表", "本地读取")
-                InfoRow("通知", "前台服务")
+                PermissionSwitchRow(
+                    title = "VPN 服务",
+                    detail = "建立本地网络接管",
+                    checked = vpnPermissionGranted,
+                    onCheckedChange = onVpnPermissionChange,
+                )
+                PermissionSwitchRow(
+                    title = "通知",
+                    detail = "显示 VPN 运行状态",
+                    checked = notificationPermissionGranted,
+                    onCheckedChange = onNotificationPermissionChange,
+                )
+                InfoRow("应用列表", "用于选择接管应用")
             }
             SectionLabel("本地数据")
             InfoCard {
@@ -181,11 +186,6 @@ fun SecurityScreen(
                 ) {
                     Text("清除全部本地数据", color = Danger)
                 }
-            }
-            SectionLabel("关于")
-            InfoCard {
-                InfoRow("版本", BuildConfig.VERSION_NAME)
-                InfoRow("最低系统", "Android 10")
             }
         }
     }
@@ -206,6 +206,39 @@ fun SecurityScreen(
             dismissButton = {
                 TextButton(onClick = { confirmClear = false }) { Text("取消") }
             },
+        )
+    }
+}
+
+@Composable
+private fun PermissionSwitchRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = OnSurface,
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = Muted,
+            )
+        }
+        Spacer(Modifier.padding(horizontal = 6.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
         )
     }
 }

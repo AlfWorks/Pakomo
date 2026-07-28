@@ -50,8 +50,12 @@ private sealed interface Screen {
 @Composable
 fun PakomoApp(
     viewModel: PakomoViewModel,
+    vpnPermissionGranted: Boolean,
+    notificationPermissionGranted: Boolean,
     onToggleService: () -> Unit,
     onEmergencyStop: () -> Unit,
+    onVpnPermissionChange: (Boolean) -> Unit,
+    onNotificationPermissionChange: (Boolean) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val trafficChartState = rememberTrafficChartState(state)
@@ -270,8 +274,12 @@ fun PakomoApp(
 
             Screen.Security -> SecurityScreen(
                 state = state,
+                vpnPermissionGranted = vpnPermissionGranted,
+                notificationPermissionGranted = notificationPermissionGranted,
                 onBack = goBack,
                 onClearData = viewModel::clearLocalData,
+                onVpnPermissionChange = onVpnPermissionChange,
+                onNotificationPermissionChange = onNotificationPermissionChange,
             )
 
             Screen.LatencyTest -> LatencyTestScreen(onBack = goBack)
