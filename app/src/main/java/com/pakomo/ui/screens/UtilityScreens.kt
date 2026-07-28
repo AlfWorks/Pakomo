@@ -1,5 +1,8 @@
 package com.pakomo.ui.screens
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -36,14 +39,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pakomo.BuildConfig
 import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
-import com.pakomo.BuildConfig
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Security
@@ -105,6 +110,8 @@ fun SettingsScreen(
 ) {
     var resumeLast by remember { mutableStateOf(false) }
     var showSystemWarning by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val network = remember { readNetworkSummary(context) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -140,8 +147,71 @@ fun SettingsScreen(
                 InfoRow("Android", "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}")
                 InfoRow("设备", "${Build.MANUFACTURER} ${Build.MODEL}")
             }
+            SectionLabel("网络")
+            InfoCard {
+                InfoRow("当前连接", network.connection)
+                InfoRow("IP 协议", network.protocols)
+                InfoRow("DNS", network.dns)
+            }
         }
     }
+}
+
+private data class NetworkSummary(
+    val connection: String,
+    val protocols: String,
+    val dns: String,
+)
+
+private fun readNetworkSummary(context: Context): NetworkSummary {
+    val manager = context.getSystemService(ConnectivityManager::class.java)
+    val activeNetwork = manager.activeNetwork
+    val activeCapabilities = activeNetwork?.let(manager::getNetworkCapabilities)
+    val physicalNetwork = if (
+        activeCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    ) {
+        manager.allNetworks.firstOrNull { network ->
+            val capabilities = manager.getNetworkCapabilities(network)
+            capabilities != null &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+    } else {
+        activeNetwork
+    }
+    val physicalCapabilities = physicalNetwork?.let(manager::getNetworkCapabilities)
+    val physicalLabel = transportLabel(physicalCapabilities)
+    val connection = when {
+        activeCapabilities == null -> "未连接"
+        activeCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+            physicalLabel != null -> "VPN · $physicalLabel"
+        else -> transportLabel(activeCapabilities) ?: "已连接"
+    }
+    val linkProperties = physicalNetwork?.let(manager::getLinkProperties)
+    val addresses = linkProperties?.linkAddresses.orEmpty().map { it.address }
+    val hasIpv4 = addresses.any { it.address.size == 4 }
+    val hasIpv6 = addresses.any { it.address.size == 16 }
+    val protocols = when {
+        hasIpv4 && hasIpv6 -> "IPv4 · IPv6"
+        hasIpv4 -> "IPv4"
+        hasIpv6 -> "IPv6"
+        else -> "—"
+    }
+    val dns = linkProperties?.dnsServers
+        ?.take(2)
+        ?.joinToString(" · ") { it.hostAddress.orEmpty() }
+        ?.takeIf(String::isNotBlank)
+        ?: "—"
+    return NetworkSummary(connection, protocols, dns)
+}
+
+private fun transportLabel(capabilities: NetworkCapabilities?): String? = when {
+    capabilities == null -> null
+    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动网络"
+    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "以太网"
+    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+    else -> "其他网络"
 }
 
 @Composable
@@ -460,6 +530,10 @@ private fun InfoRow(
             style = MaterialTheme.typography.bodySmall,
             color = valueColor,
             fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
     }
 }
