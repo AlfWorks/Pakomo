@@ -195,6 +195,11 @@ fun PakomoApp(
                                 it.copy(dnsResult = result)
                             }
                         },
+                        onBlackoutMode = { mode ->
+                            mutateDraftFault(SpecialFaultType.NETWORK_BLACKOUT) {
+                                it.copy(blackoutMode = mode)
+                            }
+                        },
                         onOpenFaultTarget = { type ->
                             navigate(Screen.FaultTarget(type))
                         },
@@ -249,9 +254,6 @@ fun PakomoApp(
                                 }
                                 fault.copy(addressTargets = addresses)
                             }
-                        },
-                        onBlackoutMode = { mode ->
-                            mutateDraftFault(faultNav.type) { it.copy(blackoutMode = mode) }
                         },
                         onDnsCacheGuard = { enabled ->
                             mutateDraftFault(faultNav.type) { it.copy(dnsCacheGuard = enabled) }

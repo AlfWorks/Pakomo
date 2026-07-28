@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -41,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.HorizontalDivider
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.DnsFailureResult
+import com.pakomo.core.model.BlackoutMode
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.ScreenHeader
@@ -59,6 +62,7 @@ fun RuleEditorScreen(
     appLabels: Map<String, String>,
     onToggleFault: (SpecialFaultType, Boolean) -> Unit,
     onDnsResult: (DnsFailureResult) -> Unit,
+    onBlackoutMode: (BlackoutMode) -> Unit,
     onOpenFaultTarget: (SpecialFaultType) -> Unit,
 ) {
     var name by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
@@ -117,8 +121,18 @@ fun RuleEditorScreen(
             .statusBarsPadding(),
     ) {
         ScreenHeader(
-            title = if (draft.name == "新规则") "新建规则" else "编辑规则",
+            title = name,
             onBack = onBack,
+            titleContent = {
+                BasicTextField(
+                    value = name,
+                    onValueChange = { name = it; error = null },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.headlineSmall.copy(color = Color.Black),
+                    cursorBrush = SolidColor(Accent),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
             action = {
                 TextButton(
                     onClick = {
@@ -135,15 +149,6 @@ fun RuleEditorScreen(
                 .padding(horizontal = 16.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it; error = null },
-                label = { Text("规则名称") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-            )
-
             ModeToggle(advanced = advanced, onChange = { advanced = it; error = null })
 
             Crossfade(
@@ -205,6 +210,7 @@ fun RuleEditorScreen(
                 appLabels = appLabels,
                 onToggle = onToggleFault,
                 onDnsResult = onDnsResult,
+                onBlackoutMode = onBlackoutMode,
                 onOpenTarget = onOpenFaultTarget,
             )
         }

@@ -19,14 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -73,6 +72,7 @@ fun SpecialFaultSection(
     appLabels: Map<String, String>,
     onToggle: (SpecialFaultType, Boolean) -> Unit,
     onDnsResult: (DnsFailureResult) -> Unit,
+    onBlackoutMode: (BlackoutMode) -> Unit,
     onOpenTarget: (SpecialFaultType) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -99,14 +99,11 @@ fun SpecialFaultSection(
         }
         SpecialFaultType.entries.forEach { type ->
             val fault = rule.specialFaults.fault(type)
-            // Domain/app modes drill into target selection; global has no targets but blackout/DNS
-            // still have a parameter worth opening for. Reset has no parameter, so nothing to open.
-            val hasParams = type != SpecialFaultType.CONNECTION_RESET
-            val canOpen = fault.enabled && (scope != TargetScope.GLOBAL || hasParams)
-            val status = when {
-                !fault.enabled -> "未启用"
-                scope == TargetScope.GLOBAL -> "全局生效"
-                else -> "已选 ${effectiveCounts.getValue(type)} 个"
+            val canOpen = fault.enabled && scope != TargetScope.GLOBAL
+            val status = if (fault.enabled && scope != TargetScope.GLOBAL) {
+                "${effectiveCounts.getValue(type)} 个"
+            } else {
+                null
             }
             FaultEntryRow(
                 title = type.entryLabel,
@@ -117,9 +114,21 @@ fun SpecialFaultSection(
                 onOpen = { if (canOpen) onOpenTarget(type) },
             )
             if (type == SpecialFaultType.DNS_FAILURE && fault.enabled) {
-                DnsResultRow(
+                FaultOptionRow(
+                    title = "返回结果",
                     selected = fault.dnsResult,
+                    options = DnsFailureResult.entries,
+                    label = DnsFailureResult::shortLabel,
                     onSelect = onDnsResult,
+                )
+            }
+            if (type == SpecialFaultType.NETWORK_BLACKOUT && fault.enabled) {
+                FaultOptionRow(
+                    title = "中断表现",
+                    selected = fault.blackoutMode,
+                    options = BlackoutMode.entries,
+                    label = BlackoutMode::shortLabel,
+                    onSelect = onBlackoutMode,
                 )
             }
         }
@@ -141,7 +150,7 @@ fun SpecialFaultSection(
 @Composable
 private fun FaultEntryRow(
     title: String,
-    status: String,
+    status: String?,
     enabled: Boolean,
     canOpen: Boolean,
     onToggle: (Boolean) -> Unit,
@@ -156,10 +165,19 @@ private fun FaultEntryRow(
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = OnSurface)
-            Text(status, style = MaterialTheme.typography.bodySmall, color = Muted)
+        Text(title, style = MaterialTheme.typography.titleSmall, color = OnSurface)
+        if (status != null) {
+            Spacer(Modifier.size(7.dp))
+            Text(
+                text = status,
+                style = MaterialTheme.typography.labelSmall,
+                color = OnSurfaceVariant,
+                modifier = Modifier
+                    .background(SurfaceFold, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
+        Spacer(Modifier.weight(1f))
         if (canOpen) {
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
@@ -182,53 +200,56 @@ private fun FaultEntryRow(
 }
 
 @Composable
-private fun DnsResultRow(
-    selected: DnsFailureResult,
-    onSelect: (DnsFailureResult) -> Unit,
+private fun <T> FaultOptionRow(
+    title: String,
+    selected: T,
+    options: List<T>,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(36.dp)
-            .background(SurfaceFold, RoundedCornerShape(8.dp))
-            .padding(start = 12.dp, end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "DNS 返回",
-            style = MaterialTheme.typography.bodySmall,
-            color = OnSurfaceVariant,
-        )
-        Spacer(Modifier.weight(1f))
-        Box {
-            Row(
-                modifier = Modifier
-                    .background(Color.White, RoundedCornerShape(7.dp))
-                    .border(1.dp, Border, RoundedCornerShape(7.dp))
-                    .clickable { expanded = true }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = selected.shortLabel(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = OnSurface,
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .background(SurfaceFold, RoundedCornerShape(8.dp))
+                .border(1.dp, Border, RoundedCornerShape(8.dp))
+                .clickable { expanded = true }
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = OnSurface,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = label(selected),
+                style = MaterialTheme.typography.labelMedium,
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Icon(
+                imageVector = Icons.Rounded.ArrowDropDown,
+                contentDescription = "选择$title",
+                tint = Accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(label(option)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    },
                 )
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-            ) {
-                DnsFailureResult.entries.forEach { result ->
-                    DropdownMenuItem(
-                        text = { Text(result.shortLabel()) },
-                        onClick = {
-                            expanded = false
-                            onSelect(result)
-                        },
-                    )
-                }
             }
         }
     }
@@ -239,6 +260,11 @@ private fun DnsFailureResult.shortLabel(): String = when (this) {
     DnsFailureResult.SERVFAIL -> "SERVFAIL"
     DnsFailureResult.REFUSED -> "REFUSED"
     DnsFailureResult.TIMEOUT -> "超时"
+}
+
+private fun BlackoutMode.shortLabel(): String = when (this) {
+    BlackoutMode.SILENT -> "静默中断"
+    BlackoutMode.IMMEDIATE -> "立即失败"
 }
 
 @Composable
@@ -287,8 +313,7 @@ private fun targetLabel(target: FaultTarget, appLabels: Map<String, String>): St
 }
 
 /**
- * 特殊故障的详情页：顶部是该故障的参数（中断表现 / DNS 返回结果），下面按当前接管模式选择目标。
- * 全局模式没有目标，只显示参数与说明。
+ * 特殊故障的目标选择页。故障表现直接在规则页调整，这里只显示当前接管模式对应的目标。
  */
 @Composable
 fun FaultTargetScreen(
@@ -301,7 +326,6 @@ fun FaultTargetScreen(
     onSetAppEnabled: (String, Boolean) -> Unit,
     onToggleAppDomain: (String, String, Boolean) -> Unit,
     onToggleAddress: (String, Boolean) -> Unit,
-    onBlackoutMode: (BlackoutMode) -> Unit,
     onDnsCacheGuard: (Boolean) -> Unit,
 ) {
     val fault = rule.specialFaults.fault(type)
@@ -315,13 +339,7 @@ fun FaultTargetScreen(
 
         // Type-specific parameters.
         when (type) {
-            SpecialFaultType.NETWORK_BLACKOUT -> ParamSection(
-                title = "中断表现",
-                options = BlackoutMode.entries,
-                selected = fault.blackoutMode,
-                label = { it.label },
-                onSelect = onBlackoutMode,
-            )
+            SpecialFaultType.NETWORK_BLACKOUT -> Unit
             SpecialFaultType.DNS_FAILURE -> ToggleParamRow(
                 title = "阻止缓存后的连接",
                 checked = fault.dnsCacheGuard,
@@ -418,60 +436,6 @@ private fun ToggleParamRow(
                 uncheckedTrackColor = Muted,
             ),
         )
-    }
-}
-
-/** Single-choice parameter list (radio rows). */
-@Composable
-private fun <T> ParamSection(
-    title: String,
-    options: List<T>,
-    selected: T,
-    label: (T) -> String,
-    onSelect: (T) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-    ) {
-        SectionCaption(title)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color.White, RoundedCornerShape(12.dp))
-                .border(1.dp, Border, RoundedCornerShape(12.dp)),
-        ) {
-            options.forEachIndexed { index, option ->
-                val isSelected = option == selected
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(option) }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = label(option),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isSelected) Accent else OnSurface,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        modifier = Modifier.weight(1f),
-                    )
-                    RadioButton(
-                        selected = isSelected,
-                        onClick = { onSelect(option) },
-                        colors = RadioButtonDefaults.colors(selectedColor = Accent, unselectedColor = Muted),
-                    )
-                }
-                if (index < options.lastIndex) {
-                    androidx.compose.material3.HorizontalDivider(
-                        modifier = Modifier.padding(start = 14.dp),
-                        color = Border,
-                    )
-                }
-            }
-        }
     }
 }
 

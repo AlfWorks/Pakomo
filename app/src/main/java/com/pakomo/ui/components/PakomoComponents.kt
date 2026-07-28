@@ -57,6 +57,7 @@ fun ScreenHeader(
     title: String,
     onBack: (() -> Unit)? = null,
     action: (@Composable () -> Unit)? = null,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -76,11 +77,16 @@ fun ScreenHeader(
         } else {
             Spacer(Modifier.width(8.dp))
         }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.weight(1f),
-        )
+        Box(modifier = Modifier.weight(1f)) {
+            if (titleContent != null) {
+                titleContent()
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+        }
         action?.invoke()
         if (action == null) Spacer(Modifier.width(8.dp))
     }
