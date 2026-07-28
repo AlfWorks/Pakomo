@@ -174,7 +174,12 @@ fun SecurityScreen(
                     granted = notificationPermissionGranted,
                     onClick = onNotificationPermissionClick,
                 )
-                InfoRow("应用列表", "用于选择接管应用")
+                PermissionStatusRow(
+                    title = "应用列表",
+                    detail = "用于选择接管应用",
+                    granted = true,
+                    onClick = null,
+                )
             }
             SectionLabel("本地数据")
             InfoCard {
@@ -218,12 +223,12 @@ private fun PermissionStatusRow(
     title: String,
     detail: String,
     granted: Boolean,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -245,11 +250,13 @@ private fun PermissionStatusRow(
             style = MaterialTheme.typography.labelMedium,
             color = if (granted) Accent else Danger,
         )
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            contentDescription = null,
-            tint = Muted,
-        )
+        if (onClick != null) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Muted,
+            )
+        }
     }
 }
 
