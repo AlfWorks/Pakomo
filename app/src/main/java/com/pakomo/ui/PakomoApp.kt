@@ -54,7 +54,6 @@ fun PakomoApp(
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
     onToggleService: () -> Unit,
-    onEmergencyStop: () -> Unit,
     onVpnPermissionClick: () -> Unit,
     onNotificationPermissionClick: () -> Unit,
     onAppListPermissionClick: () -> Unit,
@@ -131,7 +130,6 @@ fun PakomoApp(
                 onOpenLatencyTest = { navigate(Screen.LatencyTest) },
                 onOpenSettings = { navigate(Screen.Settings) },
                 onToggleService = onToggleService,
-                onEmergencyStop = onEmergencyStop,
             )
 
             Screen.Scope -> ScopeScreen(

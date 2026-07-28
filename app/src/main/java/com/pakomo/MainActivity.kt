@@ -95,9 +95,6 @@ class MainActivity : ComponentActivity() {
                             VpnServiceController.stop(this@MainActivity)
                         }
                     },
-                    onEmergencyStop = {
-                        VpnServiceController.stop(this@MainActivity)
-                    },
                     onVpnPermissionClick = {
                         if (vpnPermissionGranted) {
                             startActivity(Intent(Settings.ACTION_VPN_SETTINGS))

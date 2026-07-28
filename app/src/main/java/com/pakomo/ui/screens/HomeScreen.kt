@@ -152,7 +152,6 @@ internal fun HomeScreen(
     onOpenLatencyTest: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleService: () -> Unit,
-    onEmergencyStop: () -> Unit,
 ) {
     val context = LocalContext.current
     val showAppListUnavailable = {
@@ -267,28 +266,6 @@ internal fun HomeScreen(
         )
 
         Spacer(Modifier.weight(1f))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = state.engineStage.isActive, onClick = onEmergencyStop)
-                .padding(vertical = 18.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.PowerSettingsNew,
-                contentDescription = null,
-                tint = if (state.engineStage.isActive) Danger else Muted,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.size(10.dp))
-            Text(
-                text = "紧急恢复正常网络",
-                color = if (state.engineStage.isActive) Danger else Muted,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
-        }
     }
 
 }

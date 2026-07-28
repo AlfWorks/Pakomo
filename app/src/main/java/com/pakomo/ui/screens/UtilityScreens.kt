@@ -1,5 +1,6 @@
 package com.pakomo.ui.screens
 
+import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
+import com.pakomo.BuildConfig
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Security
@@ -129,11 +131,14 @@ fun SettingsScreen(
                     onCheckedChange = { showSystemWarning = it },
                 )
             }
-            SectionLabel("网络")
+            SectionLabel("应用与系统")
             InfoCard {
-                InfoRow("IP 协议", "仅 IPv4")
-                InfoRow("IPv6", "旁路，不接管")
-                InfoRow("转发内核", "HEV + 本地 SOCKS5")
+                InfoRow(
+                    "应用版本",
+                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                )
+                InfoRow("Android", "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}")
+                InfoRow("设备", "${Build.MANUFACTURER} ${Build.MODEL}")
             }
         }
     }
