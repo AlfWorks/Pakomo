@@ -57,11 +57,11 @@ import com.pakomo.ui.theme.SurfaceFold
 
 /**
  * 规则编辑页底部的特殊故障区：三条独立入口（开关 + 已选数量）与重叠提示。
- * 故障配置随规则即时保存，因此只对已保存的 [rule] 可用；未保存时给出提示。
+ * 所有改动只写入编辑草稿，由规则页的保存按钮统一提交。
  */
 @Composable
 fun SpecialFaultSection(
-    rule: NetworkRule?,
+    rule: NetworkRule,
     scope: TargetScope,
     selectedAppDomains: Map<String, List<String>>,
     addressDomains: List<String>,
@@ -76,15 +76,6 @@ fun SpecialFaultSection(
             color = OnSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
         )
-        if (rule == null) {
-            Text(
-                text = "保存规则后可以配置连接重置、DNS 失败与网络中断。",
-                style = MaterialTheme.typography.bodySmall,
-                color = Muted,
-            )
-            return@Column
-        }
-
         val effectiveCounts = remember(
             rule.specialFaults,
             scope,

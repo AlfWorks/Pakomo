@@ -8,12 +8,7 @@ import com.pakomo.core.model.EngineRuntime
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
-import com.pakomo.core.model.AppFaultTarget
-import com.pakomo.core.model.BlackoutMode
-import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.core.model.PakomoUiState
-import com.pakomo.core.model.SpecialFault
-import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.core.validation.DomainInputValidator
 import com.pakomo.data.InstalledAppCatalog
@@ -22,7 +17,6 @@ import com.pakomo.vpn.VpnServiceController
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,7 +41,6 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         ),
     )
     val state: StateFlow<PakomoUiState> = _state.asStateFlow()
-    private var faultCommitJob: Job? = null
     private var configPushJob: Job? = null
     private var appPersistJob: Job? = null
     private var addressPersistJob: Job? = null
@@ -84,15 +77,12 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Rule / domain edits hot-swap on the running pipeline (instant, no dropped connections).
-    private fun updateIfRunning() = pushConfigIfRunning(hotSwap = true, faultsOnly = false)
-
-    private fun updateFaultsIfRunning() =
-        pushConfigIfRunning(hotSwap = true, faultsOnly = true)
+    private fun updateIfRunning() = pushConfigIfRunning(hotSwap = true)
 
     // Scope / selected-app edits require re-establishing the VPN interface, so rebuild the pipeline.
-    private fun reapplyIfRunning() = pushConfigIfRunning(hotSwap = false, faultsOnly = false)
+    private fun reapplyIfRunning() = pushConfigIfRunning(hotSwap = false)
 
-    private fun pushConfigIfRunning(hotSwap: Boolean, faultsOnly: Boolean) {
+    private fun pushConfigIfRunning(hotSwap: Boolean) {
         val snapshot = _state.value
         if (snapshot.engineStage != EngineStage.FORWARDING) return
         configPushJob?.cancel()
@@ -107,14 +97,6 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             val context = getApplication<Application>()
             when {
                 !hotSwap -> VpnServiceController.start(
-                    context,
-                    snapshot.scope,
-                    packages,
-                    snapshot.addressDomains,
-                    domainsByPackage,
-                    snapshot.activeRule,
-                )
-                faultsOnly -> VpnServiceController.updateFaults(
                     context,
                     snapshot.scope,
                     packages,
@@ -201,6 +183,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectRule(ruleId: String) {
         val rule = _state.value.rules.firstOrNull { it.id == ruleId } ?: return
+        if (_state.value.activeRuleId == ruleId) return
         preferences.writeActiveRuleId(ruleId)
         _state.update { it.copy(activeRuleId = ruleId) }
         Log.i(TAG, "Rule selected: ${rule.name}")
@@ -210,13 +193,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     fun saveRule(rule: NetworkRule) {
         val current = _state.value
         val existing = current.rules.firstOrNull { it.id == rule.id }
-        // 弱网参数走这里保存；特殊故障只由 mutateFault 变更，保留已存规则的那一份，
-        // 避免编辑器里的 draft 快照把用户在故障入口的改动覆盖回旧值。
-        val merged = if (existing != null) rule.copy(specialFaults = existing.specialFaults) else rule
         val updated = if (existing != null) {
-            current.rules.map { row -> if (row.id == rule.id) merged else row }
+            current.rules.map { row -> if (row.id == rule.id) rule else row }
         } else {
-            current.rules + merged
+            current.rules + rule
         }
         _state.update { it.copy(rules = updated) }
         persistRules(updated)
@@ -262,76 +242,6 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         persistRules(updated)
         Log.i(TAG, "Rule deleted: ${target.name}, total=${updated.size}")
     }
-
-    /**
-     * 编辑某条规则携带的一项特殊故障。改动即时持久化，若该规则正在生效则热更新，
-     * 与弱网参数草稿的“保存”按钮分开。目标选择、参数、开关都走这里。
-     */
-    fun mutateFault(ruleId: String, type: SpecialFaultType, block: (SpecialFault) -> SpecialFault) {
-        val current = _state.value
-        val rule = current.rules.firstOrNull { it.id == ruleId } ?: return
-        val updatedFault = block(rule.specialFaults.fault(type))
-        if (updatedFault == rule.specialFaults.fault(type)) return
-        val updatedRule = rule.copy(specialFaults = rule.specialFaults.withFault(updatedFault))
-        val rules = current.rules.map { if (it.id == ruleId) updatedRule else it }
-        _state.update { it.copy(rules = rules) }
-        Log.i(TAG, "Special fault updated: rule=${rule.name}, type=${type.name}, enabled=${updatedFault.enabled}")
-        // A user often toggles several targets in quick succession. Coalesce the expensive full
-        // JSON write and VPN runtime rebuild instead of doing both on the UI thread for every tap.
-        faultCommitJob?.cancel()
-        faultCommitJob = viewModelScope.launch {
-            delay(FAULT_COMMIT_DEBOUNCE_MS)
-            val snapshot = _state.value
-            withContext(Dispatchers.IO) {
-                preferences.writeRules(snapshot.rules)
-            }
-            if (ruleId == snapshot.activeRuleId) updateFaultsIfRunning()
-        }
-    }
-
-    fun setFaultEnabled(ruleId: String, type: SpecialFaultType, enabled: Boolean) =
-        mutateFault(ruleId, type) { it.copy(enabled = enabled) }
-
-    fun setFaultAppEnabled(ruleId: String, type: SpecialFaultType, packageName: String, enabled: Boolean) =
-        mutateFault(ruleId, type) { fault ->
-            val existing = fault.appTargets[packageName] ?: AppFaultTarget(packageName)
-            fault.copy(appTargets = fault.appTargets + (packageName to existing.copy(enabled = enabled)))
-        }
-
-    fun toggleFaultAppDomain(
-        ruleId: String,
-        type: SpecialFaultType,
-        packageName: String,
-        domain: String,
-        selected: Boolean,
-    ) = mutateFault(ruleId, type) { fault ->
-        val existing = fault.appTargets[packageName] ?: AppFaultTarget(packageName)
-        val domains = if (selected) {
-            (existing.domains + domain).distinct()
-        } else {
-            existing.domains.filterNot { it == domain }
-        }
-        fault.copy(appTargets = fault.appTargets + (packageName to existing.copy(domains = domains)))
-    }
-
-    fun setFaultBlackoutMode(ruleId: String, mode: BlackoutMode) =
-        mutateFault(ruleId, SpecialFaultType.NETWORK_BLACKOUT) { it.copy(blackoutMode = mode) }
-
-    fun setFaultDnsResult(ruleId: String, result: DnsFailureResult) =
-        mutateFault(ruleId, SpecialFaultType.DNS_FAILURE) { it.copy(dnsResult = result) }
-
-    fun setFaultDnsCacheGuard(ruleId: String, enabled: Boolean) =
-        mutateFault(ruleId, SpecialFaultType.DNS_FAILURE) { it.copy(dnsCacheGuard = enabled) }
-
-    fun toggleFaultAddress(ruleId: String, type: SpecialFaultType, domain: String, selected: Boolean) =
-        mutateFault(ruleId, type) { fault ->
-            val addresses = if (selected) {
-                (fault.addressTargets + domain).distinct()
-            } else {
-                fault.addressTargets.filterNot { it == domain }
-            }
-            fault.copy(addressTargets = addresses)
-        }
 
     fun setEngineRuntime(runtime: EngineRuntime) {
         _state.update {
@@ -391,6 +301,5 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     private companion object {
         const val TAG = "PakomoState"
-        const val FAULT_COMMIT_DEBOUNCE_MS = 180L
     }
 }

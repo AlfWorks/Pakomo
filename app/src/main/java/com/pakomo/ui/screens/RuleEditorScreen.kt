@@ -55,7 +55,6 @@ fun RuleEditorScreen(
     draft: NetworkRule,
     onBack: () -> Unit,
     onSave: (NetworkRule) -> Unit,
-    savedRule: NetworkRule?,
     scope: TargetScope,
     selectedAppDomains: Map<String, List<String>>,
     addressDomains: List<String>,
@@ -203,7 +202,7 @@ fun RuleEditorScreen(
 
             HorizontalDivider(color = Border, thickness = 1.dp)
             SpecialFaultSection(
-                rule = savedRule,
+                rule = draft,
                 scope = scope,
                 selectedAppDomains = selectedAppDomains,
                 addressDomains = addressDomains,

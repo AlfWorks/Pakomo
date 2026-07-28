@@ -59,10 +59,6 @@ class Socks5Server(
         this.faultPolicy = faultPolicy
     }
 
-    fun reconfigureFaultPolicy(faultPolicy: FaultPolicy) {
-        this.faultPolicy = faultPolicy
-    }
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeSessions = AtomicInteger(0)
     private var serverChannel: ServerSocketChannel? = null

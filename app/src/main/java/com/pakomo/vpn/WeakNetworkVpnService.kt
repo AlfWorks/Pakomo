@@ -130,14 +130,6 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     reconfigure(config)
                 }
             }
-            ACTION_UPDATE_FAULTS -> {
-                val config = intent.consumeRuntimeConfig()
-                if (config == null) {
-                    Log.w(TAG, "Ignoring an expired fault update")
-                } else {
-                    reconfigure(config, faultsOnly = true)
-                }
-            }
         }
         return START_NOT_STICKY
     }
@@ -148,30 +140,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
      * active connection is dropped. Scope / selected-app changes still go through ACTION_START
      * because the VPN interface's allowed-app set can only be set when it is established.
      */
-    private fun reconfigure(config: VpnRuntimeConfig, faultsOnly: Boolean = false) {
+    private fun reconfigure(config: VpnRuntimeConfig) {
         reconfigureJob?.cancel()
         val generation = runtimeGeneration.incrementAndGet()
         reconfigureJob = serviceScope.launch {
             val socks = socksServer ?: return@launch
-            if (faultsOnly) {
-                runCatching {
-                    buildFaultPolicy(
-                        scope = config.scope,
-                        allowedPackages = config.selectedPackages,
-                        targetDomains = config.targetDomains,
-                        domainsByPackage = config.domainsByPackage,
-                        rule = config.rule,
-                        connectionAttributor = attributor,
-                    )
-                }.onSuccess { faultPolicy ->
-                    if (runtimeGeneration.get() != generation) return@onSuccess
-                    socks.reconfigureFaultPolicy(faultPolicy)
-                    Log.i(TAG, "Fault configuration updated")
-                }.onFailure { error ->
-                    Log.e(TAG, "Fault configuration update failed", error)
-                }
-                return@launch
-            }
             runCatching {
                 buildRuntime(
                     scope = config.scope,
@@ -662,7 +635,6 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val ACTION_START = "com.pakomo.action.START"
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val ACTION_UPDATE = "com.pakomo.action.UPDATE"
-        const val ACTION_UPDATE_FAULTS = "com.pakomo.action.UPDATE_FAULTS"
         const val EXTRA_CONFIG_ID = "runtime_config_id"
         private const val NO_CONFIG_ID = -1L
         private const val CHANNEL_ID = "pakomo_vpn_status"

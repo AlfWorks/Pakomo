@@ -14,11 +14,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import com.pakomo.core.model.AppFaultTarget
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
+import com.pakomo.core.model.SpecialFault
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.ui.screens.DiagnosticsScreen
 import com.pakomo.ui.screens.FaultTargetScreen
@@ -36,8 +39,8 @@ private sealed interface Screen {
     data object Home : Screen
     data object Scope : Screen
     data object Rules : Screen
-    data class RuleEditor(val draft: NetworkRule) : Screen
-    data class FaultTarget(val ruleId: String, val type: SpecialFaultType) : Screen
+    data object RuleEditor : Screen
+    data class FaultTarget(val type: SpecialFaultType) : Screen
     data object Diagnostics : Screen
     data object Settings : Screen
     data object Security : Screen
@@ -53,6 +56,8 @@ fun PakomoApp(
     val state by viewModel.state.collectAsState()
     val trafficChartState = rememberTrafficChartState(state)
     val stack = remember { mutableStateListOf<Screen>(Screen.Home) }
+    val editorStateHolder = rememberSaveableStateHolder()
+    var editingDraft by remember { mutableStateOf<NetworkRule?>(null) }
     var hasNavigated by remember { mutableStateOf(false) }
     val current = stack.last()
     val navigate: (Screen) -> Unit = { screen ->
@@ -64,10 +69,25 @@ fun PakomoApp(
     val goBack = {
         if (stack.size > 1) {
             hasNavigated = true
-            stack.removeAt(stack.lastIndex)
+            val removed = stack.removeAt(stack.lastIndex)
+            if (removed == Screen.RuleEditor) {
+                editingDraft?.let { editorStateHolder.removeState("rule-editor-${it.id}") }
+                editingDraft = null
+            }
         }
         Unit
     }
+    val openRuleEditor: (NetworkRule) -> Unit = { draft ->
+        editingDraft = draft
+        navigate(Screen.RuleEditor)
+    }
+    val mutateDraftFault: (SpecialFaultType, (SpecialFault) -> SpecialFault) -> Unit =
+        { type, transform ->
+            editingDraft = editingDraft?.let { draft ->
+                val updated = transform(draft.specialFaults.fault(type))
+                draft.copy(specialFaults = draft.specialFaults.withFault(updated))
+            }
+        }
 
     BackHandler(enabled = stack.size > 1, onBack = goBack)
     val pageProgress = remember(current) {
@@ -125,23 +145,27 @@ fun PakomoApp(
                 state = state,
                 onBack = goBack,
                 onSelectRule = viewModel::selectRule,
-                onCreateRule = { navigate(Screen.RuleEditor(viewModel.newRule())) },
+                onCreateRule = { openRuleEditor(viewModel.newRule()) },
                 onEditRule = { rule ->
                     val draft = if (rule.isSystem) {
                         viewModel.duplicateRule(rule.id)
                     } else {
                         rule
                     }
-                    if (draft != null) navigate(Screen.RuleEditor(draft))
+                    if (draft != null) openRuleEditor(draft)
                 },
                 onCopyRule = { rule ->
-                    viewModel.duplicateRule(rule.id)?.let { navigate(Screen.RuleEditor(it)) }
+                    viewModel.duplicateRule(rule.id)?.let(openRuleEditor)
                 },
                 onDeleteRule = viewModel::deleteRule,
             )
 
-            is Screen.RuleEditor -> {
-                val editing = current
+            Screen.RuleEditor -> {
+                val editing = editingDraft
+                if (editing == null) {
+                    LaunchedEffect(Unit) { goBack() }
+                    return@Box
+                }
                 val selectedAppDomains = remember(state.apps) {
                     state.apps.asSequence()
                         .filter(InstalledApp::isSelected)
@@ -150,33 +174,34 @@ fun PakomoApp(
                 val appLabels = remember(state.apps) {
                     state.apps.associate { it.packageName to it.label }
                 }
-                RuleEditorScreen(
-                    draft = editing.draft,
-                    onBack = goBack,
-                    onSave = { rule ->
-                        viewModel.saveRule(rule)
-                        viewModel.selectRule(rule.id)
-                        goBack()
-                    },
-                    savedRule = state.rules.firstOrNull { it.id == editing.draft.id },
-                    scope = state.scope,
-                    selectedAppDomains = selectedAppDomains,
-                    addressDomains = state.addressDomains,
-                    appLabels = appLabels,
-                    onToggleFault = { type, enabled ->
-                        viewModel.setFaultEnabled(editing.draft.id, type, enabled)
-                    },
-                    onOpenFaultTarget = { type ->
-                        navigate(Screen.FaultTarget(editing.draft.id, type))
-                    },
-                )
+                editorStateHolder.SaveableStateProvider("rule-editor-${editing.id}") {
+                    RuleEditorScreen(
+                        draft = editing,
+                        onBack = goBack,
+                        onSave = { rule ->
+                            viewModel.saveRule(rule)
+                            viewModel.selectRule(rule.id)
+                            goBack()
+                        },
+                        scope = state.scope,
+                        selectedAppDomains = selectedAppDomains,
+                        addressDomains = state.addressDomains,
+                        appLabels = appLabels,
+                        onToggleFault = { type, enabled ->
+                            mutateDraftFault(type) { it.copy(enabled = enabled) }
+                        },
+                        onOpenFaultTarget = { type ->
+                            navigate(Screen.FaultTarget(type))
+                        },
+                    )
+                }
             }
 
             is Screen.FaultTarget -> {
                 val faultNav = current
-                val rule = state.rules.firstOrNull { it.id == faultNav.ruleId }
+                val rule = editingDraft
                 if (rule == null) {
-                    LaunchedEffect(faultNav.ruleId) { goBack() }
+                    LaunchedEffect(Unit) { goBack() }
                 } else {
                     FaultTargetScreen(
                         rule = rule,
@@ -186,22 +211,48 @@ fun PakomoApp(
                         addressDomains = state.addressDomains,
                         onBack = goBack,
                         onSetAppEnabled = { pkg, enabled ->
-                            viewModel.setFaultAppEnabled(faultNav.ruleId, faultNav.type, pkg, enabled)
+                            mutateDraftFault(faultNav.type) { fault ->
+                                val target = fault.appTargets[pkg]
+                                    ?: AppFaultTarget(pkg)
+                                fault.copy(
+                                    appTargets = fault.appTargets +
+                                        (pkg to target.copy(enabled = enabled)),
+                                )
+                            }
                         },
                         onToggleAppDomain = { pkg, domain, on ->
-                            viewModel.toggleFaultAppDomain(faultNav.ruleId, faultNav.type, pkg, domain, on)
+                            mutateDraftFault(faultNav.type) { fault ->
+                                val target = fault.appTargets[pkg]
+                                    ?: AppFaultTarget(pkg)
+                                val domains = if (on) {
+                                    (target.domains + domain).distinct()
+                                } else {
+                                    target.domains.filterNot { it == domain }
+                                }
+                                fault.copy(
+                                    appTargets = fault.appTargets +
+                                        (pkg to target.copy(domains = domains)),
+                                )
+                            }
                         },
                         onToggleAddress = { domain, on ->
-                            viewModel.toggleFaultAddress(faultNav.ruleId, faultNav.type, domain, on)
+                            mutateDraftFault(faultNav.type) { fault ->
+                                val addresses = if (on) {
+                                    (fault.addressTargets + domain).distinct()
+                                } else {
+                                    fault.addressTargets.filterNot { it == domain }
+                                }
+                                fault.copy(addressTargets = addresses)
+                            }
                         },
                         onBlackoutMode = { mode ->
-                            viewModel.setFaultBlackoutMode(faultNav.ruleId, mode)
+                            mutateDraftFault(faultNav.type) { it.copy(blackoutMode = mode) }
                         },
                         onDnsResult = { result ->
-                            viewModel.setFaultDnsResult(faultNav.ruleId, result)
+                            mutateDraftFault(faultNav.type) { it.copy(dnsResult = result) }
                         },
                         onDnsCacheGuard = { enabled ->
-                            viewModel.setFaultDnsCacheGuard(faultNav.ruleId, enabled)
+                            mutateDraftFault(faultNav.type) { it.copy(dnsCacheGuard = enabled) }
                         },
                     )
                 }
