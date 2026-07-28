@@ -9,10 +9,10 @@ import org.junit.Test
 class VpnRuntimeConfigStoreTest {
 
     @Test
-    fun configurationIsConsumedOnlyOnceAndCopiesCollections() {
-        val packages = mutableListOf("com.example")
-        val domains = mutableListOf("example.com")
-        val byPackage = mutableMapOf("com.example" to domains)
+    fun configurationIsConsumedOnlyOnce() {
+        val packages = listOf("com.example")
+        val domains = listOf("example.com")
+        val byPackage = mapOf("com.example" to domains)
         val rule = NetworkRule(
             id = "test",
             name = "test",
@@ -30,10 +30,6 @@ class VpnRuntimeConfigStoreTest {
             byPackage,
             rule,
         )
-        packages += "com.changed"
-        domains += "changed.example"
-        byPackage.clear()
-
         val stored = VpnRuntimeConfigStore.consume(id)
         assertEquals(listOf("com.example"), stored?.selectedPackages)
         assertEquals(listOf("example.com"), stored?.targetDomains)

@@ -71,6 +71,26 @@ object VpnServiceController {
             }
     }
 
+    /** Updates only the fault matcher; shaping and application attribution stay intact. */
+    fun updateFaults(
+        context: Context,
+        scope: TargetScope,
+        selectedPackages: List<String>,
+        targetDomains: List<String>,
+        domainsByPackage: Map<String, List<String>>,
+        rule: NetworkRule,
+    ) {
+        val (intent, configId) = buildIntent(
+            context, WeakNetworkVpnService.ACTION_UPDATE_FAULTS, scope,
+            selectedPackages, targetDomains, domainsByPackage, rule,
+        )
+        runCatching { context.startService(intent) }
+            .onFailure { error ->
+                VpnRuntimeConfigStore.discard(configId)
+                Log.e(TAG, "Unable to update VPN fault policy", error)
+            }
+    }
+
     private fun buildIntent(
         context: Context,
         action: String,

@@ -80,12 +80,13 @@ class MainActivity : ComponentActivity() {
 
     private fun startVpn() {
         val state = viewModel.state.value
+        val selectedApps = state.apps.filter { it.isSelected }
         VpnServiceController.start(
             context = this,
             scope = state.scope,
-            selectedPackages = state.selectedApps.map { it.packageName },
+            selectedPackages = selectedApps.map { it.packageName },
             targetDomains = state.addressDomains,
-            domainsByPackage = state.selectedApps
+            domainsByPackage = selectedApps
                 .filter { it.domains.isNotEmpty() }
                 .associate { it.packageName to it.domains },
             rule = state.activeRule,

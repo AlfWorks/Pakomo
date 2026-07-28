@@ -23,6 +23,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +48,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     )
     val state: StateFlow<PakomoUiState> = _state.asStateFlow()
     private var faultCommitJob: Job? = null
+    private var configPushJob: Job? = null
+    private var appPersistJob: Job? = null
+    private var addressPersistJob: Job? = null
 
     init {
         Log.i(
@@ -80,27 +84,53 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Rule / domain edits hot-swap on the running pipeline (instant, no dropped connections).
-    private fun updateIfRunning() = pushConfigIfRunning(hotSwap = true)
+    private fun updateIfRunning() = pushConfigIfRunning(hotSwap = true, faultsOnly = false)
+
+    private fun updateFaultsIfRunning() =
+        pushConfigIfRunning(hotSwap = true, faultsOnly = true)
 
     // Scope / selected-app edits require re-establishing the VPN interface, so rebuild the pipeline.
-    private fun reapplyIfRunning() = pushConfigIfRunning(hotSwap = false)
+    private fun reapplyIfRunning() = pushConfigIfRunning(hotSwap = false, faultsOnly = false)
 
-    private fun pushConfigIfRunning(hotSwap: Boolean) {
-        val current = _state.value
-        if (current.engineStage != EngineStage.FORWARDING) return
-        val context = getApplication<Application>()
-        val packages = current.selectedApps.map { it.packageName }
-        val domainsByPackage = current.selectedApps
-            .filter { it.domains.isNotEmpty() }
-            .associate { it.packageName to it.domains }
-        if (hotSwap) {
-            VpnServiceController.update(
-                context, current.scope, packages, current.addressDomains, domainsByPackage, current.activeRule,
-            )
-        } else {
-            VpnServiceController.start(
-                context, current.scope, packages, current.addressDomains, domainsByPackage, current.activeRule,
-            )
+    private fun pushConfigIfRunning(hotSwap: Boolean, faultsOnly: Boolean) {
+        val snapshot = _state.value
+        if (snapshot.engineStage != EngineStage.FORWARDING) return
+        configPushJob?.cancel()
+        configPushJob = viewModelScope.launch(Dispatchers.Default) {
+            val selectedApps = snapshot.apps.filter(InstalledApp::isSelected)
+            val packages = selectedApps.map(InstalledApp::packageName)
+            val domainsByPackage = selectedApps.asSequence()
+                .filter { it.domains.isNotEmpty() }
+                .associate { it.packageName to it.domains }
+            ensureActive()
+            if (_state.value.engineStage != EngineStage.FORWARDING) return@launch
+            val context = getApplication<Application>()
+            when {
+                !hotSwap -> VpnServiceController.start(
+                    context,
+                    snapshot.scope,
+                    packages,
+                    snapshot.addressDomains,
+                    domainsByPackage,
+                    snapshot.activeRule,
+                )
+                faultsOnly -> VpnServiceController.updateFaults(
+                    context,
+                    snapshot.scope,
+                    packages,
+                    snapshot.addressDomains,
+                    domainsByPackage,
+                    snapshot.activeRule,
+                )
+                else -> VpnServiceController.update(
+                    context,
+                    snapshot.scope,
+                    packages,
+                    snapshot.addressDomains,
+                    domainsByPackage,
+                    snapshot.activeRule,
+                )
+            }
         }
     }
 
@@ -154,8 +184,8 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             return "这个域名已经添加"
         }
         val updated = _state.value.addressDomains + domain
-        preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
+        persistAddressDomains(updated)
         Log.i(TAG, "Address domain added: count=${updated.size}")
         updateIfRunning()
         return null
@@ -163,8 +193,8 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeAddressDomain(domain: String) {
         val updated = _state.value.addressDomains.filterNot { it == domain }
-        preferences.writeAddressDomains(updated)
         _state.update { it.copy(addressDomains = updated) }
+        persistAddressDomains(updated)
         Log.i(TAG, "Address domain removed: count=${updated.size}")
         updateIfRunning()
     }
@@ -188,8 +218,8 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             current.rules + merged
         }
-        preferences.writeRules(updated)
         _state.update { it.copy(rules = updated) }
+        persistRules(updated)
         Log.i(
             TAG,
             "Rule saved: ${rule.name}, created=${current.rules.none { it.id == rule.id }}, total=${updated.size}",
@@ -227,9 +257,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         if (target.isSystem || current.rules.size == 1) return
         val updated = current.rules.filterNot { it.id == ruleId }
         val active = if (current.activeRuleId == ruleId) updated.first().id else current.activeRuleId
-        preferences.writeRules(updated)
         preferences.writeActiveRuleId(active)
         _state.update { it.copy(rules = updated, activeRuleId = active) }
+        persistRules(updated)
         Log.i(TAG, "Rule deleted: ${target.name}, total=${updated.size}")
     }
 
@@ -255,7 +285,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             withContext(Dispatchers.IO) {
                 preferences.writeRules(snapshot.rules)
             }
-            if (ruleId == snapshot.activeRuleId) updateIfRunning()
+            if (ruleId == snapshot.activeRuleId) updateFaultsIfRunning()
         }
     }
 
@@ -332,12 +362,31 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun persistApps() {
         val apps = _state.value.apps
-        preferences.writeSelectedPackages(
-            apps.filter(InstalledApp::isSelected).mapTo(linkedSetOf(), InstalledApp::packageName),
-        )
-        preferences.writeDomainsByPackage(
-            apps.filter { it.domains.isNotEmpty() }.associate { it.packageName to it.domains },
-        )
+        appPersistJob?.cancel()
+        appPersistJob = viewModelScope.launch(Dispatchers.IO) {
+            preferences.writeSelectedPackages(
+                apps.filter(InstalledApp::isSelected)
+                    .mapTo(linkedSetOf(), InstalledApp::packageName),
+            )
+            preferences.writeDomainsByPackage(
+                apps.asSequence()
+                    .filter { it.domains.isNotEmpty() }
+                    .associate { it.packageName to it.domains },
+            )
+        }
+    }
+
+    private fun persistAddressDomains(domains: List<String>) {
+        addressPersistJob?.cancel()
+        addressPersistJob = viewModelScope.launch(Dispatchers.IO) {
+            preferences.writeAddressDomains(domains)
+        }
+    }
+
+    private fun persistRules(rules: List<NetworkRule>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            preferences.writeRules(rules)
+        }
     }
 
     private companion object {

@@ -47,6 +47,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Local on-device forwarding pipeline:
@@ -60,11 +62,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var statsJob: Job? = null
     private var reconfigureJob: Job? = null
+    private var startJob: Job? = null
+    private val pipelineMutex = Mutex()
     private val runtimeGeneration = AtomicLong(0L)
     private var terminalError: String? = null
     private var hitTracker: RecentHitTracker? = null
     private var activeScopeLabel: String? = null
-    private var attributor: AndroidConnectionAttributor? = null
+    @Volatile private var attributor: AndroidConnectionAttributor? = null
     private var activeShaper: TrafficShaper? = null
     private var activeRuleName: String = "Pakomo"
     private var latestUploadBytesPerSecond: Long = 0L
@@ -105,13 +109,18 @@ class WeakNetworkVpnService : android.net.VpnService() {
                         trafficNotificationText(0L, 0L),
                     ),
                 )
-                startForwarding(
-                    config.scope,
-                    config.selectedPackages,
-                    config.targetDomains,
-                    config.domainsByPackage,
-                    config.rule,
-                )
+                startJob?.cancel()
+                startJob = serviceScope.launch {
+                    pipelineMutex.withLock {
+                        startForwarding(
+                            config.scope,
+                            config.selectedPackages,
+                            config.targetDomains,
+                            config.domainsByPackage,
+                            config.rule,
+                        )
+                    }
+                }
             }
             ACTION_UPDATE -> {
                 val config = intent.consumeRuntimeConfig()
@@ -119,6 +128,14 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     Log.w(TAG, "Ignoring an expired runtime update")
                 } else {
                     reconfigure(config)
+                }
+            }
+            ACTION_UPDATE_FAULTS -> {
+                val config = intent.consumeRuntimeConfig()
+                if (config == null) {
+                    Log.w(TAG, "Ignoring an expired fault update")
+                } else {
+                    reconfigure(config, faultsOnly = true)
                 }
             }
         }
@@ -131,11 +148,30 @@ class WeakNetworkVpnService : android.net.VpnService() {
      * active connection is dropped. Scope / selected-app changes still go through ACTION_START
      * because the VPN interface's allowed-app set can only be set when it is established.
      */
-    private fun reconfigure(config: VpnRuntimeConfig) {
+    private fun reconfigure(config: VpnRuntimeConfig, faultsOnly: Boolean = false) {
         reconfigureJob?.cancel()
         val generation = runtimeGeneration.incrementAndGet()
         reconfigureJob = serviceScope.launch {
             val socks = socksServer ?: return@launch
+            if (faultsOnly) {
+                runCatching {
+                    buildFaultPolicy(
+                        scope = config.scope,
+                        allowedPackages = config.selectedPackages,
+                        targetDomains = config.targetDomains,
+                        domainsByPackage = config.domainsByPackage,
+                        rule = config.rule,
+                        connectionAttributor = attributor,
+                    )
+                }.onSuccess { faultPolicy ->
+                    if (runtimeGeneration.get() != generation) return@onSuccess
+                    socks.reconfigureFaultPolicy(faultPolicy)
+                    Log.i(TAG, "Fault configuration updated")
+                }.onFailure { error ->
+                    Log.e(TAG, "Fault configuration update failed", error)
+                }
+                return@launch
+            }
             runCatching {
                 buildRuntime(
                     scope = config.scope,
@@ -260,13 +296,18 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun stopValidation() {
-        Log.i(TAG, "Stopping forwarding pipeline")
-        terminalError = null
-        startedAtElapsedMs = 0L
-        stopPipeline()
-        VpnServiceController.publish(EngineStage.STOPPED)
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        startJob?.cancel()
+        serviceScope.launch {
+            pipelineMutex.withLock {
+                Log.i(TAG, "Stopping forwarding pipeline")
+                terminalError = null
+                startedAtElapsedMs = 0L
+                stopPipeline()
+                VpnServiceController.publish(EngineStage.STOPPED)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     private fun stopPipeline() {
@@ -621,6 +662,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val ACTION_START = "com.pakomo.action.START"
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val ACTION_UPDATE = "com.pakomo.action.UPDATE"
+        const val ACTION_UPDATE_FAULTS = "com.pakomo.action.UPDATE_FAULTS"
         const val EXTRA_CONFIG_ID = "runtime_config_id"
         private const val NO_CONFIG_ID = -1L
         private const val CHANNEL_ID = "pakomo_vpn_status"

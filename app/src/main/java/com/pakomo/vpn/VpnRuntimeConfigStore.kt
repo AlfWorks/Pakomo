@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicLong
  * A valid configuration can contain hundreds of applications and thousands of domains. Putting
  * that graph into Intent extras risks TransactionTooLargeException precisely when a fault is
  * enabled. The VPN service runs in the same process, so the Intent only needs a small one-shot key.
+ * Collections are immutable snapshots created by the caller; retaining them here also avoids a
+ * second full graph copy on the UI thread.
  */
 internal data class VpnRuntimeConfig(
     val scope: TargetScope,
@@ -34,9 +36,9 @@ internal object VpnRuntimeConfigStore {
         val id = nextId.incrementAndGet()
         pending[id] = VpnRuntimeConfig(
             scope = scope,
-            selectedPackages = selectedPackages.toList(),
-            targetDomains = targetDomains.toList(),
-            domainsByPackage = domainsByPackage.mapValues { (_, domains) -> domains.toList() },
+            selectedPackages = selectedPackages,
+            targetDomains = targetDomains,
+            domainsByPackage = domainsByPackage,
             rule = rule,
         )
         while (pending.size > MAX_PENDING_CONFIGS) {
