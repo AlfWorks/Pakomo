@@ -52,13 +52,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.AppIcon
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Danger
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
-import com.pakomo.ui.theme.SurfaceFold
+import com.pakomo.ui.theme.LocalPakomoColors
 
 /**
  * 规则编辑页底部的特殊故障区：三条独立入口、已选数量、冲突标识与故障表现。
@@ -75,11 +69,12 @@ fun SpecialFaultSection(
     onBlackoutMode: (BlackoutMode) -> Unit,
     onOpenTarget: (SpecialFaultType) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
             text = "特殊故障",
             style = MaterialTheme.typography.labelLarge,
-            color = OnSurfaceVariant,
+            color = colors.textSecondary,
             fontWeight = FontWeight.SemiBold,
         )
         val effectiveCounts = remember(
@@ -160,24 +155,25 @@ private fun FaultEntryRow(
     onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(10.dp))
-            .border(1.dp, if (enabled) Color(0xFFD6DFF5) else Border, RoundedCornerShape(10.dp))
+            .background(colors.surface, RoundedCornerShape(10.dp))
+            .border(1.dp, if (enabled) colors.selectionBorder else colors.border, RoundedCornerShape(10.dp))
             .then(if (canOpen) Modifier.clickable(onClick = onOpen) else Modifier)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.titleSmall, color = OnSurface)
+        Text(title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
         if (status != null) {
             Spacer(Modifier.size(7.dp))
             Text(
                 text = status,
                 style = MaterialTheme.typography.labelSmall,
-                color = OnSurfaceVariant,
+                color = colors.textSecondary,
                 modifier = Modifier
-                    .background(SurfaceFold, RoundedCornerShape(6.dp))
+                    .background(colors.surfaceFold, RoundedCornerShape(6.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
@@ -186,7 +182,7 @@ private fun FaultEntryRow(
             Icon(
                 imageVector = Icons.Rounded.WarningAmber,
                 contentDescription = "存在与其他特殊故障重复选择的目标",
-                tint = Color(0xFFD98600),
+                tint = colors.warningStrong,
                 modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.size(6.dp))
@@ -195,7 +191,7 @@ private fun FaultEntryRow(
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
-                tint = Muted,
+                tint = colors.muted,
             )
             Spacer(Modifier.size(2.dp))
         }
@@ -204,9 +200,9 @@ private fun FaultEntryRow(
             onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
-                checkedTrackColor = Accent,
+                checkedTrackColor = colors.accent,
                 uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Muted,
+                uncheckedTrackColor = colors.muted,
             ),
         )
     }
@@ -219,13 +215,14 @@ private fun <T> FaultOptionRow(
     label: (T) -> String,
     onSelect: (T) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(42.dp)
-            .background(SurfaceFold, RoundedCornerShape(8.dp))
-            .border(1.dp, Border, RoundedCornerShape(8.dp))
+            .background(colors.surfaceFold, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
             .clickable { expanded = true }
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -233,7 +230,7 @@ private fun <T> FaultOptionRow(
         Text(
             text = "故障表现",
             style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariant,
+            color = colors.textSecondary,
         )
         Spacer(Modifier.weight(1f))
         Box {
@@ -241,7 +238,7 @@ private fun <T> FaultOptionRow(
                 Text(
                     text = label(selected),
                     style = MaterialTheme.typography.labelMedium,
-                    color = Accent,
+                    color = colors.accent,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     textAlign = TextAlign.End,
@@ -249,7 +246,7 @@ private fun <T> FaultOptionRow(
                 Icon(
                     imageVector = Icons.Rounded.ArrowDropDown,
                     contentDescription = "选择故障表现",
-                    tint = Accent,
+                    tint = colors.accent,
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -280,25 +277,26 @@ private fun <T> FaultOptionRow(
 
 @Composable
 private fun FaultBehaviorRow(text: String) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(42.dp)
-            .background(SurfaceFold, RoundedCornerShape(8.dp))
-            .border(1.dp, Border, RoundedCornerShape(8.dp))
+            .background(colors.surfaceFold, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "故障表现",
             style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariant,
+            color = colors.textSecondary,
         )
         Spacer(Modifier.size(12.dp))
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = Accent,
+            color = colors.accent,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f),
@@ -416,12 +414,13 @@ private fun ToggleParamRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .background(Color.White, RoundedCornerShape(12.dp))
-            .border(1.dp, Border, RoundedCornerShape(12.dp))
+            .background(colors.surface, RoundedCornerShape(12.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
             .clickable { onCheckedChange(!checked) }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -429,7 +428,7 @@ private fun ToggleParamRow(
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
-            color = OnSurface,
+            color = colors.textPrimary,
             modifier = Modifier.weight(1f),
         )
         Switch(
@@ -437,9 +436,9 @@ private fun ToggleParamRow(
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
-                checkedTrackColor = Accent,
+                checkedTrackColor = colors.accent,
                 uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Muted,
+                uncheckedTrackColor = colors.muted,
             ),
         )
     }
@@ -450,7 +449,7 @@ private fun SectionCaption(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = OnSurfaceVariant,
+        color = LocalPakomoColors.current.textSecondary,
         modifier = Modifier.padding(vertical = 8.dp),
     )
 }
@@ -463,12 +462,13 @@ private fun AppFaultCard(
     onSetEnabled: (Boolean) -> Unit,
     onToggleDomain: (String, Boolean) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     val selectedDomainSet = remember(selectedDomains) { selectedDomains.toHashSet() }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(12.dp))
-            .border(1.dp, if (enabled) Color(0xFFD6DFF5) else Border, RoundedCornerShape(12.dp)),
+            .background(colors.surface, RoundedCornerShape(12.dp))
+            .border(1.dp, if (enabled) colors.selectionBorder else colors.border, RoundedCornerShape(12.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -483,7 +483,7 @@ private fun AppFaultCard(
                 Text(
                     text = app.label,
                     style = MaterialTheme.typography.titleMedium,
-                    color = OnSurface,
+                    color = colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -496,9 +496,9 @@ private fun AppFaultCard(
                 onCheckedChange = onSetEnabled,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
-                    checkedTrackColor = Accent,
+                    checkedTrackColor = colors.accent,
                     uncheckedThumbColor = Color.White,
-                    uncheckedTrackColor = Muted,
+                    uncheckedTrackColor = colors.muted,
                 ),
             )
         }
@@ -507,14 +507,14 @@ private fun AppFaultCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(SurfaceFold)
+                    .background(colors.surfaceFold)
                     .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
             ) {
                 if (app.domains.isEmpty()) {
                     Text(
                         text = "该应用未限定域名，故障对整个应用生效。",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
+                        color = colors.muted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                     )
                 } else {
@@ -523,7 +523,7 @@ private fun AppFaultCard(
                         Text(
                             text = "至少选择一个域名，否则该故障对这个应用不生效。",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Danger,
+                            color = colors.danger,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
                         )
                     }
@@ -550,25 +550,26 @@ private fun CheckRow(
     onCheckedChange: (Boolean) -> Unit,
     compact: Boolean = false,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (compact) Modifier else Modifier.background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, Border, RoundedCornerShape(10.dp)))
+            .then(if (compact) Modifier else Modifier.background(colors.surface, RoundedCornerShape(10.dp)).border(1.dp, colors.border, RoundedCornerShape(10.dp)))
             .clickable { onCheckedChange(!checked) }
             .padding(horizontal = if (compact) 4.dp else 12.dp, vertical = if (compact) 2.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (mono) {
-            MonoText(text = title, color = OnSurface, modifier = Modifier.weight(1f))
+            MonoText(text = title, color = colors.textPrimary, modifier = Modifier.weight(1f))
         } else {
-            Text(title, style = MaterialTheme.typography.bodyMedium, color = OnSurface, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary, modifier = Modifier.weight(1f))
         }
         Checkbox(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = CheckboxDefaults.colors(
-                checkedColor = Accent,
-                uncheckedColor = Muted,
+                checkedColor = colors.accent,
+                uncheckedColor = colors.muted,
                 checkmarkColor = Color.White,
             ),
         )
@@ -583,6 +584,6 @@ private fun EmptyHint(text: String) {
             .padding(32.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Muted, style = MaterialTheme.typography.bodyMedium)
+        Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
     }
 }

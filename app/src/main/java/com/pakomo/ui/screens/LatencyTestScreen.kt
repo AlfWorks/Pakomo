@@ -35,12 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pakomo.ui.components.ScreenHeader
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Danger
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.vpn.VpnServiceController
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
@@ -144,11 +139,12 @@ fun LatencyTestScreen(onBack: () -> Unit) {
 
 @Composable
 private fun ProbeRow(probe: Probe) {
+    val colors = LocalPakomoColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Row(
@@ -159,21 +155,21 @@ private fun ProbeRow(probe: Probe) {
         ) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(probe.target.label, style = MaterialTheme.typography.bodyMedium, color = OnSurface)
+                    Text(probe.target.label, style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
                     probe.family?.let {
                         Spacer(Modifier.size(6.dp))
                         Text(
                             text = it,
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (it == "IPv6") Accent else Muted,
+                            color = if (it == "IPv6") colors.accent else colors.muted,
                         )
                     }
                 }
-                Text(probe.target.host, style = MaterialTheme.typography.bodySmall, color = Muted, fontFamily = FontFamily.Monospace)
+                Text(probe.target.host, style = MaterialTheme.typography.bodySmall, color = colors.muted, fontFamily = FontFamily.Monospace)
                 Text(
                     text = probe.ip ?: "—",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
+                    color = colors.muted,
                     fontFamily = FontFamily.Monospace,
                 )
             }
@@ -182,9 +178,9 @@ private fun ProbeRow(probe: Probe) {
                 Phase.RUNNING -> CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = Accent,
+                    color = colors.accent,
                 )
-                Phase.PENDING -> Text("—", color = Muted)
+                Phase.PENDING -> Text("—", color = colors.muted)
                 Phase.DONE -> Metrics(probe)
             }
         }
@@ -193,28 +189,29 @@ private fun ProbeRow(probe: Probe) {
 
 @Composable
 private fun Metrics(probe: Probe) {
+    val colors = LocalPakomoColors.current
     Column(horizontalAlignment = Alignment.End) {
         if (probe.ok) {
             Text(
                 text = "${probe.rttMs} ms",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Accent,
+                color = colors.accent,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace,
             )
             Text(
                 text = "抖动 ${probe.jitterMs ?: 0} ms",
                 style = MaterialTheme.typography.bodySmall,
-                color = OnSurfaceVariant,
+                color = colors.textSecondary,
                 fontFamily = FontFamily.Monospace,
             )
         } else {
-            Text("不可达", style = MaterialTheme.typography.bodyMedium, color = Danger)
+            Text("不可达", style = MaterialTheme.typography.bodyMedium, color = colors.danger)
         }
         Text(
             text = "丢包 ${probe.lossPercent}%",
             style = MaterialTheme.typography.bodySmall,
-            color = if (probe.lossPercent > 0) Danger else Muted,
+            color = if (probe.lossPercent > 0) colors.danger else colors.muted,
             fontFamily = FontFamily.Monospace,
         )
     }

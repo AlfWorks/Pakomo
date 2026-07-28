@@ -17,11 +17,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,14 +68,18 @@ import com.pakomo.core.model.PakomoUiState
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.Hairline
 import com.pakomo.ui.components.NavigationRow
+import com.pakomo.ui.components.PakomoMascot
 import com.pakomo.ui.components.ScopeSelector
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.AccentTint
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Danger
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.components.mascotStateOf
+import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.LocalThemeMode
+import com.pakomo.ui.theme.PakomoColors
+import com.pakomo.ui.theme.ThemeMode
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import kotlin.math.cos
+import kotlin.math.sin
 import java.util.Locale
 import kotlin.math.ln
 import kotlinx.coroutines.delay
@@ -170,10 +176,19 @@ internal fun HomeScreen(
     }
     val isIdleRunning = state.engineStage == EngineStage.FORWARDING &&
         activeTargetCount == 0
+    val colors = LocalPakomoColors.current
+    val decorated = LocalThemeMode.current == ThemeMode.Companion
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .then(
+                if (decorated) {
+                    Modifier.drawBehind { drawCompanionBackdrop(colors) }
+                } else {
+                    Modifier
+                },
+            )
             .statusBarsPadding(),
     ) {
         Column(
@@ -186,7 +201,7 @@ internal fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .background(Accent, RoundedCornerShape(11.dp)),
+                        .background(colors.accent, RoundedCornerShape(11.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("P", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
@@ -195,7 +210,7 @@ internal fun HomeScreen(
                 Text(
                     text = "Pakomo",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = OnSurface,
+                    color = colors.textPrimary,
                 )
             }
 
@@ -227,7 +242,7 @@ internal fun HomeScreen(
             Text(
                 text = "接管范围",
                 style = MaterialTheme.typography.labelMedium,
-                color = OnSurfaceVariant,
+                color = colors.textSecondary,
             )
             Spacer(Modifier.height(8.dp))
             ScopeCard(
@@ -272,20 +287,21 @@ internal fun HomeScreen(
 
 @Composable
 private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
+    val colors = LocalPakomoColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("实时流量", style = MaterialTheme.typography.titleMedium, color = OnSurface)
+                Text("实时流量", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
                 Spacer(Modifier.weight(1f))
-                TrafficLegend(Accent, "上行", state.stats.uploadBytesPerSecond)
+                TrafficLegend(colors.accent, "上行", state.stats.uploadBytesPerSecond)
                 Spacer(Modifier.size(14.dp))
-                TrafficLegend(Muted, "下行", state.stats.downloadBytesPerSecond)
+                TrafficLegend(colors.muted, "下行", state.stats.downloadBytesPerSecond)
             }
             Spacer(Modifier.height(14.dp))
             Box(
@@ -311,7 +327,7 @@ private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
                             for (i in 0..3) {
                                 val y = size.height * i / 3f
                                 drawLine(
-                                    Border,
+                                    colors.border,
                                     Offset(0f, y),
                                     Offset(size.width, y),
                                     strokeWidth = 1f,
@@ -327,12 +343,12 @@ private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
                                 translate(left = translation) {
                                     drawPath(
                                         path = downloadPath,
-                                        color = Muted.copy(alpha = 0.5f),
+                                        color = colors.muted.copy(alpha = 0.5f),
                                         style = Stroke(width = 4f),
                                     )
                                     drawPath(
                                         path = uploadPath,
-                                        color = Accent,
+                                        color = colors.accent,
                                         style = Stroke(width = 4f),
                                     )
                                 }
@@ -346,15 +362,16 @@ private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
 
 @Composable
 private fun TrafficLegend(color: Color, label: String, bytesPerSecond: Long) {
+    val colors = LocalPakomoColors.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(7.dp).background(color, CircleShape))
         Spacer(Modifier.size(6.dp))
-        Text(label, style = MaterialTheme.typography.bodySmall, color = OnSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
         Spacer(Modifier.size(6.dp))
         Text(
             text = formatShortRate(bytesPerSecond),
             style = MaterialTheme.typography.bodySmall,
-            color = OnSurface,
+            color = colors.textPrimary,
             fontFamily = FontFamily.Monospace,
         )
     }
@@ -388,16 +405,19 @@ private fun ServiceStatusCard(
     isIdleRunning: Boolean,
     onToggle: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
+    val decorated = LocalThemeMode.current == ThemeMode.Companion
+    val mascotState = mascotStateOf(stage, isIdleRunning)
     val isError = stage == EngineStage.ERROR
     val running = stage == EngineStage.FORWARDING
     val stopped = stage == EngineStage.STOPPED
 
     val container = when {
-        isError -> Color(0xFFFFF5F4)
-        isIdleRunning -> Color(0xFFE5A23B)
-        running -> Accent
-        stopped -> Color(0xFF8D8D8D)
-        else -> Color.White
+        isError -> colors.errorContainer
+        isIdleRunning -> colors.statusIdle
+        running -> colors.statusRunning
+        stopped -> colors.statusStopped
+        else -> colors.surface
     }
     Card(
         modifier = Modifier
@@ -409,11 +429,22 @@ private fun ServiceStatusCard(
         border = if (running || stopped) {
             null
         } else {
-            BorderStroke(1.dp, if (isError) Color(0xFFF0C8C4) else Border)
+            BorderStroke(1.dp, if (isError) colors.errorBorder else colors.border)
         },
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
-        Row(
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Companion:角色装饰叠加在右侧,画在文本之下(文本 z 序更高),不改卡片布局。
+            if (decorated) {
+                PakomoMascot(
+                    state = mascotState,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(104.dp),
+                )
+            }
+            Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -441,8 +472,8 @@ private fun ServiceStatusCard(
                     contentDescription = null,
                     tint = when (stage) {
                         EngineStage.FORWARDING, EngineStage.STOPPED -> Color.White
-                        EngineStage.ERROR -> Danger
-                        else -> Muted
+                        EngineStage.ERROR -> colors.danger
+                        else -> colors.muted
                     },
                     modifier = Modifier.size(
                         if (stage == EngineStage.FORWARDING) 22.dp else 26.dp,
@@ -461,7 +492,7 @@ private fun ServiceStatusCard(
                     },
                     fontWeight = FontWeight.Bold,
                     fontSize = 19.sp,
-                    color = if (running || stopped) Color.White else OnSurface,
+                    color = if (running || stopped) Color.White else colors.textPrimary,
                 )
                 val detail = when (stage) {
                     EngineStage.STOPPED -> "点此启动"
@@ -485,8 +516,8 @@ private fun ServiceStatusCard(
                         color = when (stage) {
                             EngineStage.FORWARDING,
                             EngineStage.STOPPED -> Color.White.copy(alpha = 0.82f)
-                            EngineStage.ERROR -> Danger
-                            EngineStage.STARTING -> OnSurfaceVariant
+                            EngineStage.ERROR -> colors.danger
+                            EngineStage.STARTING -> colors.textSecondary
                         },
                         fontFamily = if (running && !isIdleRunning) {
                             FontFamily.Monospace
@@ -498,6 +529,7 @@ private fun ServiceStatusCard(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -512,11 +544,12 @@ private fun ScopeCard(
     onOpenScope: () -> Unit,
     onAppScopeUnavailable: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(modifier = Modifier.padding(6.dp)) {
@@ -562,7 +595,7 @@ private fun ScopeCard(
                         modifier = Modifier
                             .size(28.dp)
                             .background(
-                                if (targetPickerEnabled) AccentTint else Color(0xFFE7E9EC),
+                                if (targetPickerEnabled) colors.accentTint else colors.scopeDisabled,
                                 RoundedCornerShape(8.dp),
                             ),
                         contentAlignment = Alignment.Center,
@@ -570,7 +603,7 @@ private fun ScopeCard(
                         Icon(
                             imageVector = Icons.Rounded.GridView,
                             contentDescription = null,
-                            tint = if (targetPickerEnabled) Accent else Muted,
+                            tint = if (targetPickerEnabled) colors.accent else colors.muted,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -582,27 +615,27 @@ private fun ScopeCard(
                             TargetScope.GLOBAL -> ""
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (targetPickerEnabled) OnSurface else Muted,
+                        color = if (targetPickerEnabled) colors.textPrimary else colors.muted,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
                         text = (activeTargetCount ?: 0).toString(),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (!targetPickerEnabled) {
-                            Muted
+                            colors.muted
                         } else if (activeTargetCount == 0) {
-                            Color(0xFFB56D00)
+                            colors.warning
                         } else {
-                            Accent
+                            colors.accent
                         },
                         modifier = Modifier
                             .background(
                                 color = if (!targetPickerEnabled) {
-                                    Color(0xFFE7E9EC)
+                                    colors.scopeDisabled
                                 } else if (activeTargetCount == 0) {
-                                    Color(0xFFFFF1D8)
+                                    colors.warningContainer
                                 } else {
-                                    AccentTint
+                                    colors.accentTint
                                 },
                                 shape = RoundedCornerShape(10.dp),
                             )
@@ -612,7 +645,7 @@ private fun ScopeCard(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = null,
-                        tint = Muted,
+                        tint = colors.muted,
                     )
                 }
             }
@@ -635,4 +668,45 @@ private fun formatShortRate(bytesPerSecond: Long): String = when {
     bytesPerSecond >= 1_000_000 ->
         String.format(Locale.US, "%.1f MB/s", bytesPerSecond / 1_000_000.0)
     else -> "${bytesPerSecond / 1_000} KB/s"
+}
+
+/**
+ * Companion 首页背景装饰(§4.4):右上淡六边形轮廓 + 少量全息碎裂像素,呼应 app 图标。
+ * 纯绘制、低对比度、在内容层之下;不进语义树、不承担任何功能含义。占位版,数值可再调。
+ */
+private fun DrawScope.drawCompanionBackdrop(colors: PakomoColors) {
+    val w = size.width
+    val h = size.height
+
+    // 右上大六边形轮廓(pointy-top)
+    val cx = w * 0.82f
+    val cy = h * 0.18f
+    val r = size.minDimension * 0.26f
+    val hex = Path()
+    for (i in 0..5) {
+        val angle = Math.toRadians(60.0 * i - 90.0)
+        val x = cx + r * cos(angle).toFloat()
+        val y = cy + r * sin(angle).toFloat()
+        if (i == 0) hex.moveTo(x, y) else hex.lineTo(x, y)
+    }
+    hex.close()
+    drawPath(hex, color = colors.accent.copy(alpha = 0.05f), style = Stroke(width = 2f))
+
+    // 少量全息碎裂像素(右上聚簇 + 左下点缀),交替青/粉,极低对比度
+    val px = size.minDimension * 0.018f
+    val marks = listOf(
+        Triple(0.90f, 0.30f, colors.glitchCyan),
+        Triple(0.85f, 0.36f, colors.glitchPink),
+        Triple(0.93f, 0.42f, colors.glitchCyan),
+        Triple(0.10f, 0.74f, colors.glitchPink),
+        Triple(0.16f, 0.80f, colors.glitchCyan),
+        Triple(0.07f, 0.82f, colors.glitchCyan),
+    )
+    marks.forEach { (fx, fy, color) ->
+        drawRect(
+            color = color.copy(alpha = 0.12f),
+            topLeft = Offset(w * fx, h * fy),
+            size = Size(px, px),
+        )
+    }
 }

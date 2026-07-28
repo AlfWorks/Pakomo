@@ -57,12 +57,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.AppIcon
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.AccentTint
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.SurfaceFold
+import com.pakomo.ui.theme.LocalPakomoColors
 
 @Immutable
 private data class ApplicationScopeUiState(
@@ -238,13 +233,14 @@ private fun ApplicationCard(
     onRequestAddDomain: () -> Unit,
     onRemoveDomain: (String) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(12.dp))
+            .background(colors.surface, RoundedCornerShape(12.dp))
             .border(
                 width = 1.dp,
-                color = if (app.isSelected) Color(0xFFD6DFF5) else Border,
+                color = if (app.isSelected) colors.selectionBorder else colors.border,
                 shape = RoundedCornerShape(12.dp),
             ),
     ) {
@@ -263,7 +259,7 @@ private fun ApplicationCard(
                     Text(
                         text = app.label,
                         style = MaterialTheme.typography.titleMedium,
-                        color = OnSurface,
+                        color = colors.textPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -277,8 +273,8 @@ private fun ApplicationCard(
                 checked = app.isSelected,
                 onCheckedChange = { onToggle() },
                 colors = CheckboxDefaults.colors(
-                    checkedColor = Accent,
-                    uncheckedColor = Muted,
+                    checkedColor = colors.accent,
+                    uncheckedColor = colors.muted,
                     checkmarkColor = Color.White,
                 ),
             )
@@ -288,14 +284,14 @@ private fun ApplicationCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(SurfaceFold)
+                    .background(colors.surfaceFold)
                     .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
             ) {
                 if (app.domains.isEmpty()) {
                     Text(
                         text = "全部流量",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
+                        color = colors.muted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                     )
                 }
@@ -307,7 +303,7 @@ private fun ApplicationCard(
                     if (index < app.domains.lastIndex) {
                         androidx.compose.material3.HorizontalDivider(
                             modifier = Modifier.padding(start = 4.dp),
-                            color = Border,
+                            color = colors.border,
                         )
                     }
                 }
@@ -320,10 +316,10 @@ private fun ApplicationCard(
                         .height(36.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = AccentTint,
-                        contentColor = Accent,
-                        disabledContainerColor = Color(0xFFEFF1F4),
-                        disabledContentColor = Muted,
+                        containerColor = colors.accentTint,
+                        contentColor = colors.accent,
+                        disabledContainerColor = colors.disabledContainer,
+                        disabledContentColor = colors.muted,
                     ),
                     elevation = ButtonDefaults.buttonElevation(0.dp),
                 ) {
@@ -342,6 +338,7 @@ private fun ApplicationCard(
 
 @Composable
 private fun DomainRow(domain: String, onRemove: () -> Unit) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -350,7 +347,7 @@ private fun DomainRow(domain: String, onRemove: () -> Unit) {
     ) {
         MonoText(
             text = domain,
-            color = OnSurface,
+            color = colors.textPrimary,
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 4.dp),
@@ -362,7 +359,7 @@ private fun DomainRow(domain: String, onRemove: () -> Unit) {
             Icon(
                 imageVector = Icons.Rounded.Close,
                 contentDescription = "删除 $domain",
-                tint = Muted,
+                tint = colors.muted,
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -375,6 +372,7 @@ private fun AddressScopeContent(
     onRequestAdd: () -> Unit,
     onRemove: (String) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -387,8 +385,8 @@ private fun AddressScopeContent(
         items(domains, key = { it }) { domain ->
             Card(
                 shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.dp, Border),
+                colors = CardDefaults.cardColors(containerColor = colors.surface),
+                border = BorderStroke(1.dp, colors.border),
                 elevation = CardDefaults.cardElevation(0.dp),
             ) {
                 DomainRow(domain = domain, onRemove = { onRemove(domain) })
@@ -402,8 +400,8 @@ private fun AddressScopeContent(
                     .height(44.dp),
                 shape = RoundedCornerShape(9.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AccentTint,
-                    contentColor = Accent,
+                    containerColor = colors.accentTint,
+                    contentColor = colors.accent,
                 ),
                 elevation = ButtonDefaults.buttonElevation(0.dp),
             ) {
@@ -423,7 +421,7 @@ private fun EmptyMessage(text: String) {
             .height(160.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Muted, style = MaterialTheme.typography.bodyMedium)
+        Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

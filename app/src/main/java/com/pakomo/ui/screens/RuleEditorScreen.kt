@@ -50,9 +50,7 @@ import com.pakomo.core.model.BlackoutMode
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.ScreenHeader
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.theme.LocalPakomoColors
 
 @Composable
 fun RuleEditorScreen(
@@ -101,6 +99,7 @@ fun RuleEditorScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var showNameDialog by rememberSaveable(draft.id) { mutableStateOf(false) }
     var pendingName by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
+    val colors = LocalPakomoColors.current
 
     fun buildRule(): RuleValidation = validateRule(
         draft = draft,
@@ -147,7 +146,7 @@ fun RuleEditorScreen(
                     Icon(
                         imageVector = Icons.Rounded.Edit,
                         contentDescription = "修改规则名称",
-                        tint = OnSurfaceVariant,
+                        tint = colors.textSecondary,
                         modifier = Modifier
                             .padding(start = 5.dp, end = 8.dp)
                             .height(20.dp),
@@ -222,7 +221,7 @@ fun RuleEditorScreen(
                 )
             }
 
-            HorizontalDivider(color = Border, thickness = 1.dp)
+            HorizontalDivider(color = colors.border, thickness = 1.dp)
             SpecialFaultSection(
                 rule = draft,
                 scope = scope,
@@ -269,22 +268,23 @@ fun RuleEditorScreen(
 
 @Composable
 private fun ModeToggle(advanced: Boolean, onChange: (Boolean) -> Unit) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF0F2F5), RoundedCornerShape(10.dp))
+            .background(colors.scopeTrack, RoundedCornerShape(10.dp))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         listOf(false to "简单", true to "高级").forEach { (value, label) ->
             val active = value == advanced
             val segmentColor by animateColorAsState(
-                targetValue = if (active) Color.White else Color.Transparent,
+                targetValue = if (active) colors.surface else Color.Transparent,
                 animationSpec = tween(140),
                 label = "modeSegment",
             )
             val textColor by animateColorAsState(
-                targetValue = if (active) Accent else OnSurfaceVariant,
+                targetValue = if (active) colors.accent else colors.textSecondary,
                 animationSpec = tween(140),
                 label = "modeText",
             )

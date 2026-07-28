@@ -49,13 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.PakomoUiState
 import com.pakomo.ui.components.ScreenHeader
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.Background
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Danger
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.theme.LocalPakomoColors
 
 @Composable
 fun RulesScreen(
@@ -67,10 +61,11 @@ fun RulesScreen(
     onCopyRule: (NetworkRule) -> Unit,
     onDeleteRule: (String) -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     var pendingDelete by remember { mutableStateOf<NetworkRule?>(null) }
     Scaffold(
         modifier = Modifier.statusBarsPadding(),
-        containerColor = Background,
+        containerColor = colors.background,
         topBar = {
             ScreenHeader(
                 title = "规则",
@@ -119,7 +114,7 @@ fun RulesScreen(
                         onDeleteRule(rule.id)
                         pendingDelete = null
                     },
-                ) { Text("删除", color = Danger) }
+                ) { Text("删除", color = colors.danger) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text("取消") }
@@ -136,6 +131,7 @@ private fun RuleCard(
     onCopy: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     var menuOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
@@ -143,8 +139,8 @@ private fun RuleCard(
             .height(92.dp)
             .clickable(onClick = onSelect),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, if (selected) Color(0xFFCAD8F7) else Border),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, if (selected) colors.selectionBorder else colors.border),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Row(
@@ -156,7 +152,7 @@ private fun RuleCard(
             RadioButton(
                 selected = selected,
                 onClick = onSelect,
-                colors = RadioButtonDefaults.colors(selectedColor = Accent),
+                colors = RadioButtonDefaults.colors(selectedColor = colors.accent),
             )
             Spacer(Modifier.size(6.dp))
             Column(
@@ -167,7 +163,7 @@ private fun RuleCard(
                     Text(
                         text = rule.name,
                         style = MaterialTheme.typography.titleMedium,
-                        color = OnSurface,
+                        color = colors.textPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -177,7 +173,7 @@ private fun RuleCard(
                         Text(
                             text = "内置",
                             style = MaterialTheme.typography.labelMedium,
-                            color = Muted,
+                            color = colors.muted,
                         )
                     }
                 }
@@ -185,7 +181,7 @@ private fun RuleCard(
                 Text(
                     text = rule.summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = OnSurfaceVariant,
+                    color = colors.textSecondary,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -196,7 +192,7 @@ private fun RuleCard(
                     Icon(
                         imageVector = Icons.Rounded.MoreVert,
                         contentDescription = "更多操作",
-                        tint = OnSurfaceVariant,
+                        tint = colors.textSecondary,
                     )
                 }
                 DropdownMenu(
@@ -223,12 +219,12 @@ private fun RuleCard(
                     )
                     if (!rule.isSystem) {
                         DropdownMenuItem(
-                            text = { Text("删除", color = Danger) },
+                            text = { Text("删除", color = colors.danger) },
                             leadingIcon = {
                                 Icon(
                                     Icons.Rounded.DeleteOutline,
                                     contentDescription = null,
-                                    tint = Danger,
+                                    tint = colors.danger,
                                 )
                             },
                             onClick = {

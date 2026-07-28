@@ -45,12 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.TargetScope
-import com.pakomo.ui.theme.Accent
-import com.pakomo.ui.theme.AccentTint
-import com.pakomo.ui.theme.Border
-import com.pakomo.ui.theme.Muted
-import com.pakomo.ui.theme.OnSurface
-import com.pakomo.ui.theme.OnSurfaceVariant
+import com.pakomo.ui.theme.LocalPakomoColors
 
 @Composable
 fun ScreenHeader(
@@ -59,6 +54,7 @@ fun ScreenHeader(
     action: (@Composable () -> Unit)? = null,
     titleContent: (@Composable () -> Unit)? = null,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -71,7 +67,7 @@ fun ScreenHeader(
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "返回",
-                    tint = OnSurface,
+                    tint = colors.textPrimary,
                 )
             }
         } else {
@@ -100,10 +96,11 @@ fun ScopeSelector(
     disabledScopes: Set<TargetScope> = emptySet(),
     onDisabledScopeClick: (TargetScope) -> Unit = {},
 ) {
+    val colors = LocalPakomoColors.current
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xFFF0F2F5), RoundedCornerShape(10.dp))
+            .background(colors.scopeTrack, RoundedCornerShape(10.dp))
             .padding(3.dp),
     ) {
         val gap = 3.dp
@@ -121,7 +118,7 @@ fun ScopeSelector(
                 .width(segmentWidth)
                 .height(40.dp)
                 .background(
-                    if (selected in disabledScopes) Color(0xFFE2E5E9) else Color.White,
+                    if (selected in disabledScopes) colors.scopeDisabled else colors.surface,
                     RoundedCornerShape(8.dp),
                 ),
         )
@@ -134,9 +131,9 @@ fun ScopeSelector(
                 val enabled = scope !in disabledScopes
                 val textColor by animateColorAsState(
                     targetValue = when {
-                        !enabled -> Muted
-                        active -> Accent
-                        else -> OnSurfaceVariant
+                        !enabled -> colors.muted
+                        active -> colors.accent
+                        else -> colors.textSecondary
                     },
                     animationSpec = tween(120),
                     label = "scopeText",
@@ -178,6 +175,7 @@ fun NavigationRow(
     title: String,
     onClick: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -189,19 +187,19 @@ fun NavigationRow(
             imageVector = icon,
             contentDescription = null,
             modifier = Modifier.size(22.dp),
-            tint = OnSurfaceVariant,
+            tint = colors.textSecondary,
         )
         Spacer(Modifier.width(14.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
-            color = OnSurface,
+            color = colors.textPrimary,
             modifier = Modifier.weight(1f),
         )
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             contentDescription = null,
-            tint = Muted,
+            tint = colors.muted,
         )
     }
 }
@@ -210,7 +208,7 @@ fun NavigationRow(
 fun Hairline(modifier: Modifier = Modifier) {
     HorizontalDivider(
         modifier = modifier.padding(start = 52.dp, end = 16.dp),
-        color = Border,
+        color = LocalPakomoColors.current.border,
         thickness = 1.dp,
     )
 }
@@ -232,17 +230,18 @@ fun AppIcon(
         )
         return
     }
+    val colors = LocalPakomoColors.current
     val initial = remember(fallbackLabel) { fallbackLabel.take(1).uppercase() }
     Box(
         modifier = modifier
             .size(40.dp)
-            .background(AccentTint, RoundedCornerShape(10.dp))
-            .border(1.dp, Border, RoundedCornerShape(10.dp)),
+            .background(colors.accentTint, RoundedCornerShape(10.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = initial,
-            color = Accent,
+            color = colors.accent,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -252,7 +251,7 @@ fun AppIcon(
 fun MonoText(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = OnSurfaceVariant,
+    color: Color = LocalPakomoColors.current.textSecondary,
     maxLines: Int = 1,
 ) {
     Text(
@@ -272,7 +271,7 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = OnSurfaceVariant,
+        color = LocalPakomoColors.current.textSecondary,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
