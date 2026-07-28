@@ -143,7 +143,7 @@ fun SpecialFaultSection(
                 )
             }
             if (type == SpecialFaultType.CONNECTION_RESET && fault.enabled) {
-                FaultBehaviorRow("连接重置 · 预期 ERR_CONNECTION_RESET (-101)")
+                FaultBehaviorRow("连接重置（-101）")
             }
         }
     }
@@ -223,7 +223,7 @@ private fun <T> FaultOptionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(42.dp)
                 .background(SurfaceFold, RoundedCornerShape(8.dp))
                 .border(1.dp, Border, RoundedCornerShape(8.dp))
                 .clickable { expanded = true }
@@ -232,10 +232,10 @@ private fun <T> FaultOptionRow(
         ) {
             Text(
                 text = label(selected),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = OnSurface,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
+                maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
             Icon(
@@ -254,7 +254,7 @@ private fun <T> FaultOptionRow(
                     text = {
                         Text(
                             text = label(option),
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     },
                     onClick = {
@@ -272,7 +272,7 @@ private fun FaultBehaviorRow(text: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(42.dp)
             .background(SurfaceFold, RoundedCornerShape(8.dp))
             .border(1.dp, Border, RoundedCornerShape(8.dp))
             .padding(horizontal = 12.dp),
@@ -280,7 +280,7 @@ private fun FaultBehaviorRow(text: String) {
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = OnSurface,
             fontWeight = FontWeight.SemiBold,
         )
@@ -288,16 +288,15 @@ private fun FaultBehaviorRow(text: String) {
 }
 
 private fun DnsFailureResult.behaviorLabel(): String = when (this) {
-    DnsFailureResult.NXDOMAIN -> "NXDOMAIN · 预期 ERR_NAME_NOT_RESOLVED (-105)"
-    DnsFailureResult.SERVFAIL -> "SERVFAIL · 通常 ERR_NAME_RESOLUTION_FAILED (-137)"
-    DnsFailureResult.REFUSED -> "REFUSED · 通常 ERR_NAME_RESOLUTION_FAILED (-137)"
-    DnsFailureResult.TIMEOUT -> "DNS 超时 · 错误码不固定"
+    DnsFailureResult.NXDOMAIN -> "NXDOMAIN（-105）"
+    DnsFailureResult.SERVFAIL -> "SERVFAIL（通常 -137）"
+    DnsFailureResult.REFUSED -> "REFUSED（通常 -137）"
+    DnsFailureResult.TIMEOUT -> "DNS 超时（不固定）"
 }
 
 private fun BlackoutMode.behaviorLabel(): String = when (this) {
-    BlackoutMode.SILENT -> "静默中断 · 预期 ERR_TIMED_OUT (-7)"
-    BlackoutMode.IMMEDIATE ->
-        "立即中断 · 预期 ERR_CONNECTION_REFUSED (-102)，可能降级为 ERR_CONNECTION_RESET (-101)"
+    BlackoutMode.SILENT -> "静默中断（-7）"
+    BlackoutMode.IMMEDIATE -> "立即中断（-102 / -101）"
 }
 
 /**
