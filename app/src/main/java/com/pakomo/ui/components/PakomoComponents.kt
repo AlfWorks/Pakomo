@@ -98,6 +98,7 @@ fun ScopeSelector(
     onSelected: (TargetScope) -> Unit,
     modifier: Modifier = Modifier,
     disabledScopes: Set<TargetScope> = emptySet(),
+    onDisabledScopeClick: (TargetScope) -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = modifier
@@ -146,11 +147,16 @@ fun ScopeSelector(
                         .height(40.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .clickable(
-                            enabled = enabled,
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             role = Role.RadioButton,
-                        ) { onSelected(scope) },
+                        ) {
+                            if (enabled) {
+                                onSelected(scope)
+                            } else {
+                                onDisabledScopeClick(scope)
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

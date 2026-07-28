@@ -1,5 +1,6 @@
 package com.pakomo.ui.screens
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -152,6 +154,14 @@ internal fun HomeScreen(
     onToggleService: () -> Unit,
     onEmergencyStop: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val showAppListUnavailable = {
+        Toast.makeText(
+            context,
+            "应用列表不可用，请在设置中检查权限",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
     val activeTargetCount = remember(state.scope, state.apps, state.addressDomains) {
         when (state.scope) {
             TargetScope.APPLICATIONS -> state.apps.count { it.isSelected }
@@ -227,6 +237,7 @@ internal fun HomeScreen(
                 appScopeEnabled = appScopeEnabled,
                 onSelected = onScopeSelected,
                 onOpenScope = onOpenScope,
+                onAppScopeUnavailable = showAppListUnavailable,
             )
             Spacer(Modifier.height(12.dp))
         }
@@ -522,6 +533,7 @@ private fun ScopeCard(
     appScopeEnabled: Boolean,
     onSelected: (TargetScope) -> Unit,
     onOpenScope: () -> Unit,
+    onAppScopeUnavailable: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -538,6 +550,9 @@ private fun ScopeCard(
                     emptySet()
                 } else {
                     setOf(TargetScope.APPLICATIONS)
+                },
+                onDisabledScopeClick = {
+                    if (it == TargetScope.APPLICATIONS) onAppScopeUnavailable()
                 },
             )
             AnimatedVisibility(
@@ -556,7 +571,13 @@ private fun ScopeCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = targetPickerEnabled, onClick = onOpenScope)
+                        .clickable {
+                            if (targetPickerEnabled) {
+                                onOpenScope()
+                            } else {
+                                onAppScopeUnavailable()
+                            }
+                        }
                         .padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
