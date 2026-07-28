@@ -104,15 +104,19 @@ class QuickControlService : Service() {
         val view = QuickControlView(this).apply {
             stage = VpnServiceController.runtime.value.stage
             setOnClickListener {
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                toggleVpn()
+                val wasActive = VpnServiceController.runtime.value.stage.isActive
+                if (toggleVpn()) {
+                    stage = if (wasActive) EngineStage.STOPPED else EngineStage.STARTING
+                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                }
             }
         }
-        val width = dp(52)
-        val height = dp(62)
+        val width = dp(42)
+        val height = dp(54)
         val screen = screenBounds()
         val storedY = overlayState.getInt(KEY_Y, screen.height() / 3)
         val onRight = overlayState.getBoolean(KEY_RIGHT, true)
+        view.attachedRight = onRight
         val params = WindowManager.LayoutParams(
             width,
             height,
@@ -152,6 +156,7 @@ class QuickControlService : Service() {
         view.setOnTouchListener { target, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    target.isPressed = true
                     downRawX = event.rawX
                     downRawY = event.rawY
                     startX = params.x
@@ -164,6 +169,7 @@ class QuickControlService : Service() {
                     val dy = event.rawY - downRawY
                     if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
                         dragging = true
+                        target.isPressed = false
                     }
                     if (dragging) {
                         val screen = screenBounds()
@@ -176,6 +182,7 @@ class QuickControlService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    target.isPressed = false
                     if (dragging) {
                         snapToNearestEdge(save = true)
                     } else {
@@ -183,7 +190,10 @@ class QuickControlService : Service() {
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> true
+                MotionEvent.ACTION_CANCEL -> {
+                    target.isPressed = false
+                    true
+                }
                 else -> false
             }
         }
@@ -195,6 +205,7 @@ class QuickControlService : Service() {
         val screen = screenBounds()
         val maxX = (screen.width() - params.width).coerceAtLeast(0)
         params.x = if (params.x + params.width / 2 >= screen.width() / 2) maxX else 0
+        view.attachedRight = params.x == maxX
         params.y = params.y.coerceIn(0, (screen.height() - params.height).coerceAtLeast(0))
         runCatching { windowManager.updateViewLayout(view, params) }
         if (save) {
@@ -212,13 +223,13 @@ class QuickControlService : Service() {
         layoutParams = null
     }
 
-    private fun toggleVpn() {
+    private fun toggleVpn(): Boolean {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastToggleAtMs < TOGGLE_DEBOUNCE_MS) return
+        if (now - lastToggleAtMs < TOGGLE_DEBOUNCE_MS) return false
         lastToggleAtMs = now
         if (VpnServiceController.runtime.value.stage.isActive) {
             VpnServiceController.stop(this)
-            return
+            return true
         }
         if (VpnService.prepare(this) != null) {
             startActivity(
@@ -226,7 +237,7 @@ class QuickControlService : Service() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     .putExtra(MainActivity.EXTRA_START_FROM_QUICK_CONTROL, true),
             )
-            return
+            return true
         }
         val selectedPackages = preferences.readSelectedPackages()
         val domainsByPackage = preferences.readDomainsByPackage()
@@ -243,6 +254,7 @@ class QuickControlService : Service() {
             domainsByPackage = domainsByPackage,
             rule = activeRule,
         )
+        return true
     }
 
     private fun buildNotification(): Notification {
@@ -300,6 +312,12 @@ class QuickControlService : Service() {
     private class QuickControlView(context: Context) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val iconPath = Path()
+        private val backgroundPath = Path()
+        var attachedRight: Boolean = true
+            set(value) {
+                field = value
+                invalidate()
+            }
         var stage: EngineStage = EngineStage.STOPPED
             set(value) {
                 field = value
@@ -320,23 +338,55 @@ class QuickControlService : Service() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val density = resources.displayMetrics.density
-            val bounds = RectF(4f * density, 4f * density, width - 4f * density, height - 4f * density)
+            val shadowInset = 3f * density
+            val bounds = RectF(
+                if (attachedRight) shadowInset else 0f,
+                shadowInset,
+                if (attachedRight) width.toFloat() else width - shadowInset,
+                height - shadowInset,
+            )
+            val innerRadius = 11f * density
+            val edgeRadius = 3f * density
+            val radii = if (attachedRight) {
+                floatArrayOf(
+                    innerRadius, innerRadius,
+                    edgeRadius, edgeRadius,
+                    edgeRadius, edgeRadius,
+                    innerRadius, innerRadius,
+                )
+            } else {
+                floatArrayOf(
+                    edgeRadius, edgeRadius,
+                    innerRadius, innerRadius,
+                    innerRadius, innerRadius,
+                    edgeRadius, edgeRadius,
+                )
+            }
+            backgroundPath.reset()
+            backgroundPath.addRoundRect(bounds, radii, Path.Direction.CW)
             paint.style = Paint.Style.FILL
             paint.color = when (stage) {
                 EngineStage.FORWARDING -> Color.rgb(59, 111, 224)
                 EngineStage.STARTING -> Color.rgb(229, 162, 59)
                 EngineStage.ERROR -> Color.rgb(192, 57, 46)
-                EngineStage.STOPPED -> Color.rgb(141, 141, 141)
+                EngineStage.STOPPED -> Color.rgb(112, 116, 124)
             }
-            paint.setShadowLayer(4f * density, 0f, 1.5f * density, 0x30000000)
-            canvas.drawRoundRect(bounds, 13f * density, 13f * density, paint)
+            paint.alpha = if (isPressed) 215 else 245
+            paint.setShadowLayer(2.5f * density, 0f, density, 0x28000000)
+            canvas.drawPath(backgroundPath, paint)
             paint.clearShadowLayer()
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = density
+            paint.color = 0x24FFFFFF
+            paint.alpha = 255
+            canvas.drawPath(backgroundPath, paint)
+            paint.style = Paint.Style.FILL
             paint.color = Color.WHITE
-            val cx = width / 2f
-            val cy = height / 2f
+            val cx = bounds.centerX()
+            val cy = bounds.centerY()
             when (stage) {
                 EngineStage.FORWARDING -> {
-                    val half = 7f * density
+                    val half = 6f * density
                     canvas.drawRoundRect(
                         RectF(cx - half, cy - half, cx + half, cy + half),
                         2.5f * density,
@@ -346,9 +396,9 @@ class QuickControlService : Service() {
                 }
                 EngineStage.STARTING -> {
                     paint.style = Paint.Style.STROKE
-                    paint.strokeWidth = 3f * density
+                    paint.strokeWidth = 2.5f * density
                     paint.strokeCap = Paint.Cap.ROUND
-                    val half = 9f * density
+                    val half = 8f * density
                     val angle = (android.os.SystemClock.uptimeMillis() / 4L % 360L).toFloat()
                     canvas.drawArc(
                         RectF(cx - half, cy - half, cx + half, cy + half),
@@ -360,8 +410,8 @@ class QuickControlService : Service() {
                     postInvalidateOnAnimation()
                 }
                 EngineStage.ERROR, EngineStage.STOPPED -> {
-                    val halfHeight = 9f * density
-                    val halfWidth = 7f * density
+                    val halfHeight = 8f * density
+                    val halfWidth = 6f * density
                     iconPath.reset()
                     iconPath.moveTo(cx - halfWidth, cy - halfHeight)
                     iconPath.lineTo(cx + halfWidth + 2f * density, cy)
@@ -381,7 +431,7 @@ class QuickControlService : Service() {
         private const val OVERLAY_STATE_FILE = "pakomo_quick_control_position"
         private const val KEY_RIGHT = "right"
         private const val KEY_Y = "y"
-        private const val TOGGLE_DEBOUNCE_MS = 700L
+        private const val TOGGLE_DEBOUNCE_MS = 300L
 
         @Volatile
         private var instance: QuickControlService? = null

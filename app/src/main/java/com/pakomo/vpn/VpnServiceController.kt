@@ -35,6 +35,9 @@ object VpnServiceController {
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
     ) {
+        if (_runtime.value.stage != EngineStage.FORWARDING) {
+            publish(EngineStage.STARTING, "正在建立本地转发链路")
+        }
         val (intent, configId) = buildIntent(
             context, WeakNetworkVpnService.ACTION_START, scope,
             selectedPackages, targetDomains, domainsByPackage, rule,
