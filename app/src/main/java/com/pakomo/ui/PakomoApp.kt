@@ -190,6 +190,11 @@ fun PakomoApp(
                         onToggleFault = { type, enabled ->
                             mutateDraftFault(type) { it.copy(enabled = enabled) }
                         },
+                        onDnsResult = { result ->
+                            mutateDraftFault(SpecialFaultType.DNS_FAILURE) {
+                                it.copy(dnsResult = result)
+                            }
+                        },
                         onOpenFaultTarget = { type ->
                             navigate(Screen.FaultTarget(type))
                         },
@@ -247,9 +252,6 @@ fun PakomoApp(
                         },
                         onBlackoutMode = { mode ->
                             mutateDraftFault(faultNav.type) { it.copy(blackoutMode = mode) }
-                        },
-                        onDnsResult = { result ->
-                            mutateDraftFault(faultNav.type) { it.copy(dnsResult = result) }
                         },
                         onDnsCacheGuard = { enabled ->
                             mutateDraftFault(faultNav.type) { it.copy(dnsCacheGuard = enabled) }

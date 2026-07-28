@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -29,7 +31,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -67,9 +72,10 @@ fun SpecialFaultSection(
     addressDomains: List<String>,
     appLabels: Map<String, String>,
     onToggle: (SpecialFaultType, Boolean) -> Unit,
+    onDnsResult: (DnsFailureResult) -> Unit,
     onOpenTarget: (SpecialFaultType) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
             text = "特殊故障",
             style = MaterialTheme.typography.labelLarge,
@@ -110,6 +116,12 @@ fun SpecialFaultSection(
                 onToggle = { onToggle(type, it) },
                 onOpen = { if (canOpen) onOpenTarget(type) },
             )
+            if (type == SpecialFaultType.DNS_FAILURE && fault.enabled) {
+                DnsResultRow(
+                    selected = fault.dnsResult,
+                    onSelect = onDnsResult,
+                )
+            }
         }
 
         val overlaps = remember(rule.specialFaults, scope, selectedAppDomains, addressDomains) {
@@ -141,12 +153,11 @@ private fun FaultEntryRow(
             .background(Color.White, RoundedCornerShape(10.dp))
             .border(1.dp, if (enabled) Color(0xFFD6DFF5) else Border, RoundedCornerShape(10.dp))
             .then(if (canOpen) Modifier.clickable(onClick = onOpen) else Modifier)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall, color = OnSurface)
-            Spacer(Modifier.height(2.dp))
             Text(status, style = MaterialTheme.typography.bodySmall, color = Muted)
         }
         if (canOpen) {
@@ -155,7 +166,7 @@ private fun FaultEntryRow(
                 contentDescription = null,
                 tint = Muted,
             )
-            Spacer(Modifier.size(4.dp))
+            Spacer(Modifier.size(2.dp))
         }
         Switch(
             checked = enabled,
@@ -168,6 +179,66 @@ private fun FaultEntryRow(
             ),
         )
     }
+}
+
+@Composable
+private fun DnsResultRow(
+    selected: DnsFailureResult,
+    onSelect: (DnsFailureResult) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .background(SurfaceFold, RoundedCornerShape(8.dp))
+            .padding(start = 12.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "DNS 返回",
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        Box {
+            Row(
+                modifier = Modifier
+                    .background(Color.White, RoundedCornerShape(7.dp))
+                    .border(1.dp, Border, RoundedCornerShape(7.dp))
+                    .clickable { expanded = true }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = selected.shortLabel(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = OnSurface,
+                )
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                DnsFailureResult.entries.forEach { result ->
+                    DropdownMenuItem(
+                        text = { Text(result.shortLabel()) },
+                        onClick = {
+                            expanded = false
+                            onSelect(result)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun DnsFailureResult.shortLabel(): String = when (this) {
+    DnsFailureResult.NXDOMAIN -> "NXDOMAIN"
+    DnsFailureResult.SERVFAIL -> "SERVFAIL"
+    DnsFailureResult.REFUSED -> "REFUSED"
+    DnsFailureResult.TIMEOUT -> "超时"
 }
 
 @Composable
@@ -188,15 +259,24 @@ private fun OverlapHint(
             color = Color(0xFF8A5A00),
             fontWeight = FontWeight.SemiBold,
         )
-        overlaps.forEach { (target, types) ->
+        overlaps.entries.take(MAX_VISIBLE_OVERLAPS).forEach { (target, types) ->
             Text(
                 text = "· ${targetLabel(target, appLabels)}：${types.joinToString("、") { it.entryLabel }}",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF8A5A00),
             )
         }
+        if (overlaps.size > MAX_VISIBLE_OVERLAPS) {
+            Text(
+                text = "另有 ${overlaps.size - MAX_VISIBLE_OVERLAPS} 个重叠目标",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF8A5A00),
+            )
+        }
     }
 }
+
+private const val MAX_VISIBLE_OVERLAPS = 2
 
 private fun targetLabel(target: FaultTarget, appLabels: Map<String, String>): String = when (target) {
     is FaultTarget.Global -> "全局范围"
@@ -222,7 +302,6 @@ fun FaultTargetScreen(
     onToggleAppDomain: (String, String, Boolean) -> Unit,
     onToggleAddress: (String, Boolean) -> Unit,
     onBlackoutMode: (BlackoutMode) -> Unit,
-    onDnsResult: (DnsFailureResult) -> Unit,
     onDnsCacheGuard: (Boolean) -> Unit,
 ) {
     val fault = rule.specialFaults.fault(type)
@@ -243,20 +322,11 @@ fun FaultTargetScreen(
                 label = { it.label },
                 onSelect = onBlackoutMode,
             )
-            SpecialFaultType.DNS_FAILURE -> {
-                ParamSection(
-                    title = "返回结果",
-                    options = DnsFailureResult.entries,
-                    selected = fault.dnsResult,
-                    label = { it.label },
-                    onSelect = onDnsResult,
-                )
-                ToggleParamRow(
-                    title = "阻止缓存后的连接",
-                    checked = fault.dnsCacheGuard,
-                    onCheckedChange = onDnsCacheGuard,
-                )
-            }
+            SpecialFaultType.DNS_FAILURE -> ToggleParamRow(
+                title = "阻止缓存后的连接",
+                checked = fault.dnsCacheGuard,
+                onCheckedChange = onDnsCacheGuard,
+            )
             SpecialFaultType.CONNECTION_RESET -> Unit
         }
 

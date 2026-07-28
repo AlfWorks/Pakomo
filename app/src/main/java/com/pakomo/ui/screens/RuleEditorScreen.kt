@@ -1,10 +1,7 @@
 package com.pakomo.ui.screens
 
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.HorizontalDivider
 import com.pakomo.core.model.NetworkRule
+import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.ScreenHeader
@@ -60,6 +58,7 @@ fun RuleEditorScreen(
     addressDomains: List<String>,
     appLabels: Map<String, String>,
     onToggleFault: (SpecialFaultType, Boolean) -> Unit,
+    onDnsResult: (DnsFailureResult) -> Unit,
     onOpenFaultTarget: (SpecialFaultType) -> Unit,
 ) {
     var name by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
@@ -133,8 +132,8 @@ fun RuleEditorScreen(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OutlinedTextField(
                 value = name,
@@ -147,15 +146,12 @@ fun RuleEditorScreen(
 
             ModeToggle(advanced = advanced, onChange = { advanced = it; error = null })
 
-            AnimatedContent(
+            Crossfade(
                 targetState = advanced,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(140))
-                        .togetherWith(fadeOut(animationSpec = tween(90)))
-                },
+                animationSpec = tween(110),
                 label = "ruleModeContent",
             ) { advancedMode ->
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (!advancedMode) {
                         NumberField("固定延迟", "ms", latency, Modifier.fillMaxWidth()) {
                             latency = it
@@ -208,6 +204,7 @@ fun RuleEditorScreen(
                 addressDomains = addressDomains,
                 appLabels = appLabels,
                 onToggle = onToggleFault,
+                onDnsResult = onDnsResult,
                 onOpenTarget = onOpenFaultTarget,
             )
         }
@@ -238,7 +235,7 @@ private fun ModeToggle(advanced: Boolean, onChange: (Boolean) -> Unit) {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(38.dp)
+                    .height(34.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(segmentColor)
                     .clickable(

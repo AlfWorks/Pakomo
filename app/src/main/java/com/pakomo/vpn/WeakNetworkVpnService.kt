@@ -101,7 +101,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     "Starting forwarding: scope=${config.scope.name}, " +
                         "apps=${config.selectedPackages.size}, domains=${config.targetDomains.size}",
                 )
-                VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
+                // A scope change rebuilds the VPN interface, but it is still one continuous user
+                // session. Keep the public runtime in FORWARDING so the fixed home controls and
+                // traffic chart do not collapse and re-expand during the short handover.
+                if (VpnServiceController.runtime.value.stage != EngineStage.FORWARDING) {
+                    VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
+                }
                 startForeground(
                     NOTIFICATION_ID,
                     buildNotification(
