@@ -2,6 +2,8 @@
 
 Android 10+ 非 Root 弱网模拟工具。
 
+项目后续方向与特殊故障设计见 [Pakomo 项目方向](docs/PROJECT-DIRECTION.md)。
+
 ## 当前程序状态
 
 首批可运行程序已经包含：
