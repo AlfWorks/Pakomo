@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pakomo.core.model.BlackoutMode
@@ -231,11 +232,18 @@ private fun <T> FaultOptionRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
+                text = "故障表现",
+                style = MaterialTheme.typography.labelSmall,
+                color = OnSurfaceVariant,
+            )
+            Spacer(Modifier.size(12.dp))
+            Text(
                 text = label(selected),
-                style = MaterialTheme.typography.bodyMedium,
-                color = OnSurface,
+                style = MaterialTheme.typography.labelMedium,
+                color = Accent,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
+                textAlign = TextAlign.End,
                 modifier = Modifier.weight(1f),
             )
             Icon(
@@ -255,6 +263,8 @@ private fun <T> FaultOptionRow(
                         Text(
                             text = label(option),
                             style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     },
                     onClick = {
@@ -279,10 +289,18 @@ private fun FaultBehaviorRow(text: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
+            text = "故障表现",
+            style = MaterialTheme.typography.labelSmall,
+            color = OnSurfaceVariant,
+        )
+        Spacer(Modifier.size(12.dp))
+        Text(
             text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = OnSurface,
+            style = MaterialTheme.typography.labelMedium,
+            color = Accent,
             fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
         )
     }
 }
