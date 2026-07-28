@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.VpnService
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -29,6 +30,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: PakomoViewModel by viewModels()
     private var vpnPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(false)
+    private var appListPermissionGranted by mutableStateOf(false)
     private var startAfterVpnPermission = false
 
     private val vpnPermissionLauncher =
@@ -49,6 +51,12 @@ class MainActivity : ComponentActivity() {
             refreshPermissionStates()
         }
 
+    private val appPermissionSettingsLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            refreshPermissionStates()
+            viewModel.refreshApps()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "Application started")
@@ -66,6 +74,7 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     vpnPermissionGranted = vpnPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
+                    appListPermissionGranted = appListPermissionGranted,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
                             requestVpnPermission(startAfterGrant = true)
@@ -89,6 +98,14 @@ class MainActivity : ComponentActivity() {
                         } else {
                             requestNotificationPermission()
                         }
+                    },
+                    onAppListPermissionClick = {
+                        appPermissionSettingsLauncher.launch(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName"),
+                            ),
+                        )
                     },
                 )
             }
@@ -139,6 +156,12 @@ class MainActivity : ComponentActivity() {
         vpnPermissionGranted = VpnService.prepare(this) == null
         notificationPermissionGranted =
             NotificationManagerCompat.from(this).areNotificationsEnabled()
+        appListPermissionGranted =
+            Build.VERSION.SDK_INT < 30 ||
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.QUERY_ALL_PACKAGES,
+                ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun startVpn() {

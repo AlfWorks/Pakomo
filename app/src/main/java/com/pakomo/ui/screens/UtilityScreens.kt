@@ -143,10 +143,12 @@ fun SecurityScreen(
     state: PakomoUiState,
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
+    appListPermissionGranted: Boolean,
     onBack: () -> Unit,
     onClearData: () -> Unit,
     onVpnPermissionClick: () -> Unit,
     onNotificationPermissionClick: () -> Unit,
+    onAppListPermissionClick: () -> Unit,
 ) {
     var confirmClear by remember { mutableStateOf(false) }
     Column(
@@ -177,8 +179,8 @@ fun SecurityScreen(
                 PermissionStatusRow(
                     title = "应用列表",
                     detail = "用于选择接管应用",
-                    granted = true,
-                    onClick = null,
+                    granted = appListPermissionGranted,
+                    onClick = onAppListPermissionClick,
                 )
             }
             SectionLabel("本地数据")
