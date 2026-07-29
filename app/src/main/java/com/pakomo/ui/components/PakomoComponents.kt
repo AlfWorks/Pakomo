@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.TargetScope
@@ -174,6 +175,7 @@ fun NavigationRow(
     icon: ImageVector,
     title: String,
     onClick: () -> Unit,
+    showArrow: Boolean = true,
 ) {
     val colors = LocalPakomoColors.current
     Row(
@@ -196,11 +198,13 @@ fun NavigationRow(
             color = colors.textPrimary,
             modifier = Modifier.weight(1f),
         )
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            contentDescription = null,
-            tint = colors.muted,
-        )
+        if (showArrow) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.muted,
+            )
+        }
     }
 }
 
@@ -267,11 +271,15 @@ fun MonoText(
 }
 
 @Composable
-fun SectionLabel(text: String, modifier: Modifier = Modifier) {
+fun SectionLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+    startPadding: Dp = 16.dp,
+) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = LocalPakomoColors.current.textSecondary,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        color = LocalPakomoColors.current.accent,
+        modifier = modifier.padding(start = startPadding, end = 16.dp, top = 8.dp, bottom = 8.dp),
     )
 }

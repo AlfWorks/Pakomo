@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,9 +44,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,11 +69,13 @@ import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
 import com.pakomo.core.model.TargetScope
-import com.pakomo.ui.components.Hairline
+import com.pakomo.ui.components.EmptyArtKind
+import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.NavigationRow
 import com.pakomo.ui.components.PakomoMascot
 import com.pakomo.ui.components.ScopeSelector
 import com.pakomo.ui.components.mascotStateOf
+import com.pakomo.ui.components.rememberReduceMotion
 import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.ui.theme.LocalThemeMode
 import com.pakomo.ui.theme.PakomoColors
@@ -155,7 +160,6 @@ internal fun HomeScreen(
     onOpenScope: () -> Unit,
     onOpenRules: () -> Unit,
     onOpenDiagnostics: () -> Unit,
-    onOpenLatencyTest: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleService: () -> Unit,
 ) {
@@ -197,22 +201,11 @@ internal fun HomeScreen(
                 .padding(horizontal = 16.dp),
         ) {
             Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(colors.accent, RoundedCornerShape(11.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("P", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-                }
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    text = "Pakomo",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = colors.textPrimary,
-                )
-            }
+            Text(
+                text = "Pakomo",
+                style = MaterialTheme.typography.headlineSmall,
+                color = colors.textPrimary,
+            )
 
             Spacer(Modifier.height(16.dp))
             ServiceStatusCard(
@@ -256,31 +249,40 @@ internal fun HomeScreen(
             Spacer(Modifier.height(12.dp))
         }
 
-        NavigationRow(
-            icon = Icons.Rounded.Bolt,
-            title = "规则",
-            onClick = onOpenRules,
-        )
-        Hairline()
-        NavigationRow(
-            icon = Icons.Rounded.BugReport,
-            title = "日志",
-            onClick = onOpenDiagnostics,
-        )
-        Hairline()
-        NavigationRow(
-            icon = Icons.Rounded.Public,
-            title = "域名延迟测试",
-            onClick = onOpenLatencyTest,
-        )
-        Hairline()
-        NavigationRow(
-            icon = Icons.Rounded.Settings,
-            title = "设置",
-            onClick = onOpenSettings,
-        )
-
-        Spacer(Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
+            // 角色主卡:铺满从接管范围卡下方到 App 底部的整片可用区(全宽全高)。
+            // 导航行浮在其上,真图用透明区避开左上的导航文字。仅 Companion、不可交互、不进语义树。
+            if (decorated) {
+                EmptyStateArt(
+                    kind = EmptyArtKind.Generic,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                NavigationRow(
+                    icon = Icons.Rounded.Bolt,
+                    title = "规则",
+                    onClick = onOpenRules,
+                    showArrow = false,
+                )
+                NavigationRow(
+                    icon = Icons.Rounded.BugReport,
+                    title = "日志",
+                    onClick = onOpenDiagnostics,
+                    showArrow = false,
+                )
+                NavigationRow(
+                    icon = Icons.Rounded.Settings,
+                    title = "设置",
+                    onClick = onOpenSettings,
+                    showArrow = false,
+                )
+            }
+        }
     }
 
 }
@@ -288,6 +290,32 @@ internal fun HomeScreen(
 @Composable
 private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
     val colors = LocalPakomoColors.current
+    val decorated = LocalThemeMode.current == ThemeMode.Companion
+    val reduceMotion = rememberReduceMotion()
+    val rnd = remember { java.util.Random() }
+    val glitch = remember { Animatable(0f) }
+    var glitchBands by remember { mutableStateOf(emptyList<GlitchBand>()) }
+    var lastDropped by remember { mutableStateOf(state.stats.droppedTransfers) }
+    var nextGlitchMs by remember { mutableStateOf(0L) }
+    // 故障强度与频率**跟随当前规则的丢包率**:0% 丢包基本不故障;丢包越高,炸得越勤、越猛、越碎。
+    // (这样 glitch 是丢包率的可视化,而非纯装饰;随机只用来打散节奏、避免机械感。)
+    val loss = (state.activeRule.packetLossPercent / 100f).coerceIn(0f, 1f)
+    LaunchedEffect(state.stats.droppedTransfers) {
+        val dropped = state.stats.droppedTransfers
+        val now = System.currentTimeMillis()
+        // 触发概率随丢包率上升(0% → 几乎不炸;100% → ~85%),再叠随机冷却把节奏打散
+        if (decorated && dropped > lastDropped && !reduceMotion &&
+            now >= nextGlitchMs && rnd.nextFloat() < 0.85f * loss
+        ) {
+            nextGlitchMs = now + 700 + rnd.nextInt(2200)
+            glitchBands = randomGlitchBands(rnd, loss)
+            // 峰值强度随丢包率(0.3 基础 + 0.7*loss),再叠 ±小幅随机
+            val peak = (0.3f + 0.7f * loss) * (0.75f + rnd.nextFloat() * 0.25f)
+            glitch.snapTo(peak.coerceIn(0.15f, 1f))
+            glitch.animateTo(0f, animationSpec = tween(130 + rnd.nextInt(120), easing = LinearEasing))
+        }
+        lastDropped = dropped
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -326,37 +354,71 @@ private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
                         onDrawBehind {
                             for (i in 0..3) {
                                 val y = size.height * i / 3f
-                                drawLine(
-                                    colors.border,
-                                    Offset(0f, y),
-                                    Offset(size.width, y),
-                                    strokeWidth = 1f,
-                                )
+                                drawLine(colors.border, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
                             }
                             val translation = -chartState.scrollOffset.value * stepX
-                            clipRect(
-                                left = 0f,
-                                top = 0f,
-                                right = size.width,
-                                bottom = size.height,
-                            ) {
+                            val g = glitch.value
+                            // 正常曲线
+                            clipRect(left = 0f, top = 0f, right = size.width, bottom = size.height) {
                                 translate(left = translation) {
-                                    drawPath(
-                                        path = downloadPath,
-                                        color = colors.muted.copy(alpha = 0.5f),
-                                        style = Stroke(width = 4f),
-                                    )
-                                    drawPath(
-                                        path = uploadPath,
-                                        color = colors.accent,
-                                        style = Stroke(width = 4f),
-                                    )
+                                    drawPath(downloadPath, color = colors.muted.copy(alpha = 0.5f), style = Stroke(width = 4f))
+                                    drawPath(uploadPath, color = colors.accent, style = Stroke(width = 4f))
+                                }
+                            }
+                            // 丢包:只重画"有错位"的细行,每行错位量不同并各自带青/粉色散,
+                            // 曲线被撕成参差的碎段(未错位的行仍是上面那条正常曲线)。
+                            if (g > 0f) {
+                                glitchBands.forEach { band ->
+                                    if (band.shift == 0f) return@forEach
+                                    val top = size.height * band.y0
+                                    val bottom = size.height * band.y1
+                                    clipRect(left = 0f, top = top, right = size.width, bottom = bottom) {
+                                        drawRect(colors.surface, topLeft = Offset(0f, top), size = Size(size.width, bottom - top))
+                                        for (i in 0..3) {
+                                            val y = size.height * i / 3f
+                                            drawLine(colors.border, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                                        }
+                                        val base = translation + size.width * band.shift * g
+                                        val split = size.width * 0.012f * g
+                                        translate(left = base + split) {
+                                            drawPath(uploadPath, color = colors.glitchCyan.copy(alpha = 0.7f * g), style = Stroke(width = 4f))
+                                        }
+                                        translate(left = base - split) {
+                                            drawPath(uploadPath, color = colors.glitchPink.copy(alpha = 0.7f * g), style = Stroke(width = 4f))
+                                        }
+                                        translate(left = base) {
+                                            drawPath(downloadPath, color = colors.muted.copy(alpha = 0.5f), style = Stroke(width = 4f))
+                                            drawPath(uploadPath, color = colors.accent, style = Stroke(width = 4f))
+                                        }
+                                    }
                                 }
                             }
                         }
                     },
             )
         }
+    }
+}
+
+/** 一次故障里的一条细扫描行(比例值);shift==0 表示这行不动。 */
+private class GlitchBand(val y0: Float, val y1: Float, val shift: Float)
+
+/**
+ * 把图表高度切成 7–13 条**细扫描行**,错位程度随丢包率 [loss] 变化:丢包越高,动的行越多、错位幅度越大。
+ * 未动的行保持原样。错位量平方分布(多数小、偶尔大),相邻行不同 → 参差碎段,而非整行齐刷刷横滑。
+ */
+private fun randomGlitchBands(rnd: java.util.Random, loss: Float): List<GlitchBand> {
+    val rows = 7 + rnd.nextInt(7)
+    val moveChance = 0.2f + 0.55f * loss // 丢包越高,动的行越多
+    val maxShift = 0.08f + 0.34f * loss  // 丢包越高,错位幅度越大
+    return List(rows) { i ->
+        val shift = if (rnd.nextFloat() > moveChance) {
+            0f
+        } else {
+            val mag = rnd.nextFloat() * rnd.nextFloat()
+            (rnd.nextFloat() - 0.5f) * 2f * mag * maxShift
+        }
+        GlitchBand(y0 = i.toFloat() / rows, y1 = (i + 1).toFloat() / rows, shift = shift)
     }
 }
 

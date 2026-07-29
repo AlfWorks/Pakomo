@@ -50,9 +50,13 @@ import com.pakomo.core.model.SpecialFaultTargets
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.AppIcon
+import com.pakomo.ui.components.EmptyArtKind
+import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.LocalThemeMode
+import com.pakomo.ui.theme.ThemeMode
 
 /**
  * 规则编辑页底部的特殊故障区：三条独立入口、已选数量、冲突标识与故障表现。
@@ -578,12 +582,24 @@ private fun CheckRow(
 
 @Composable
 private fun EmptyHint(text: String) {
+    val companion = LocalThemeMode.current == ThemeMode.Companion
     Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(32.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (companion) {
+                EmptyStateArt(EmptyArtKind.Targets, Modifier.size(112.dp))
+                Spacer(Modifier.height(10.dp))
+            }
+            Text(
+                text = text,
+                color = LocalPakomoColors.current.muted,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }

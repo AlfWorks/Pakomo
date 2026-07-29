@@ -24,6 +24,7 @@ import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.SpecialFault
 import com.pakomo.core.model.SpecialFaultType
+import com.pakomo.ui.screens.AboutScreen
 import com.pakomo.ui.screens.DiagnosticsScreen
 import com.pakomo.ui.screens.FaultTargetScreen
 import com.pakomo.ui.screens.HomeScreen
@@ -46,6 +47,7 @@ private sealed interface Screen {
     data object Diagnostics : Screen
     data object Settings : Screen
     data object Security : Screen
+    data object About : Screen
     data object LatencyTest : Screen
 }
 
@@ -133,7 +135,6 @@ fun PakomoApp(
                 onOpenScope = { navigate(Screen.Scope) },
                 onOpenRules = { navigate(Screen.Rules) },
                 onOpenDiagnostics = { navigate(Screen.Diagnostics) },
-                onOpenLatencyTest = { navigate(Screen.LatencyTest) },
                 onOpenSettings = { navigate(Screen.Settings) },
                 onToggleService = onToggleService,
             )
@@ -277,11 +278,15 @@ fun PakomoApp(
             Screen.Settings -> SettingsScreen(
                 onBack = goBack,
                 onOpenSecurity = { navigate(Screen.Security) },
+                onOpenLatencyTest = { navigate(Screen.LatencyTest) },
+                onOpenAbout = { navigate(Screen.About) },
                 quickControlEnabled = quickControlEnabled,
                 onQuickControlChanged = onQuickControlChanged,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
             )
+
+            Screen.About -> AboutScreen(onBack = goBack)
 
             Screen.Security -> SecurityScreen(
                 state = state,

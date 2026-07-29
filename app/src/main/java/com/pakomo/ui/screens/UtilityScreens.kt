@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -51,19 +55,17 @@ import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.PakomoUiState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Security
-import com.pakomo.ui.components.NavigationRow
+import androidx.compose.material.icons.rounded.WarningAmber
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.components.SectionLabel
 import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.ui.theme.ThemeMode
-import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.height
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +112,8 @@ fun DiagnosticsScreen(
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSecurity: () -> Unit,
+    onOpenLatencyTest: () -> Unit,
+    onOpenAbout: () -> Unit,
     quickControlEnabled: Boolean,
     onQuickControlChanged: (Boolean) -> Unit,
     themeMode: ThemeMode,
@@ -117,8 +121,7 @@ fun SettingsScreen(
 ) {
     var resumeLast by remember { mutableStateOf(false) }
     var showSystemWarning by remember { mutableStateOf(true) }
-    val context = LocalContext.current
-    val network = remember { readNetworkSummary(context) }
+    val colors = LocalPakomoColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -130,86 +133,139 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 16.dp),
         ) {
-            SectionLabel("外观")
-            ThemeModeSelector(current = themeMode, onChange = onThemeModeChange)
-            SectionLabel("安全")
-            NavigationRow(
+            SectionLabel("外观", startPadding = 56.dp)
+            SettingRow(
+                icon = Icons.Rounded.Face,
+                title = "Pako 主题",
+                subtitle = "使用Pako主题",
+                onClick = {
+                    onThemeModeChange(
+                        if (themeMode == ThemeMode.Companion) ThemeMode.Standard else ThemeMode.Companion,
+                    )
+                },
+                trailing = {
+                    Switch(
+                        checked = themeMode == ThemeMode.Companion,
+                        onCheckedChange = {
+                            onThemeModeChange(if (it) ThemeMode.Companion else ThemeMode.Standard)
+                        },
+                    )
+                },
+            )
+
+            SectionLabel("安全", startPadding = 56.dp)
+            SettingRow(
                 icon = Icons.Rounded.Security,
                 title = "安全与隐私",
+                subtitle = "权限状态与本地数据",
                 onClick = onOpenSecurity,
+                trailing = {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = colors.muted,
+                    )
+                },
             )
-            SectionLabel("服务")
-            InfoCard {
-                SettingSwitchRow(
-                    title = "恢复上次运行状态",
-                    checked = resumeLast,
-                    onCheckedChange = { resumeLast = it },
-                )
-                SettingSwitchRow(
-                    title = "敏感应用提醒",
-                    checked = showSystemWarning,
-                    onCheckedChange = { showSystemWarning = it },
-                )
-                SettingSwitchRow(
-                    title = "快捷悬浮控制",
-                    checked = quickControlEnabled,
-                    onCheckedChange = onQuickControlChanged,
-                )
-            }
-            SectionLabel("应用与系统")
-            InfoCard {
-                InfoRow(
-                    "应用版本",
-                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                )
-                InfoRow("Android", "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}")
-                InfoRow("设备", "${Build.MANUFACTURER} ${Build.MODEL}")
-            }
-            SectionLabel("网络")
-            InfoCard {
-                InfoRow("当前连接", "${network.connection} · ${network.protocols}")
-                InfoRow("DNS", network.dns)
-            }
+
+            SectionLabel("工具", startPadding = 56.dp)
+            SettingRow(
+                icon = Icons.Rounded.Public,
+                title = "域名延迟测试",
+                subtitle = "测试常用站点的连通与延迟",
+                onClick = onOpenLatencyTest,
+                trailing = {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = colors.muted,
+                    )
+                },
+            )
+
+            SectionLabel("服务", startPadding = 56.dp)
+            SettingRow(
+                icon = Icons.Rounded.RestartAlt,
+                title = "恢复上次运行状态",
+                subtitle = "启动后自动恢复上次的接管状态",
+                onClick = { resumeLast = !resumeLast },
+                trailing = { Switch(checked = resumeLast, onCheckedChange = { resumeLast = it }) },
+            )
+            SettingRow(
+                icon = Icons.Rounded.WarningAmber,
+                title = "敏感应用提醒",
+                subtitle = "接管系统或敏感应用时给出提醒",
+                onClick = { showSystemWarning = !showSystemWarning },
+                trailing = {
+                    Switch(checked = showSystemWarning, onCheckedChange = { showSystemWarning = it })
+                },
+            )
+            SettingRow(
+                icon = Icons.Rounded.PictureInPictureAlt,
+                title = "快捷悬浮控制",
+                subtitle = "显示悬浮球,随时快速开关接管",
+                onClick = { onQuickControlChanged(!quickControlEnabled) },
+                trailing = {
+                    Switch(checked = quickControlEnabled, onCheckedChange = onQuickControlChanged)
+                },
+            )
+
+            SectionLabel("更多", startPadding = 56.dp)
+            SettingRow(
+                icon = Icons.Rounded.Info,
+                title = "关于",
+                subtitle = "版本、系统与网络信息",
+                onClick = onOpenAbout,
+                trailing = {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = colors.muted,
+                    )
+                },
+            )
         }
     }
 }
 
 @Composable
-private fun ThemeModeSelector(current: ThemeMode, onChange: (ThemeMode) -> Unit) {
-    val colors = LocalPakomoColors.current
-    Row(
+fun AboutScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val network = remember { readNetworkSummary(context) }
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .background(colors.scopeTrack, RoundedCornerShape(10.dp))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+            .fillMaxSize()
+            .statusBarsPadding(),
     ) {
-        listOf(
-            ThemeMode.Standard to "标准",
-            ThemeMode.Companion to "Pakomo 陪伴",
-        ).forEach { (mode, label) ->
-            val active = mode == current
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (active) colors.surface else Color.Transparent)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.RadioButton,
-                    ) { onChange(mode) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    color = if (active) colors.accent else colors.textSecondary,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 13.sp,
-                )
-            }
+        ScreenHeader(title = "关于", onBack = onBack)
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 16.dp),
+        ) {
+            SectionLabel("应用与系统")
+            SettingRow(
+                title = "应用版本",
+                subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+            )
+            SettingRow(
+                title = "Android",
+                subtitle = "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}",
+            )
+            SettingRow(
+                title = "设备",
+                subtitle = "${Build.MANUFACTURER} ${Build.MODEL}",
+            )
+
+            SectionLabel("网络")
+            SettingRow(
+                title = "当前连接",
+                subtitle = "${network.connection} · ${network.protocols}",
+            )
+            SettingRow(
+                title = "DNS",
+                subtitle = network.dns,
+            )
         }
     }
 }
@@ -739,25 +795,54 @@ private fun RawLogcatPanel(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 统一的设置行(CMFA 风格):可选左图标 + 标题 + 副标题说明 + 右侧控件(开关 / 值 / 箭头)。
+ * [icon] 为空时不画图标也不占位(当前每个列表要么全有图标、要么全无图标,不混排);副标题始终与标题同列。
+ * [onClick] 非空则整行可点(开关行整行可切,开关只作指示,兼顾触摸目标)。
+ */
 @Composable
-private fun SettingSwitchRow(
+private fun SettingRow(
     title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    onClick: (() -> Unit)? = null,
+    trailing: @Composable (() -> Unit)? = null,
 ) {
+    val colors = LocalPakomoColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyMedium,
-            color = LocalPakomoColors.current.textPrimary,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.padding(horizontal = 6.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(16.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textPrimary,
+            )
+            if (subtitle != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.muted,
+                )
+            }
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            trailing()
+        }
     }
 }

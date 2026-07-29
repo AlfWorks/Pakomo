@@ -1,14 +1,23 @@
 package com.pakomo.ui.components
 
-import androidx.compose.foundation.Canvas
+import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.EngineStage
-import com.pakomo.ui.theme.LocalPakomoColors
 
 /**
  * 看板娘 Pako 的状态表现。对齐真实引擎的 4+1 态(执行文档 §5),不引入引擎里不存在的状态。
@@ -23,51 +32,79 @@ fun mascotStateOf(stage: EngineStage, isIdleRunning: Boolean): MascotState = whe
 }
 
 /**
- * 角色美术的**唯一接缝**。
- *
- * 当前为 Compose 占位实现(一枚随状态点亮/熄灭/轻故障的"数据方块",呼应 Pako 手心托举的画面)。
- * 真美术到位后,只替换本函数体为 `painterResource(...)` 按 [state] 取图即可,所有调用点不变。
- * 装饰层:从语义树移除、不可点击、不承担功能含义。
- *
- * 资源清单见执行文档「看板娘 Pako 资产 manifest」。
+ * 角色美术的**唯一接缝**。当前是**白底黑框黑字编号占位**,只为看清"哪个状态的角色落在哪",
+ * 不做任何美术效果。编号对应执行文档 §8.1 manifest 批次 A。
+ * 真美术到位后,只把本函数体换成 `painterResource(...)` 按 [state] 取图,调用点不变。
  */
 @Composable
 fun PakomoMascot(state: MascotState, modifier: Modifier = Modifier) {
-    val colors = LocalPakomoColors.current
-    val fill = when (state) {
-        MascotState.Running -> colors.glitchCyan
-        MascotState.Idle -> colors.statusIdle
-        MascotState.Starting -> colors.glitchCyan
-        MascotState.Stopped -> colors.muted
-        MascotState.Error -> colors.danger
+    val label = when (state) {
+        MascotState.Running -> "A1\nmascot_status_running"
+        MascotState.Idle -> "A2\nmascot_status_idle"
+        MascotState.Starting -> "A3\nmascot_status_starting"
+        MascotState.Stopped -> "A4\nmascot_status_stopped"
+        MascotState.Error -> "A5\nmascot_status_error"
     }
-    val lit = state == MascotState.Running || state == MascotState.Idle
-    Canvas(modifier = modifier.clearAndSetSemantics {}) {
-        val s = size.minDimension
-        val cube = s * 0.44f
-        val left = size.width - cube - s * 0.14f
-        val top = (size.height - cube) / 2f
-        if (lit) {
-            drawRoundRect(
-                color = fill.copy(alpha = 0.16f),
-                topLeft = Offset(left - s * 0.07f, top - s * 0.07f),
-                size = Size(cube + s * 0.14f, cube + s * 0.14f),
-                cornerRadius = CornerRadius(s * 0.16f),
-            )
-        }
-        drawRoundRect(
-            color = fill.copy(alpha = if (state == MascotState.Stopped) 0.5f else 0.9f),
-            topLeft = Offset(left, top),
-            size = Size(cube, cube),
-            cornerRadius = CornerRadius(s * 0.12f),
+    ArtPlaceholder(label = label, modifier = modifier)
+}
+
+/** 空状态/装饰角色的分类。占位阶段决定编号标签,真图到位后按 kind 取不同图。 */
+enum class EmptyArtKind { Search, Targets, Address, Logs, Generic }
+
+/**
+ * 空状态/装饰角色的**唯一接缝**。当前是白底黑框黑字编号占位,编号对应执行文档 §8.1 manifest。
+ * 真美术到位后只把本函数体换成 `painterResource(...)`(按 [kind] 取图),调用点不变。
+ *
+ * 真图接入方式按 kind 区分:
+ * - [EmptyArtKind.Generic](C1 首页主卡):**差分变体**——按当前区域高度选档(tall/mid/short)、随机取一张,
+ *   贴底满宽显示(各档 aspect 已匹配区域,无需拉伸)。详见执行文档 §8.1 C1 方案。
+ * - 其余(B 空状态):居中 `ContentScale.Fit`。
+ */
+@Composable
+fun EmptyStateArt(kind: EmptyArtKind, modifier: Modifier = Modifier) {
+    val label = when (kind) {
+        EmptyArtKind.Search -> "B1\nempty_apps"
+        EmptyArtKind.Address -> "B2\nempty_address"
+        EmptyArtKind.Targets -> "B3\nempty_targets"
+        EmptyArtKind.Logs -> "B4\nempty_logs"
+        EmptyArtKind.Generic -> "C1\nmascot_home"
+    }
+    ArtPlaceholder(label = label, modifier = modifier)
+}
+
+/**
+ * 占位图基元:白底 + 黑框 + 黑字编号,只为看清角色资源**落在哪个位置**,不做任何美术效果。
+ * 编号对应执行文档 §8.1。装饰层:从语义树移除、不可点击。
+ */
+@Composable
+private fun ArtPlaceholder(label: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clearAndSetSemantics {}
+            .background(Color.White, RoundedCornerShape(6.dp))
+            .border(1.dp, Color.Black, RoundedCornerShape(6.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = Color.Black,
+            fontSize = 9.sp,
+            lineHeight = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(4.dp),
         )
-        // 启动/异常:一枚错位的碎块,表达"轻故障"
-        if (state == MascotState.Starting || state == MascotState.Error) {
-            drawRect(
-                color = colors.glitchPink.copy(alpha = 0.55f),
-                topLeft = Offset(left + cube * 0.62f, top - s * 0.06f),
-                size = Size(cube * 0.26f, cube * 0.26f),
-            )
-        }
+    }
+}
+
+/** 系统"减少动画"是否开启(ANIMATOR_DURATION_SCALE == 0)。故障效果据此降级为静态。 */
+@Composable
+fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember {
+        Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
     }
 }

@@ -55,9 +55,13 @@ import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.PakomoUiState
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.AppIcon
+import com.pakomo.ui.components.EmptyArtKind
+import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.LocalThemeMode
+import com.pakomo.ui.theme.ThemeMode
 
 @Immutable
 private data class ApplicationScopeUiState(
@@ -382,14 +386,18 @@ private fun AddressScopeContent(
         ),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        items(domains, key = { it }) { domain ->
-            Card(
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.surface),
-                border = BorderStroke(1.dp, colors.border),
-                elevation = CardDefaults.cardElevation(0.dp),
-            ) {
-                DomainRow(domain = domain, onRemove = { onRemove(domain) })
+        if (domains.isEmpty()) {
+            item { EmptyMessage("还没有指定地址") }
+        } else {
+            items(domains, key = { it }) { domain ->
+                Card(
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.surface),
+                    border = BorderStroke(1.dp, colors.border),
+                    elevation = CardDefaults.cardElevation(0.dp),
+                ) {
+                    DomainRow(domain = domain, onRemove = { onRemove(domain) })
+                }
             }
         }
         item {
@@ -415,13 +423,20 @@ private fun AddressScopeContent(
 
 @Composable
 private fun EmptyMessage(text: String) {
+    val companion = LocalThemeMode.current == ThemeMode.Companion
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(160.dp),
+            .height(if (companion) 200.dp else 160.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (companion) {
+                EmptyStateArt(EmptyArtKind.Search, Modifier.size(96.dp))
+                Spacer(Modifier.height(8.dp))
+            }
+            Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
