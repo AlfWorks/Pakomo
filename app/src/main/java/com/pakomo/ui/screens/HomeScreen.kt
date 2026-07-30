@@ -2,6 +2,7 @@ package com.pakomo.ui.screens
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,15 +17,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.platform.LocalContext
@@ -72,8 +73,8 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.EmptyArtKind
 import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.NavigationRow
-import com.pakomo.ui.components.PakomoMascot
 import com.pakomo.ui.components.ScopeSelector
+import com.pakomo.ui.components.StatusDecor
 import com.pakomo.ui.components.mascotStateOf
 import com.pakomo.ui.components.rememberReduceMotion
 import com.pakomo.ui.theme.LocalPakomoColors
@@ -254,12 +255,15 @@ internal fun HomeScreen(
                 .fillMaxWidth()
                 .weight(1f),
         ) {
-            // 角色主卡:铺满从接管范围卡下方到 App 底部的整片可用区(全宽全高)。
+            // 角色主卡:统一按**最小档尺寸**放置——满宽、固定比例、贴底;大区域时上方自然留空,不分档。
             // 导航行浮在其上,真图用透明区避开左上的导航文字。仅 Companion、不可交互、不进语义树。
             if (decorated) {
                 EmptyStateArt(
                     kind = EmptyArtKind.Generic,
-                    modifier = Modifier.matchParentSize(),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .aspectRatio(0.95f),
                 )
             }
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -473,14 +477,21 @@ private fun ServiceStatusCard(
     val isError = stage == EngineStage.ERROR
     val running = stage == EngineStage.FORWARDING
     val stopped = stage == EngineStage.STOPPED
+    val starting = stage == EngineStage.STARTING
+    // 启停态都用「实底色」文字走白;启动过渡到运行的蓝,不再走近白的 surface。
+    val onSolid = running || stopped || starting
 
-    val container = when {
+    // 启动态原本落到 else→surface(近白),导致点击启动瞬间「停止灰→白→运行蓝」的闪白。
+    // 现在启动直接用运行蓝,并对整段容器色做 crossfade,状态切换全程平滑。
+    val targetContainer = when {
         isError -> colors.errorContainer
         isIdleRunning -> colors.statusIdle
         running -> colors.statusRunning
+        starting -> colors.statusRunning
         stopped -> colors.statusStopped
         else -> colors.surface
     }
+    val container by animateColorAsState(targetContainer, tween(320), label = "statusContainer")
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -488,7 +499,7 @@ private fun ServiceStatusCard(
             .clickable(onClick = onToggle),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = container),
-        border = if (running || stopped) {
+        border = if (onSolid) {
             null
         } else {
             BorderStroke(1.dp, if (isError) colors.errorBorder else colors.border)
@@ -498,12 +509,9 @@ private fun ServiceStatusCard(
         Box(modifier = Modifier.fillMaxSize()) {
             // Companion:角色装饰叠加在右侧,画在文本之下(文本 z 序更高),不改卡片布局。
             if (decorated) {
-                PakomoMascot(
+                StatusDecor(
                     state = mascotState,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .width(104.dp),
+                    modifier = Modifier.matchParentSize(),
                 )
             }
             Row(
@@ -514,7 +522,7 @@ private fun ServiceStatusCard(
                 modifier = Modifier
                     .size(38.dp)
                     .background(
-                        color = if (running) {
+                        color = if (running || starting) {
                             Color.White.copy(alpha = 0.18f)
                         } else {
                             Color.Transparent
@@ -533,9 +541,9 @@ private fun ServiceStatusCard(
                     },
                     contentDescription = null,
                     tint = when (stage) {
-                        EngineStage.FORWARDING, EngineStage.STOPPED -> Color.White
+                        EngineStage.FORWARDING, EngineStage.STOPPED, EngineStage.STARTING ->
+                            Color.White
                         EngineStage.ERROR -> colors.danger
-                        else -> colors.muted
                     },
                     modifier = Modifier.size(
                         if (stage == EngineStage.FORWARDING) 22.dp else 26.dp,
@@ -554,7 +562,7 @@ private fun ServiceStatusCard(
                     },
                     fontWeight = FontWeight.Bold,
                     fontSize = 19.sp,
-                    color = if (running || stopped) Color.White else colors.textPrimary,
+                    color = if (onSolid) Color.White else colors.textPrimary,
                 )
                 val detail = when (stage) {
                     EngineStage.STOPPED -> "点此启动"
@@ -577,9 +585,9 @@ private fun ServiceStatusCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = when (stage) {
                             EngineStage.FORWARDING,
-                            EngineStage.STOPPED -> Color.White.copy(alpha = 0.82f)
+                            EngineStage.STOPPED,
+                            EngineStage.STARTING -> Color.White.copy(alpha = 0.82f)
                             EngineStage.ERROR -> colors.danger
-                            EngineStage.STARTING -> colors.textSecondary
                         },
                         fontFamily = if (running && !isIdleRunning) {
                             FontFamily.Monospace
@@ -732,43 +740,149 @@ private fun formatShortRate(bytesPerSecond: Long): String = when {
     else -> "${bytesPerSecond / 1_000} KB/s"
 }
 
+/** pointy-top 六边形路径,中心 (cx,cy)、外接半径 r。 */
+private fun hexPath(cx: Float, cy: Float, r: Float): Path {
+    val p = Path()
+    for (i in 0..5) {
+        val a = Math.toRadians(60.0 * i - 90.0)
+        val x = cx + r * cos(a).toFloat()
+        val y = cy + r * sin(a).toFloat()
+        if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+    }
+    p.close()
+    return p
+}
+
 /**
- * Companion 首页背景装饰(§4.4):右上淡六边形轮廓 + 少量全息碎裂像素,呼应 app 图标。
- * 纯绘制、低对比度、在内容层之下;不进语义树、不承担任何功能含义。占位版,数值可再调。
+ * Companion 首页背景装饰(§4.4):呼应 app 图标的「六边形 + 全息碎裂」母题。
+ * 静态纯绘制、低对比、在内容层之下;不进语义树、不承担功能含义。
+ * 构图分几层:右上一角蜂巢六边形(疏密渐变、部分溢出边缘)、左下一枚大淡六边形平衡画面、
+ * 全场散落的旋转数据方块 / 圆点 / 星座连线 / 十字点缀,交替青/粉/蓝,营造「全息数据场」而非单调一格。
  */
 private fun DrawScope.drawCompanionBackdrop(colors: PakomoColors) {
     val w = size.width
     val h = size.height
+    val u = size.minDimension
+    val accent = colors.accent
+    val cyan = colors.glitchCyan
+    val pink = colors.glitchPink
 
-    // 右上大六边形轮廓(pointy-top)
-    val cx = w * 0.82f
-    val cy = h * 0.18f
-    val r = size.minDimension * 0.26f
-    val hex = Path()
-    for (i in 0..5) {
-        val angle = Math.toRadians(60.0 * i - 90.0)
-        val x = cx + r * cos(angle).toFloat()
-        val y = cy + r * sin(angle).toFloat()
-        if (i == 0) hex.moveTo(x, y) else hex.lineTo(x, y)
-    }
-    hex.close()
-    drawPath(hex, color = colors.accent.copy(alpha = 0.05f), style = Stroke(width = 2f))
-
-    // 少量全息碎裂像素(右上聚簇 + 左下点缀),交替青/粉,极低对比度
-    val px = size.minDimension * 0.018f
-    val marks = listOf(
-        Triple(0.90f, 0.30f, colors.glitchCyan),
-        Triple(0.85f, 0.36f, colors.glitchPink),
-        Triple(0.93f, 0.42f, colors.glitchCyan),
-        Triple(0.10f, 0.74f, colors.glitchPink),
-        Triple(0.16f, 0.80f, colors.glitchCyan),
-        Triple(0.07f, 0.82f, colors.glitchCyan),
+    // —— 右上:一角蜂巢六边形(pointy-top,疏密/明暗渐变,部分溢出屏幕)——
+    val hbx = w * 0.88f
+    val hby = h * 0.10f
+    val r = u * 0.085f
+    val sx = 1.732f * r  // 水平间距
+    val sy = 1.5f * r    // 垂直间距
+    val cells = listOf(   // (col, row, alpha 系数)
+        Triple(0f, 0f, 1.0f),
+        Triple(1f, 0f, 0.6f),
+        Triple(0f, 1f, 0.8f),
+        Triple(-1f, 1f, 0.45f),
+        Triple(1f, 1f, 0.4f),
+        Triple(0f, -1f, 0.5f),
     )
-    marks.forEach { (fx, fy, color) ->
-        drawRect(
-            color = color.copy(alpha = 0.12f),
-            topLeft = Offset(w * fx, h * fy),
-            size = Size(px, px),
+    cells.forEach { (col, row, a) ->
+        val cx = hbx + sx * (col + row / 2f)
+        val cy = hby + sy * row
+        drawPath(hexPath(cx, cy, r * 0.92f), accent.copy(alpha = 0.11f * a), style = Stroke(width = u * 0.0035f))
+    }
+    // 蜂巢里一枚填充青做点睛
+    drawPath(hexPath(hbx + sx * 0.5f, hby + sy, r * 0.5f), cyan.copy(alpha = 0.10f))
+
+    // —— 左下:一枚更大的淡六边形轮廓,平衡右上重心 ——
+    drawPath(hexPath(w * 0.08f, h * 0.93f, u * 0.20f), accent.copy(alpha = 0.06f), style = Stroke(width = u * 0.004f))
+
+    // —— 下半场散落的中小六边形,填充空旷的下方背景(不聚成簇,各自独立)——
+    val lowerHexes = listOf(   // (fx, fy, r 系数, alpha, 是否填充)
+        Triple(0.82f, 0.70f, 0.070f),
+        Triple(0.34f, 0.80f, 0.055f),
+        Triple(0.60f, 0.60f, 0.045f),
+        Triple(0.18f, 0.66f, 0.038f),
+        Triple(0.72f, 0.88f, 0.050f),
+    )
+    lowerHexes.forEachIndexed { i, (fx, fy, rc) ->
+        val hr = u * rc
+        if (i % 2 == 0) {
+            drawPath(hexPath(w * fx, h * fy, hr), accent.copy(alpha = 0.075f), style = Stroke(width = u * 0.003f))
+        } else {
+            drawPath(hexPath(w * fx, h * fy, hr), cyan.copy(alpha = 0.07f))
+        }
+    }
+
+    // —— 星座连线(先画,压在方块/点之下)——
+    val links = listOf(
+        (0.90f to 0.10f) to (0.78f to 0.22f),
+        (0.78f to 0.22f) to (0.90f to 0.30f),
+        (0.12f to 0.66f) to (0.06f to 0.80f),
+        (0.82f to 0.70f) to (0.60f to 0.60f),
+        (0.60f to 0.60f) to (0.34f to 0.80f),
+        (0.34f to 0.80f) to (0.18f to 0.66f),
+        (0.72f to 0.88f) to (0.82f to 0.70f),
+    )
+    links.forEach { (aPt, bPt) ->
+        drawLine(
+            accent.copy(alpha = 0.07f),
+            Offset(w * aPt.first, h * aPt.second),
+            Offset(w * bPt.first, h * bPt.second),
+            strokeWidth = u * 0.002f,
         )
+    }
+
+    // —— 旋转数据方块(全息碎片),下半场加密填充空旷区 ——
+    val squares = listOf(
+        Triple(0.78f, 0.22f, cyan),
+        Triple(0.90f, 0.30f, pink),
+        Triple(0.15f, 0.30f, cyan),
+        Triple(0.93f, 0.55f, pink),
+        Triple(0.08f, 0.62f, cyan),
+        Triple(0.70f, 0.86f, pink),
+        // 下半场
+        Triple(0.55f, 0.64f, cyan),
+        Triple(0.30f, 0.72f, pink),
+        Triple(0.84f, 0.80f, cyan),
+        Triple(0.42f, 0.90f, pink),
+        Triple(0.24f, 0.56f, cyan),
+        Triple(0.66f, 0.50f, pink),
+    )
+    squares.forEachIndexed { i, (fx, fy, c) ->
+        val s = u * (0.016f + 0.010f * ((i % 3) / 2f))
+        val cx = w * fx
+        val cy = h * fy
+        rotate(18f + i * 15f, Offset(cx, cy)) {
+            drawRect(c.copy(alpha = 0.13f), Offset(cx - s / 2f, cy - s / 2f), Size(s, s))
+        }
+    }
+
+    // —— 圆点(数据节点),下半场加密 ——
+    val dots = listOf(
+        Triple(0.84f, 0.16f, accent),
+        Triple(0.96f, 0.24f, cyan),
+        Triple(0.20f, 0.72f, pink),
+        Triple(0.06f, 0.80f, cyan),
+        Triple(0.62f, 0.90f, accent),
+        Triple(0.88f, 0.62f, cyan),
+        // 下半场
+        Triple(0.35f, 0.58f, accent),
+        Triple(0.50f, 0.82f, cyan),
+        Triple(0.72f, 0.68f, pink),
+        Triple(0.14f, 0.88f, cyan),
+        Triple(0.92f, 0.84f, accent),
+        Triple(0.44f, 0.70f, cyan),
+    )
+    dots.forEach { (fx, fy, c) ->
+        drawCircle(c.copy(alpha = 0.16f), u * 0.007f, Offset(w * fx, h * fy))
+    }
+
+    // —— 十字点缀 ——
+    val plus = listOf(
+        0.74f to 0.14f, 0.10f to 0.70f, 0.90f to 0.48f,
+        0.30f to 0.84f, 0.62f to 0.58f, 0.86f to 0.74f, 0.48f to 0.94f,
+    )
+    plus.forEach { (fx, fy) ->
+        val cx = w * fx
+        val cy = h * fy
+        val t = u * 0.014f
+        drawLine(accent.copy(alpha = 0.10f), Offset(cx - t, cy), Offset(cx + t, cy), strokeWidth = u * 0.002f)
+        drawLine(accent.copy(alpha = 0.10f), Offset(cx, cy - t), Offset(cx, cy + t), strokeWidth = u * 0.002f)
     }
 }
