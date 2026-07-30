@@ -86,11 +86,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val serviceRuntime by VpnServiceController.runtime.collectAsState()
             val themeMode by viewModel.themeMode.collectAsState()
+            val language by viewModel.language.collectAsState()
             LaunchedEffect(serviceRuntime) {
                 viewModel.setEngineRuntime(serviceRuntime)
             }
 
-            PakomoTheme(themeMode = themeMode) {
+            PakomoTheme(themeMode = themeMode, language = language) {
                 PakomoApp(
                     viewModel = viewModel,
                     vpnPermissionGranted = vpnPermissionGranted,
@@ -98,6 +99,8 @@ class MainActivity : ComponentActivity() {
                     quickControlEnabled = quickControlEnabled,
                     themeMode = themeMode,
                     onThemeModeChange = viewModel::setThemeMode,
+                    language = language,
+                    onLanguageChange = viewModel::setLanguage,
                     onToggleService = {
                         if (!serviceRuntime.stage.isActive) {
                             val current = viewModel.state.value
@@ -107,7 +110,7 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "正在检查应用列表，请稍后再启动",
+                                    language.tr("正在检查应用列表，请稍后再启动", "Checking the app list, please start again shortly"),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             } else {
@@ -236,7 +239,11 @@ class MainActivity : ComponentActivity() {
             )
         }.onFailure {
             enableQuickControlAfterPermission = false
-            Toast.makeText(this, "无法打开悬浮窗授权页面", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                viewModel.language.value.tr("无法打开悬浮窗授权页面", "Unable to open the overlay permission page"),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 

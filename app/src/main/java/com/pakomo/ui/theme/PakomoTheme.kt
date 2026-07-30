@@ -8,6 +8,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.pakomo.core.model.AppLanguage
 
 private val PakomoTypography = Typography(
     headlineSmall = TextStyle(
@@ -51,12 +52,14 @@ private val PakomoTypography = Typography(
 @Composable
 fun PakomoTheme(
     themeMode: ThemeMode = ThemeMode.Standard,
+    language: AppLanguage = AppLanguage.DEFAULT,
     content: @Composable () -> Unit,
 ) {
     val colors = colorsFor(themeMode)
     CompositionLocalProvider(
         LocalPakomoColors provides colors,
         LocalThemeMode provides themeMode,
+        LocalAppLanguage provides language,
     ) {
         MaterialTheme(
             colorScheme = colors.toMaterialColorScheme(),

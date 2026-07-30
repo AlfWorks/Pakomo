@@ -59,9 +59,11 @@ import com.pakomo.ui.components.EmptyArtKind
 import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.ui.theme.LocalThemeMode
 import com.pakomo.ui.theme.ThemeMode
+import com.pakomo.ui.theme.t
 
 @Immutable
 private data class ApplicationScopeUiState(
@@ -100,15 +102,15 @@ fun ScopeScreen(
     ) {
         ScreenHeader(
             title = when (state.scope) {
-                TargetScope.APPLICATIONS -> "选择应用"
-                TargetScope.ADDRESSES -> "管理地址"
-                TargetScope.GLOBAL -> "全局接管"
+                TargetScope.APPLICATIONS -> t("选择应用", "Select apps")
+                TargetScope.ADDRESSES -> t("管理地址", "Manage addresses")
+                TargetScope.GLOBAL -> t("全局接管", "Global capture")
             },
             onBack = onBack,
             action = {
                 if (state.scope == TargetScope.APPLICATIONS) {
                     IconButton(onClick = onRefreshApps) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "刷新应用")
+                        Icon(Icons.Rounded.Refresh, contentDescription = t("刷新应用", "Refresh apps"))
                     }
                 }
             },
@@ -192,7 +194,7 @@ private fun ApplicationScopeContent(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(10.dp),
-                placeholder = { Text("搜索应用或包名") },
+                placeholder = { Text(t("搜索应用或包名", "Search apps or package names")) },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
             )
         }
@@ -209,7 +211,7 @@ private fun ApplicationScopeContent(
             }
         } else if (visibleApps.isEmpty()) {
             item {
-                EmptyMessage("没有找到应用")
+                EmptyMessage(t("没有找到应用", "No apps found"))
             }
         } else {
             items(
@@ -293,7 +295,7 @@ private fun ApplicationCard(
             ) {
                 if (app.domains.isEmpty()) {
                     Text(
-                        text = "全部流量",
+                        text = t("全部流量", "All traffic"),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.muted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -333,7 +335,7 @@ private fun ApplicationCard(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.size(4.dp))
-                    Text("添加域名")
+                    Text(t("添加域名", "Add domain"))
                 }
             }
         }
@@ -362,7 +364,7 @@ private fun DomainRow(domain: String, onRemove: () -> Unit) {
         ) {
             Icon(
                 imageVector = Icons.Rounded.Close,
-                contentDescription = "删除 $domain",
+                contentDescription = t("删除 $domain", "Delete $domain"),
                 tint = colors.muted,
                 modifier = Modifier.size(18.dp),
             )
@@ -387,7 +389,7 @@ private fun AddressScopeContent(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (domains.isEmpty()) {
-            item { EmptyMessage("还没有指定地址") }
+            item { EmptyMessage(t("还没有指定地址", "No addresses yet")) }
         } else {
             items(domains, key = { it }) { domain ->
                 Card(
@@ -415,7 +417,7 @@ private fun AddressScopeContent(
             ) {
                 Icon(Icons.Rounded.Add, contentDescription = null)
                 Spacer(Modifier.size(6.dp))
-                Text("添加域名")
+                Text(t("添加域名", "Add domain"))
             }
         }
     }
@@ -449,7 +451,7 @@ private fun DomainInputDialog(
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加域名") },
+        title = { Text(t("添加域名", "Add domain")) },
         text = {
             Column {
                 OutlinedTextField(
@@ -459,7 +461,7 @@ private fun DomainInputDialog(
                         error = null
                     },
                     singleLine = true,
-                    label = { Text("域名") },
+                    label = { Text(t("域名", "Domain")) },
                     placeholder = { Text("api.example.com") },
                     isError = error != null,
                     supportingText = error?.let { message -> ({ Text(message) }) },
@@ -469,10 +471,10 @@ private fun DomainInputDialog(
         confirmButton = {
             TextButton(
                 onClick = { error = onSubmit(value) },
-            ) { Text("添加") }
+            ) { Text(t("添加", "Add")) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(t("取消", "Cancel")) }
         },
     )
 }

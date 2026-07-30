@@ -78,6 +78,13 @@ class PakomoPreferences(context: Context) {
         preferences.edit { putString(KEY_THEME_MODE, mode) }
     }
 
+    /** Stored as the [com.pakomo.core.model.AppLanguage] name; null when never set (→ default). */
+    fun readLanguage(): String? = preferences.getString(KEY_LANGUAGE, null)
+
+    fun writeLanguage(language: String) {
+        preferences.edit { putString(KEY_LANGUAGE, language) }
+    }
+
     fun readRules(): List<NetworkRule> {
         val raw = preferences.getString(KEY_RULES, null) ?: return defaultRules
         return runCatching {
@@ -152,5 +159,6 @@ class PakomoPreferences(context: Context) {
         const val KEY_RULES = "rules"
         const val KEY_QUICK_CONTROL_ENABLED = "quick_control_enabled"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_LANGUAGE = "app_language"
     }
 }

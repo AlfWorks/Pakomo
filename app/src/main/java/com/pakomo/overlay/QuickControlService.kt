@@ -31,6 +31,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.pakomo.MainActivity
 import com.pakomo.R
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.defaultRules
 import com.pakomo.data.PakomoPreferences
@@ -47,6 +48,8 @@ class QuickControlService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var windowManager: WindowManager
     private lateinit var preferences: PakomoPreferences
+    private val appLanguage: AppLanguage
+        get() = AppLanguage.fromName(preferences.readLanguage())
     private var controlView: QuickControlView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var lastToggleAtMs: Long = 0L
@@ -274,13 +277,13 @@ class QuickControlService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Pakomo 快捷控制")
-            .setContentText("贴边快捷键已开启")
+            .setContentTitle(appLanguage.tr("Pakomo 快捷控制", "Pakomo quick control"))
+            .setContentText(appLanguage.tr("贴边快捷键已开启", "Edge shortcut is on"))
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(0, "关闭", disableIntent)
+            .addAction(0, appLanguage.tr("关闭", "Turn off"), disableIntent)
             .build()
     }
 
@@ -288,10 +291,10 @@ class QuickControlService : Service() {
         if (Build.VERSION.SDK_INT < 26) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "快捷悬浮控制",
+            appLanguage.tr("快捷悬浮控制", "Floating quick control"),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "保持贴边快捷键可用"
+            description = appLanguage.tr("保持贴边快捷键可用", "Keeps the edge shortcut available")
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -322,10 +325,11 @@ class QuickControlService : Service() {
         var stage: EngineStage = EngineStage.STOPPED
             set(value) {
                 field = value
+                val language = AppLanguage.fromName(PakomoPreferences(context).readLanguage())
                 contentDescription = when (value) {
-                    EngineStage.STARTING -> "Pakomo 正在启动"
-                    EngineStage.FORWARDING -> "停止 Pakomo"
-                    EngineStage.ERROR, EngineStage.STOPPED -> "启动 Pakomo"
+                    EngineStage.STARTING -> language.tr("Pakomo 正在启动", "Pakomo starting")
+                    EngineStage.FORWARDING -> language.tr("停止 Pakomo", "Stop Pakomo")
+                    EngineStage.ERROR, EngineStage.STOPPED -> language.tr("启动 Pakomo", "Start Pakomo")
                 }
                 invalidate()
             }

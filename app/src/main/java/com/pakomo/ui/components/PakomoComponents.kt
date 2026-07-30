@@ -46,7 +46,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pakomo.core.model.TargetScope
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.t
 
 @Composable
 fun ScreenHeader(
@@ -67,7 +69,7 @@ fun ScreenHeader(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "返回",
+                    contentDescription = t("返回", "Back"),
                     tint = colors.textPrimary,
                 )
             }
@@ -158,7 +160,7 @@ fun ScopeSelector(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = scope.label,
+                        text = scope.label(LocalAppLanguage.current),
                         color = textColor,
                         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 13.sp,

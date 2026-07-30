@@ -21,7 +21,11 @@ class PakomoModelsTest {
 
         assertEquals(
             "300ms · 抖动 100ms · 丢包 5% · 512/128 Kbps",
-            medium.summary,
+            medium.summary(AppLanguage.ZH),
+        )
+        assertEquals(
+            "300ms · jitter 100ms · loss 5% · 512/128 Kbps",
+            medium.summary(AppLanguage.EN),
         )
     }
 }

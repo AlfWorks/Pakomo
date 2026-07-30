@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.PakomoUiState
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.t
 
 @Composable
 fun RulesScreen(
@@ -68,11 +70,11 @@ fun RulesScreen(
         containerColor = colors.background,
         topBar = {
             ScreenHeader(
-                title = "规则",
+                title = t("规则", "Rules"),
                 onBack = onBack,
                 action = {
                     IconButton(onClick = onCreateRule) {
-                        Icon(Icons.Rounded.Add, contentDescription = "新建规则")
+                        Icon(Icons.Rounded.Add, contentDescription = t("新建规则", "New rule"))
                     }
                 },
             )
@@ -106,18 +108,18 @@ fun RulesScreen(
     pendingDelete?.let { rule ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除规则") },
-            text = { Text("确定删除“${rule.name}”吗？") },
+            title = { Text(t("删除规则", "Delete rule")) },
+            text = { Text(t("确定删除“${rule.name}”吗？", "Delete “${rule.name}”?")) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onDeleteRule(rule.id)
                         pendingDelete = null
                     },
-                ) { Text("删除", color = colors.danger) }
+                ) { Text(t("删除", "Delete"), color = colors.danger) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+                TextButton(onClick = { pendingDelete = null }) { Text(t("取消", "Cancel")) }
             },
         )
     }
@@ -161,7 +163,7 @@ private fun RuleCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = rule.name,
+                        text = rule.displayName(LocalAppLanguage.current),
                         style = MaterialTheme.typography.titleMedium,
                         color = colors.textPrimary,
                         maxLines = 1,
@@ -171,7 +173,7 @@ private fun RuleCard(
                     if (rule.isSystem) {
                         Spacer(Modifier.size(7.dp))
                         Text(
-                            text = "内置",
+                            text = t("内置", "Built-in"),
                             style = MaterialTheme.typography.labelMedium,
                             color = colors.muted,
                         )
@@ -179,7 +181,7 @@ private fun RuleCard(
                 }
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    text = rule.summary,
+                    text = rule.summary(LocalAppLanguage.current),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.textSecondary,
                     fontFamily = FontFamily.Monospace,
@@ -191,7 +193,7 @@ private fun RuleCard(
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(
                         imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "更多操作",
+                        contentDescription = t("更多操作", "More actions"),
                         tint = colors.textSecondary,
                     )
                 }
@@ -200,7 +202,7 @@ private fun RuleCard(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text(if (rule.isSystem) "复制并编辑" else "编辑") },
+                        text = { Text(if (rule.isSystem) t("复制并编辑", "Copy & edit") else t("编辑", "Edit")) },
                         leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                         onClick = {
                             menuOpen = false
@@ -208,7 +210,7 @@ private fun RuleCard(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("复制") },
+                        text = { Text(t("复制", "Copy")) },
                         leadingIcon = {
                             Icon(Icons.Rounded.ContentCopy, contentDescription = null)
                         },
@@ -219,7 +221,7 @@ private fun RuleCard(
                     )
                     if (!rule.isSystem) {
                         DropdownMenuItem(
-                            text = { Text("删除", color = colors.danger) },
+                            text = { Text(t("删除", "Delete"), color = colors.danger) },
                             leadingIcon = {
                                 Icon(
                                     Icons.Rounded.DeleteOutline,

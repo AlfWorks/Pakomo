@@ -48,6 +48,42 @@ class FaultRuntimeTest {
     }
 
     @Test
+    fun globalResponseHoldReturnsHoldForEveryConnectionWithoutRejecting() {
+        val config = SpecialFaultConfig().withFault(
+            SpecialFault(SpecialFaultType.RESPONSE_HOLD, enabled = true, holdMs = 20_000L),
+        )
+        val runtime = FaultRuntime(TargetScope.GLOBAL, config, emptyMap(), emptyList(), null)
+        val fault = runtime.resolve(origin())
+        assertEquals(20_000L, fault.holdDownstreamMs("anything.example.com", 443))
+        // Response Hold delays but never tears the connection down.
+        assertEquals(TcpFault.None, fault.decideTcp("anything.example.com", 443))
+    }
+
+    @Test
+    fun responseHoldOnlyMatchesSelectedAppDomain() {
+        val config = SpecialFaultConfig(
+            responseHold = SpecialFault(
+                SpecialFaultType.RESPONSE_HOLD,
+                enabled = true,
+                holdMs = 10_000L,
+                appTargets = mapOf(
+                    "com.a" to AppFaultTarget("com.a", enabled = true, domains = listOf("x.example.com")),
+                ),
+            ),
+        )
+        val runtime = FaultRuntime(
+            TargetScope.APPLICATIONS, config,
+            selectedAppDomains = mapOf("com.a" to listOf("x.example.com")),
+            addressDomains = emptyList(),
+            attributor = attributor(listOf("com.a")),
+        )
+        val fault = runtime.resolve(origin())
+        assertEquals(10_000L, fault.holdDownstreamMs("x.example.com", 443))
+        assertEquals(10_000L, fault.holdDownstreamMs("api.x.example.com", 443)) // subdomain
+        assertEquals(0L, fault.holdDownstreamMs("other.example.com", 443))
+    }
+
+    @Test
     fun blackoutTakesPriorityOverReset() {
         val target = mapOf("com.a" to AppFaultTarget("com.a", enabled = true))
         val config = SpecialFaultConfig(

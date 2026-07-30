@@ -205,12 +205,14 @@ class Socks5Server(
             // Sniff the real host when either a domain-scoped fault or domain-scoped shaping needs it.
             val needHost = fault.usesDomainFilter || nonDomainShape == null
             val shapeTraffic: Boolean
+            var effectiveHost = request.host
             if (needHost) {
                 // Sniff the real hostname (TLS SNI / HTTP Host) so domain matching works regardless
                 // of how the app resolved the name (DoH / DoT / cached DNS the tunnel can't see).
                 val (peeked, sniffed) = resolveClientHost(clientChannel)
                 initialUpload = peeked
                 val host = sniffed ?: request.host
+                effectiveHost = host
                 if (fault.usesDomainFilter) {
                     val decision = fault.decideTcp(
                         host,
@@ -229,10 +231,23 @@ class Socks5Server(
             }
             if (shapeTraffic && shaper.blocksAllTraffic()) return // drop the flow → blocked
 
+            // Response Hold: a fixed downstream delay applied per chunk, independent of shaping.
+            val holdDownstreamNanos =
+                fault.holdDownstreamMs(effectiveHost, request.port) * NANOS_PER_MILLISECOND
+            // Small responses (heartbeats / reachability pings) can bypass the hold.
+            val holdBypassBytes = if (holdDownstreamNanos > 0L) fault.holdBypassBytes else 0
+
+            val flow = FlowLog.open("TCP", effectiveHost, request.port)
+            flow.shaped = shapeTraffic
             try {
-                relay(clientChannel, outbound, shapeTraffic, initialUpload)
+                relay(
+                    clientChannel, outbound, shapeTraffic,
+                    holdDownstreamNanos, holdBypassBytes, flow, initialUpload,
+                )
             } catch (error: Exception) {
                 safeLog("SOCKS TCP relay closed", error)
+            } finally {
+                flow.close()
             }
         } catch (error: Exception) {
             safeLog("SOCKS TCP session failed", error)
@@ -408,6 +423,17 @@ class Socks5Server(
         val responseBuffer = ByteBuffer.allocate(SecurityPolicy.MAX_UDP_PACKET_BYTES)
         var clientEndpoint: InetSocketAddress? = null
 
+        // One flow record per UDP destination so the diagnostics「流量」page also shows QUIC / DNS.
+        val udpFlows = HashMap<String, FlowHandle>()
+        fun udpFlow(host: String, port: Int): FlowHandle = udpFlows.getOrPut("$host:$port") {
+            val proto = when (port) {
+                443 -> "QUIC"
+                DNS_PORT -> "DNS"
+                else -> "UDP"
+            }
+            FlowLog.open(proto, host, port)
+        }
+
         try {
             while (controlChannel.isOpen) {
                 var handledPacket = false
@@ -439,7 +465,11 @@ class Socks5Server(
                                     sendDnsFailure(localChannel, sender, request, udpFault.result)
                                 UdpFault.None -> {
                                     val target = InetSocketAddress(request.host, request.port)
-                                    if (shaping.shouldShape(request.host, request.port)) {
+                                    val shape = shaping.shouldShape(request.host, request.port)
+                                    val flow = udpFlow(request.host, request.port)
+                                    flow.up.addAndGet(request.payload.size.toLong())
+                                    if (shape) flow.shaped = true
+                                    if (shape) {
                                         val decision = shaper.decide(
                                             TrafficDirection.UPLOAD,
                                             request.payload.size,
@@ -463,6 +493,8 @@ class Socks5Server(
                 if (source != null && target != null) {
                     handledPacket = true
                     val payload = responseBuffer.array().copyOf(responseBuffer.position())
+                    val sourceHost = source.address.hostAddress.orEmpty()
+                    udpFlow(sourceHost, source.port).down.addAndGet(payload.size.toLong())
                     if (source.port == DNS_PORT) {
                         shaping.observeDnsResponse(payload)
                         // Let domain-scoped faults learn the target's IPs so they can match QUIC /
@@ -470,7 +502,7 @@ class Socks5Server(
                         fault.observeDnsResponse(payload)
                     }
                     val datagram = buildUdpPacket(source, payload)
-                    if (shaping.shouldShape(source.address.hostAddress.orEmpty(), source.port)) {
+                    if (shaping.shouldShape(sourceHost, source.port)) {
                         val decision = shaper.decide(
                             TrafficDirection.DOWNLOAD,
                             payload.size,
@@ -494,6 +526,7 @@ class Socks5Server(
                 safeLog("SOCKS UDP relay failed", error)
             }
         } finally {
+            udpFlows.values.forEach { it.close() }
             localChannel.close()
             relayChannel.close()
         }
@@ -600,6 +633,9 @@ class Socks5Server(
         client: SocketChannel,
         outbound: SocketChannel,
         shapeTraffic: Boolean,
+        holdDownstreamNanos: Long,
+        holdBypassBytes: Int,
+        flow: FlowHandle?,
         initialUpload: ByteArray?,
     ) = coroutineScope {
         val upload = launch {
@@ -608,6 +644,9 @@ class Socks5Server(
                 to = outbound,
                 direction = TrafficDirection.UPLOAD,
                 shapeTraffic = shapeTraffic,
+                holdNanos = 0L, // Response Hold only delays the server→client direction.
+                holdBypassBytes = 0,
+                flow = flow,
                 initial = initialUpload,
             )
             runCatching { outbound.shutdownOutput() }
@@ -618,6 +657,9 @@ class Socks5Server(
                 to = client,
                 direction = TrafficDirection.DOWNLOAD,
                 shapeTraffic = shapeTraffic,
+                holdNanos = holdDownstreamNanos,
+                holdBypassBytes = holdBypassBytes,
+                flow = flow,
                 initial = null,
             )
             runCatching { client.shutdownOutput() }
@@ -631,14 +673,28 @@ class Socks5Server(
         to: SocketChannel,
         direction: TrafficDirection,
         shapeTraffic: Boolean,
+        holdNanos: Long,
+        holdBypassBytes: Int,
+        flow: FlowHandle?,
         initial: ByteArray?,
     ) {
-        if (shapeTraffic) shapedPump(from, to, direction, initial) else copyDirect(from, to, initial)
+        val counter = if (direction == TrafficDirection.DOWNLOAD) flow?.down else flow?.up
+        if (shapeTraffic || holdNanos > 0L) {
+            delayedPump(from, to, direction, shapeTraffic, holdNanos, holdBypassBytes, counter, flow, initial)
+        } else {
+            copyDirect(from, to, counter, initial)
+        }
     }
 
     /** Straight non-blocking copy for a direction that is not being shaped. */
-    private suspend fun copyDirect(from: SocketChannel, to: SocketChannel, initial: ByteArray?) {
+    private suspend fun copyDirect(
+        from: SocketChannel,
+        to: SocketChannel,
+        counter: java.util.concurrent.atomic.AtomicLong?,
+        initial: ByteArray?,
+    ) {
         if (initial != null && initial.isNotEmpty()) {
+            counter?.addAndGet(initial.size.toLong())
             relayLoop.writeFully(to, ByteBuffer.wrap(initial), RELAY_WRITE_TIMEOUT_MS)
         }
         val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
@@ -647,26 +703,53 @@ class Socks5Server(
             val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
             if (count < 0) break
             if (count == 0) continue
+            counter?.addAndGet(count.toLong())
             buffer.flip()
             relayLoop.writeFully(to, buffer, RELAY_WRITE_TIMEOUT_MS)
         }
     }
 
     /**
-     * Shaped copy for one direction. Reading is decoupled from the configured delay: the reader
-     * makes the loss decision, stamps each chunk with an absolute release time, and hands it to a
-     * bounded queue, then immediately reads the next chunk. A separate writer releases chunks in
-     * arrival order (preserving the TCP byte stream) once their release time is reached. This keeps
-     * the delay a constant added latency instead of a per-chunk serial wait that would throttle the
-     * flow to ~1 chunk per delay and back up the queue.
+     * Delayed copy for one direction. Reading is decoupled from the release delay: the reader makes
+     * the loss decision (when shaping applies), stamps each chunk with an absolute release time, and
+     * hands it to a bounded queue, then immediately reads the next chunk. A separate writer releases
+     * chunks in arrival order (preserving the TCP byte stream) once their release time is reached.
+     * This keeps the delay a constant added latency instead of a per-chunk serial wait that would
+     * throttle the flow to ~1 chunk per delay and back up the queue.
+     *
+     * Two delays shape each chunk's release time:
+     *  - weak-network shaping (only when [applyShaping]) — the configured latency/jitter, plus its
+     *    loss decision that may drop the chunk;
+     *  - Response Hold ([holdNanos] > 0, downstream only) — a *gate*: the first downstream byte opens
+     *    the gate at (its arrival + holdMs); every chunk arriving before then is buffered and
+     *    released together when the gate opens, and chunks arriving after pass at their own time. So
+     *    the client sees the response begin ~holdMs late and then delivered at full speed — a
+     *    constant holdMs delay, not the server's whole stream time shifted by holdMs (which would
+     *    roughly double the observed delay for a response the server streams over ~holdMs).
+     *
+     * [holdBypassBytes] > 0 lets small responses skip the gate: while the connection's cumulative
+     * downstream stays within that many bytes, chunks are released immediately (heartbeats /
+     * reachability "pings"); once it grows past the threshold, this and every later chunk are gated.
+     *
+     * Each chunk passes through here exactly once, so neither delay is ever applied twice. When a
+     * hold is active the queue is UNLIMITED so the reader never backpressures (a bounded queue would
+     * stall the reader during the hold and re-stamp late-read chunks, compounding the delay); the
+     * cost is buffering the response in memory during the hold window.
      */
-    private suspend fun shapedPump(
+    private suspend fun delayedPump(
         from: SocketChannel,
         to: SocketChannel,
         direction: TrafficDirection,
+        applyShaping: Boolean,
+        holdNanos: Long,
+        holdBypassBytes: Int,
+        counter: java.util.concurrent.atomic.AtomicLong?,
+        flow: FlowHandle?,
         initial: ByteArray?,
     ) = coroutineScope {
-        val queue = Channel<DelayedChunk>(capacity = SHAPED_QUEUE_CAPACITY)
+        val queue = Channel<DelayedChunk>(
+            capacity = if (holdNanos > 0L) Channel.UNLIMITED else SHAPED_QUEUE_CAPACITY,
+        )
         val writer = launch {
             for (chunk in queue) {
                 val waitNanos = chunk.releaseNanos - System.nanoTime()
@@ -674,12 +757,42 @@ class Socks5Server(
                 relayLoop.writeFully(to, ByteBuffer.wrap(chunk.bytes), RELAY_WRITE_TIMEOUT_MS)
             }
         }
+        // Gate state: the hold opens the gate once, at (first downstream byte + holdMs), rather than
+        // delaying each chunk by holdMs. That way a response the server streams over ~holdMs is
+        // buffered and delivered as a burst when the gate opens (client sees it ~holdMs late) instead
+        // of having its whole stream time-shifted (which would double the observed delay). [seenBytes]
+        // drives the small-response bypass.
+        var gateStarted = false
+        var gateOpenNanos = 0L
+        var seenBytes = 0L
+        fun releaseNanosFor(chunkSize: Int, shapingNanos: Long): Long {
+            val arrival = System.nanoTime()
+            if (holdNanos <= 0L) return arrival + shapingNanos
+            val bypass = holdBypassBytes > 0 && seenBytes + chunkSize <= holdBypassBytes
+            seenBytes += chunkSize
+            if (bypass) return arrival + shapingNanos
+            // The first *held* chunk (the real response starting) opens the gate — not a bypassed
+            // heartbeat, so an early heartbeat on a keep-alive connection can't open it prematurely.
+            if (!gateStarted) {
+                gateStarted = true
+                gateOpenNanos = arrival + holdNanos
+            }
+            flow?.held = true // record the hold as actually applied
+            // Held until the gate opens; chunks arriving after it pass at their own arrival time.
+            return maxOf(arrival, gateOpenNanos) + shapingNanos
+        }
         val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
         try {
             if (initial != null && initial.isNotEmpty()) {
-                val decision = shaper.decide(direction, initial.size, isDatagram = false)
-                if (!decision.drop) {
-                    queue.send(DelayedChunk(initial, System.nanoTime() + decision.waitNanos))
+                val shapingNanos = if (applyShaping) {
+                    val decision = shaper.decide(direction, initial.size, isDatagram = false)
+                    if (decision.drop) -1L else decision.waitNanos
+                } else {
+                    0L
+                }
+                if (shapingNanos >= 0L) {
+                    counter?.addAndGet(initial.size.toLong())
+                    queue.send(DelayedChunk(initial, releaseNanosFor(initial.size, shapingNanos)))
                 }
             }
             while (true) {
@@ -687,12 +800,18 @@ class Socks5Server(
                 val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
                 if (count < 0) break
                 if (count == 0) continue
-                val decision = shaper.decide(direction, count, isDatagram = false)
-                if (decision.drop) continue
+                val shapingNanos = if (applyShaping) {
+                    val decision = shaper.decide(direction, count, isDatagram = false)
+                    if (decision.drop) continue
+                    decision.waitNanos
+                } else {
+                    0L
+                }
+                counter?.addAndGet(count.toLong())
                 val bytes = ByteArray(count)
                 buffer.flip()
                 buffer.get(bytes)
-                queue.send(DelayedChunk(bytes, System.nanoTime() + decision.waitNanos))
+                queue.send(DelayedChunk(bytes, releaseNanosFor(count, shapingNanos)))
             }
         } finally {
             queue.close()

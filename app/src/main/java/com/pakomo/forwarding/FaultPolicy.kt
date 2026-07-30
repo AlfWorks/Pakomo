@@ -12,11 +12,16 @@ import com.pakomo.core.model.TargetScope
  * A fault only affects the targets it selected (see [com.pakomo.core.model.SpecialFaultTargets]);
  * everything else keeps flowing through the normal shaping path.
  *
- * Fixed priority per connection (so the result never depends on execution order):
+ * The reject-style faults are resolved in fixed priority per connection (so the result never
+ * depends on execution order):
  *   1. 网络中断 (blackout) — TCP and UDP
  *   2. DNS 失败 (dns failure) — DNS queries not already blacked out
  *   3. Connection Reset — TCP connections not already blacked out
  *   4. otherwise: normal weak-network shaping
+ *
+ * 响应暂扣 (Response Hold) is orthogonal: it does not reject a connection, it only delays each
+ * server→client chunk by a fixed duration in the relay. It therefore lives outside the ladder above
+ * and only matters for connections that survive (a reset/blackout connection carries no downstream).
  */
 
 /** Fault action for a TCP connection, already resolved in priority order. */
@@ -61,6 +66,20 @@ interface ConnectionFault {
     fun decideUdp(host: String, port: Int, dnsQueryName: String?): UdpFault
 
     /**
+     * Fixed downstream hold for this connection, in milliseconds (0 = no hold). When > 0 the relay
+     * delays every server→client chunk by this much, reproducing a client-observed late response.
+     * Unlike the reject-style faults this does not tear the connection down; it only shifts delivery.
+     */
+    fun holdDownstreamMs(host: String, port: Int): Long = 0L
+
+    /**
+     * When Response Hold applies, connections whose cumulative downstream stays within this many
+     * bytes are released immediately instead of held (0 = hold everything). Lets small heartbeat /
+     * reachability "pings" through while still holding the larger real response.
+     */
+    val holdBypassBytes: Int get() = 0
+
+    /**
      * Feeds an observed plaintext DNS response so domain-scoped faults learn their targets' IPs, and
      * can then match connections (QUIC / no-SNI TCP) by destination IP — the same mechanism the
      * weak-network domain shaping already uses.
@@ -82,6 +101,7 @@ object NoConnectionFault : ConnectionFault {
     override val usesDomainFilter = false
     override fun decideTcp(host: String, port: Int, phase: TcpDecisionPhase) = TcpFault.None
     override fun decideUdp(host: String, port: Int, dnsQueryName: String?) = UdpFault.None
+    override fun holdDownstreamMs(host: String, port: Int) = 0L
     override fun observeDnsResponse(message: ByteArray) = Unit
 }
 
@@ -209,12 +229,18 @@ class FaultRuntime(
     private val reset = FaultMatcher.build(
         config.fault(SpecialFaultType.CONNECTION_RESET), scope, selectedAppDomains, addressDomains,
     )
+    private val hold = FaultMatcher.build(
+        config.fault(SpecialFaultType.RESPONSE_HOLD), scope, selectedAppDomains, addressDomains,
+    )
 
     private val blackoutMode = config.fault(SpecialFaultType.NETWORK_BLACKOUT).blackoutMode
     private val dnsResult = config.fault(SpecialFaultType.DNS_FAILURE).dnsResult
     private val dnsCacheGuard = config.fault(SpecialFaultType.DNS_FAILURE).dnsCacheGuard
+    private val holdMs = config.fault(SpecialFaultType.RESPONSE_HOLD).holdMs.coerceAtLeast(0L)
+    private val holdBypassBytesValue =
+        config.fault(SpecialFaultType.RESPONSE_HOLD).holdBypassBytes.coerceAtLeast(0)
 
-    private val anyActive = blackout.active || dnsFailure.active || reset.active
+    private val anyActive = blackout.active || dnsFailure.active || reset.active || hold.active
     override fun resolve(origin: ConnectionOrigin?): ConnectionFault {
         if (!anyActive) return NoConnectionFault
         val packages = if (scope == TargetScope.APPLICATIONS && origin != null) {
@@ -229,7 +255,9 @@ class FaultRuntime(
         override val usesDomainFilter: Boolean =
             blackout.usesDomainFilterFor(packages) ||
                 dnsFailure.usesDomainFilterFor(packages) ||
-                reset.usesDomainFilterFor(packages)
+                reset.usesDomainFilterFor(packages) ||
+                hold.usesDomainFilterFor(packages)
+        override val holdBypassBytes: Int = holdBypassBytesValue
         private val reported = HashSet<String>()
 
         override fun decideTcp(host: String, port: Int, phase: TcpDecisionPhase): TcpFault {
@@ -288,12 +316,19 @@ class FaultRuntime(
             return UdpFault.None
         }
 
+        override fun holdDownstreamMs(host: String, port: Int): Long {
+            if (holdMs <= 0L) return 0L
+            if (!hold.matchesConnection(packages, host, port)) return 0L
+            report(SpecialFaultType.RESPONSE_HOLD, host, "hold-${holdMs}ms")
+            return holdMs
+        }
+
         override fun observeDnsResponse(message: ByteArray) = observeDns(packages, message)
 
         private fun report(type: SpecialFaultType, target: String, result: String) {
             val key = "${type.name}|$target|$result"
             if (synchronized(reported) { reported.add(key) }) {
-                reporter?.report(FaultHit(type, scope.label, packages.firstOrNull(), target, result))
+                reporter?.report(FaultHit(type, scope.name, packages.firstOrNull(), target, result))
             }
         }
     }
@@ -302,6 +337,7 @@ class FaultRuntime(
         blackout.observeDnsResponse(packages, message)
         dnsFailure.observeDnsResponse(packages, message)
         reset.observeDnsResponse(packages, message)
+        hold.observeDnsResponse(packages, message)
     }
 
     private companion object {

@@ -77,10 +77,12 @@ import com.pakomo.ui.components.ScopeSelector
 import com.pakomo.ui.components.StatusDecor
 import com.pakomo.ui.components.mascotStateOf
 import com.pakomo.ui.components.rememberReduceMotion
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.ui.theme.LocalThemeMode
 import com.pakomo.ui.theme.PakomoColors
 import com.pakomo.ui.theme.ThemeMode
+import com.pakomo.ui.theme.t
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -165,10 +167,11 @@ internal fun HomeScreen(
     onToggleService: () -> Unit,
 ) {
     val context = LocalContext.current
+    val language = LocalAppLanguage.current
     val showAppListUnavailable = {
         Toast.makeText(
             context,
-            "应用列表不可用，请在设置中检查权限",
+            language.tr("应用列表不可用，请在设置中检查权限", "App list unavailable. Check permissions in Settings."),
             Toast.LENGTH_SHORT,
         ).show()
     }
@@ -234,7 +237,7 @@ internal fun HomeScreen(
 
             Spacer(Modifier.height(18.dp))
             Text(
-                text = "接管范围",
+                text = t("接管范围", "Capture scope"),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.textSecondary,
             )
@@ -269,19 +272,19 @@ internal fun HomeScreen(
             Column(modifier = Modifier.fillMaxWidth()) {
                 NavigationRow(
                     icon = Icons.Rounded.Bolt,
-                    title = "规则",
+                    title = t("规则", "Rules"),
                     onClick = onOpenRules,
                     showArrow = false,
                 )
                 NavigationRow(
                     icon = Icons.Rounded.BugReport,
-                    title = "日志",
+                    title = t("日志", "Logs"),
                     onClick = onOpenDiagnostics,
                     showArrow = false,
                 )
                 NavigationRow(
                     icon = Icons.Rounded.Settings,
-                    title = "设置",
+                    title = t("设置", "Settings"),
                     onClick = onOpenSettings,
                     showArrow = false,
                 )
@@ -329,11 +332,11 @@ private fun TrafficCard(state: PakomoUiState, chartState: TrafficChartState) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("实时流量", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
+                Text(t("实时流量", "Live traffic"), style = MaterialTheme.typography.titleMedium, color = colors.textPrimary)
                 Spacer(Modifier.weight(1f))
-                TrafficLegend(colors.accent, "上行", state.stats.uploadBytesPerSecond)
+                TrafficLegend(colors.accent, t("上行", "Up"), state.stats.uploadBytesPerSecond)
                 Spacer(Modifier.size(14.dp))
-                TrafficLegend(colors.muted, "下行", state.stats.downloadBytesPerSecond)
+                TrafficLegend(colors.muted, t("下行", "Down"), state.stats.downloadBytesPerSecond)
             }
             Spacer(Modifier.height(14.dp))
             Box(
@@ -554,23 +557,23 @@ private fun ServiceStatusCard(
             Column(Modifier.weight(1f)) {
                 Text(
                     text = when (stage) {
-                        EngineStage.STOPPED -> "已停止"
-                        EngineStage.STARTING -> "正在启动"
+                        EngineStage.STOPPED -> t("已停止", "Stopped")
+                        EngineStage.STARTING -> t("正在启动", "Starting")
                         EngineStage.FORWARDING ->
-                            if (isIdleRunning) "空闲运行" else "运行中"
-                        EngineStage.ERROR -> "启动失败"
+                            if (isIdleRunning) t("空闲运行", "Idle") else t("运行中", "Running")
+                        EngineStage.ERROR -> t("启动失败", "Failed to start")
                     },
                     fontWeight = FontWeight.Bold,
                     fontSize = 19.sp,
                     color = if (onSolid) Color.White else colors.textPrimary,
                 )
                 val detail = when (stage) {
-                    EngineStage.STOPPED -> "点此启动"
+                    EngineStage.STOPPED -> t("点此启动", "Tap to start")
                     EngineStage.STARTING -> state.engineMessage
                     EngineStage.FORWARDING -> if (isIdleRunning) {
                         when (state.scope) {
-                            TargetScope.APPLICATIONS -> "请选择应用"
-                            TargetScope.ADDRESSES -> "请添加地址"
+                            TargetScope.APPLICATIONS -> t("请选择应用", "Select apps")
+                            TargetScope.ADDRESSES -> t("请添加地址", "Add addresses")
                             TargetScope.GLOBAL -> formatUptime(state.stats.uptimeMs)
                         }
                     } else {
@@ -680,8 +683,8 @@ private fun ScopeCard(
                     Spacer(Modifier.size(12.dp))
                     Text(
                         text = when (state.scope) {
-                            TargetScope.APPLICATIONS -> "选择应用"
-                            TargetScope.ADDRESSES -> "指定地址"
+                            TargetScope.APPLICATIONS -> t("选择应用", "Select apps")
+                            TargetScope.ADDRESSES -> t("指定地址", "By address")
                             TargetScope.GLOBAL -> ""
                         },
                         style = MaterialTheme.typography.bodyMedium,

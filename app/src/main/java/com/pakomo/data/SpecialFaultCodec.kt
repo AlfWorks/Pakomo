@@ -2,6 +2,7 @@ package com.pakomo.data
 
 import com.pakomo.core.model.AppFaultTarget
 import com.pakomo.core.model.BlackoutMode
+import com.pakomo.core.model.DEFAULT_RESPONSE_HOLD_MS
 import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.core.model.ResetTiming
 import com.pakomo.core.model.SpecialFault
@@ -37,6 +38,8 @@ object SpecialFaultCodec {
                     .put("dnsCacheGuard", fault.dnsCacheGuard)
                     .put("blackoutMode", fault.blackoutMode.name)
                     .put("resetTiming", fault.resetTiming.name)
+                    .put("holdMs", fault.holdMs)
+                    .put("holdBypassBytes", fault.holdBypassBytes)
                     .put("appTargets", appTargets)
                     .put("addressTargets", JSONArray(fault.addressTargets)),
             )
@@ -85,6 +88,8 @@ object SpecialFaultCodec {
             resetTiming = obj.optString("resetTiming")
                 .let { name -> ResetTiming.entries.firstOrNull { it.name == name } }
                 ?: ResetTiming.IMMEDIATE,
+            holdMs = obj.optLong("holdMs", DEFAULT_RESPONSE_HOLD_MS),
+            holdBypassBytes = obj.optInt("holdBypassBytes", 0),
             appTargets = appTargets,
             addressTargets = obj.optJSONArray("addressTargets")?.toStringList().orEmpty(),
         )

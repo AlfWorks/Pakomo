@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ArrowDropDown
@@ -27,6 +28,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -34,14 +37,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.core.model.BlackoutMode
 import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.core.model.InstalledApp
@@ -54,9 +60,11 @@ import com.pakomo.ui.components.EmptyArtKind
 import com.pakomo.ui.components.EmptyStateArt
 import com.pakomo.ui.components.MonoText
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
 import com.pakomo.ui.theme.LocalThemeMode
 import com.pakomo.ui.theme.ThemeMode
+import com.pakomo.ui.theme.t
 
 /**
  * 规则编辑页底部的特殊故障区：三条独立入口、已选数量、冲突标识与故障表现。
@@ -74,9 +82,10 @@ fun SpecialFaultSection(
     onOpenTarget: (SpecialFaultType) -> Unit,
 ) {
     val colors = LocalPakomoColors.current
+    val language = LocalAppLanguage.current
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(
-            text = "特殊故障",
+            text = t("特殊故障", "Special faults"),
             style = MaterialTheme.typography.labelLarge,
             color = colors.textSecondary,
             fontWeight = FontWeight.SemiBold,
@@ -111,14 +120,17 @@ fun SpecialFaultSection(
         }
         SpecialFaultType.entries.forEach { type ->
             val fault = rule.specialFaults.fault(type)
-            val canOpen = fault.enabled && scope != TargetScope.GLOBAL
+            // 响应暂扣的时长在详情页设置，因此全局模式下也要能进入详情页。
+            val hasDetailParam = type == SpecialFaultType.RESPONSE_HOLD
+            val canOpen = fault.enabled && (scope != TargetScope.GLOBAL || hasDetailParam)
             val status = if (fault.enabled && scope != TargetScope.GLOBAL) {
-                "${effectiveCounts.getValue(type)} 个"
+                val count = effectiveCounts.getValue(type)
+                t("$count 个", "$count selected")
             } else {
                 null
             }
             FaultEntryRow(
-                title = type.entryLabel,
+                title = type.entryLabel(language),
                 status = status,
                 hasConflict = type in conflictingTypes,
                 enabled = fault.enabled,
@@ -130,7 +142,7 @@ fun SpecialFaultSection(
                 FaultOptionRow(
                     selected = fault.dnsResult,
                     options = DnsFailureResult.entries,
-                    label = DnsFailureResult::behaviorLabel,
+                    label = { it.behaviorLabel(language) },
                     onSelect = onDnsResult,
                 )
             }
@@ -138,14 +150,93 @@ fun SpecialFaultSection(
                 FaultOptionRow(
                     selected = fault.blackoutMode,
                     options = BlackoutMode.entries,
-                    label = BlackoutMode::behaviorLabel,
+                    label = { it.behaviorLabel(language) },
                     onSelect = onBlackoutMode,
                 )
             }
             if (type == SpecialFaultType.CONNECTION_RESET && fault.enabled) {
-                FaultBehaviorRow("连接重置（-101）")
+                FaultBehaviorRow(t("连接重置（-101）", "Connection reset (-101)"))
             }
         }
+    }
+}
+
+/** 慢响应延迟时长输入：自由填写秒数，模型按毫秒保存。留空按 0 秒处理。 */
+@Composable
+private fun FaultDurationRow(
+    holdMs: Long,
+    onHoldMs: (Long) -> Unit,
+) {
+    val colors = LocalPakomoColors.current
+    var text by rememberSaveable { mutableStateOf((holdMs / 1000).toString()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { input ->
+            // 最多 5 位秒数（约 27 小时），避免溢出与误输入。
+            if (input.all(Char::isDigit) && input.length <= 5) {
+                text = input
+                onHoldMs((input.toLongOrNull() ?: 0L) * 1000L)
+            }
+        },
+        label = { Text(t("延迟时长", "Delay")) },
+        suffix = { Text(t("秒", "s")) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = colors.accent,
+            unfocusedBorderColor = colors.border,
+            focusedLabelColor = colors.accent,
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(10.dp),
+    )
+}
+
+/**
+ * 慢响应「放行小响应」阈值：下行累计不超过该字节数的连接立即放行、不暂扣,用来放过心跳/探测这类小响应。
+ * 0（留空）表示全部暂扣。
+ */
+@Composable
+private fun FaultBypassBytesRow(
+    bytes: Int,
+    onBytes: (Int) -> Unit,
+) {
+    val colors = LocalPakomoColors.current
+    var text by rememberSaveable { mutableStateOf(if (bytes > 0) bytes.toString() else "") }
+    Column {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { input ->
+                if (input.all(Char::isDigit) && input.length <= 7) {
+                    text = input
+                    onBytes(input.toIntOrNull() ?: 0)
+                }
+            },
+            label = { Text(t("放行小响应", "Pass small responses")) },
+            suffix = { Text(t("字节", "bytes")) },
+            placeholder = { Text(t("0＝全部暂扣", "0 = hold all")) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = colors.accent,
+                unfocusedBorderColor = colors.border,
+                focusedLabelColor = colors.accent,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+        )
+        Text(
+            text = t(
+                "下行不超过此字节数的响应立即放行,用于放过心跳/探测,真实的大响应仍会被暂扣。",
+                "Responses whose downstream stays within this many bytes pass immediately (for heartbeats / pings); larger real responses are still held.",
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.muted,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+        )
     }
 }
 
@@ -185,7 +276,7 @@ private fun FaultEntryRow(
         if (hasConflict) {
             Icon(
                 imageVector = Icons.Rounded.WarningAmber,
-                contentDescription = "存在与其他特殊故障重复选择的目标",
+                contentDescription = t("存在与其他特殊故障重复选择的目标", "Overlaps a target selected by another special fault"),
                 tint = colors.warningStrong,
                 modifier = Modifier.size(20.dp),
             )
@@ -232,7 +323,7 @@ private fun <T> FaultOptionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "故障表现",
+            text = t("故障表现", "Behavior"),
             style = MaterialTheme.typography.labelSmall,
             color = colors.textSecondary,
         )
@@ -249,7 +340,7 @@ private fun <T> FaultOptionRow(
                 )
                 Icon(
                     imageVector = Icons.Rounded.ArrowDropDown,
-                    contentDescription = "选择故障表现",
+                    contentDescription = t("选择故障表现", "Choose behavior"),
                     tint = colors.accent,
                     modifier = Modifier.size(22.dp),
                 )
@@ -292,7 +383,7 @@ private fun FaultBehaviorRow(text: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "故障表现",
+            text = t("故障表现", "Behavior"),
             style = MaterialTheme.typography.labelSmall,
             color = colors.textSecondary,
         )
@@ -308,16 +399,16 @@ private fun FaultBehaviorRow(text: String) {
     }
 }
 
-private fun DnsFailureResult.behaviorLabel(): String = when (this) {
+private fun DnsFailureResult.behaviorLabel(language: AppLanguage): String = when (this) {
     DnsFailureResult.NXDOMAIN -> "NXDOMAIN（-105）"
     DnsFailureResult.SERVFAIL -> "SERVFAIL（-137）"
     DnsFailureResult.REFUSED -> "REFUSED（-137）"
-    DnsFailureResult.TIMEOUT -> "DNS 超时（不固定）"
+    DnsFailureResult.TIMEOUT -> language.tr("DNS 超时（不固定）", "DNS timeout (varies)")
 }
 
-private fun BlackoutMode.behaviorLabel(): String = when (this) {
-    BlackoutMode.SILENT -> "静默中断（-7）"
-    BlackoutMode.IMMEDIATE -> "立即中断（-102 / -101）"
+private fun BlackoutMode.behaviorLabel(language: AppLanguage): String = when (this) {
+    BlackoutMode.SILENT -> language.tr("静默中断（-7）", "Silent (-7)")
+    BlackoutMode.IMMEDIATE -> language.tr("立即中断（-102 / -101）", "Immediate (-102 / -101)")
 }
 
 /**
@@ -335,25 +426,32 @@ fun FaultTargetScreen(
     onToggleAppDomain: (String, String, Boolean) -> Unit,
     onToggleAddress: (String, Boolean) -> Unit,
     onDnsCacheGuard: (Boolean) -> Unit,
+    onHoldMs: (Long) -> Unit,
+    onHoldBypassBytes: (Int) -> Unit,
 ) {
     val fault = rule.specialFaults.fault(type)
+    val language = LocalAppLanguage.current
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding(),
     ) {
-        ScreenHeader(title = type.label, onBack = onBack)
+        ScreenHeader(title = type.label(language), onBack = onBack)
         Spacer(Modifier.height(4.dp))
 
         // Type-specific parameters.
         when (type) {
             SpecialFaultType.NETWORK_BLACKOUT -> Unit
             SpecialFaultType.DNS_FAILURE -> ToggleParamRow(
-                title = "阻止缓存后的连接",
+                title = t("阻止缓存后的连接", "Block connections after caching"),
                 checked = fault.dnsCacheGuard,
                 onCheckedChange = onDnsCacheGuard,
             )
             SpecialFaultType.CONNECTION_RESET -> Unit
+            SpecialFaultType.RESPONSE_HOLD -> {
+                FaultDurationRow(holdMs = fault.holdMs, onHoldMs = onHoldMs)
+                FaultBypassBytesRow(bytes = fault.holdBypassBytes, onBytes = onHoldBypassBytes)
+            }
         }
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -361,14 +459,14 @@ fun FaultTargetScreen(
                 TargetScope.APPLICATIONS -> {
                     val selected = remember(apps) { apps.filter { it.isSelected } }
                     if (selected.isEmpty()) {
-                        EmptyHint("当前没有已接管的应用，请先在接管范围里选择应用。")
+                        EmptyHint(t("当前没有已接管的应用，请先在接管范围里选择应用。", "No captured apps yet. Please pick apps in the capture scope first."))
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            item { SectionCaption("生效目标") }
+                            item { SectionCaption(t("生效目标", "Applied targets")) }
                             items(selected, key = InstalledApp::packageName) { app ->
                                 val target = fault.appTargets[app.packageName]
                                 AppFaultCard(
@@ -385,14 +483,14 @@ fun FaultTargetScreen(
 
                 TargetScope.ADDRESSES -> {
                     if (addressDomains.isEmpty()) {
-                        EmptyHint("还没有指定域名，请先在接管范围里添加域名。")
+                        EmptyHint(t("还没有指定域名，请先在接管范围里添加域名。", "No domains yet. Please add domains in the capture scope first."))
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            item { SectionCaption("生效目标") }
+                            item { SectionCaption(t("生效目标", "Applied targets")) }
                             items(addressDomains, key = { it }) { domain ->
                                 val checked = domain in fault.addressTargets
                                 CheckRow(
@@ -406,7 +504,7 @@ fun FaultTargetScreen(
                     }
                 }
 
-                TargetScope.GLOBAL -> EmptyHint("全局模式下开启即对整个接管范围生效，无需选择目标。")
+                TargetScope.GLOBAL -> EmptyHint(t("全局模式下开启即对整个接管范围生效，无需选择目标。", "In global mode, enabling applies to the entire capture scope; no target selection needed."))
             }
         }
     }
@@ -516,7 +614,7 @@ private fun AppFaultCard(
             ) {
                 if (app.domains.isEmpty()) {
                     Text(
-                        text = "该应用未限定域名，故障对整个应用生效。",
+                        text = t("该应用未限定域名，故障对整个应用生效。", "This app has no domain limit; the fault applies to the whole app."),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.muted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -525,7 +623,7 @@ private fun AppFaultCard(
                     val noneSelected = app.domains.none { it in selectedDomainSet }
                     if (noneSelected) {
                         Text(
-                            text = "至少选择一个域名，否则该故障对这个应用不生效。",
+                            text = t("至少选择一个域名，否则该故障对这个应用不生效。", "Select at least one domain, or this fault won't apply to this app."),
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.danger,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),

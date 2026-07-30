@@ -35,7 +35,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.t
 import com.pakomo.vpn.VpnServiceController
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
@@ -51,7 +53,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private data class Target(val label: String, val host: String)
+private data class Target(val label: String, val host: String, val enLabel: String = label)
 
 private enum class Phase { PENDING, RUNNING, DONE }
 
@@ -75,14 +77,14 @@ private data class Probe(
 }
 
 private val TARGETS = listOf(
-    Target("百度", "www.baidu.com"),
-    Target("淘宝", "www.taobao.com"),
-    Target("腾讯", "www.qq.com"),
-    Target("微博", "weibo.com"),
-    Target("哔哩哔哩", "www.bilibili.com"),
-    Target("抖音", "www.douyin.com"),
-    Target("京东", "www.jd.com"),
-    Target("网易", "www.163.com"),
+    Target("百度", "www.baidu.com", enLabel = "Baidu"),
+    Target("淘宝", "www.taobao.com", enLabel = "Taobao"),
+    Target("腾讯", "www.qq.com", enLabel = "Tencent"),
+    Target("微博", "weibo.com", enLabel = "Weibo"),
+    Target("哔哩哔哩", "www.bilibili.com", enLabel = "Bilibili"),
+    Target("抖音", "www.douyin.com", enLabel = "Douyin"),
+    Target("京东", "www.jd.com", enLabel = "JD"),
+    Target("网易", "www.163.com", enLabel = "NetEase"),
     Target("Google", "www.google.com"),
     Target("Cloudflare", "www.cloudflare.com"),
     Target("GitHub", "github.com"),
@@ -118,11 +120,11 @@ fun LatencyTestScreen(onBack: () -> Unit) {
             .statusBarsPadding(),
     ) {
         ScreenHeader(
-            title = "延迟测试",
+            title = t("延迟测试", "Latency test"),
             onBack = onBack,
             action = {
                 TextButton(onClick = { runAll() }, enabled = !testing) {
-                    Text(if (testing) "测试中" else "重新测试")
+                    Text(if (testing) t("测试中", "Testing") else t("重新测试", "Retest"))
                 }
             },
         )
@@ -155,7 +157,11 @@ private fun ProbeRow(probe: Probe) {
         ) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(probe.target.label, style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+                    Text(
+                        text = if (LocalAppLanguage.current == com.pakomo.core.model.AppLanguage.EN) probe.target.enLabel else probe.target.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textPrimary,
+                    )
                     probe.family?.let {
                         Spacer(Modifier.size(6.dp))
                         Text(
@@ -200,16 +206,16 @@ private fun Metrics(probe: Probe) {
                 fontFamily = FontFamily.Monospace,
             )
             Text(
-                text = "抖动 ${probe.jitterMs ?: 0} ms",
+                text = t("抖动", "Jitter") + " ${probe.jitterMs ?: 0} ms",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.textSecondary,
                 fontFamily = FontFamily.Monospace,
             )
         } else {
-            Text("不可达", style = MaterialTheme.typography.bodyMedium, color = colors.danger)
+            Text(t("不可达", "Unreachable"), style = MaterialTheme.typography.bodyMedium, color = colors.danger)
         }
         Text(
-            text = "丢包 ${probe.lossPercent}%",
+            text = t("丢包", "Loss") + " ${probe.lossPercent}%",
             style = MaterialTheme.typography.bodySmall,
             color = if (probe.lossPercent > 0) colors.danger else colors.muted,
             fontFamily = FontFamily.Monospace,

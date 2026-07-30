@@ -14,6 +14,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.core.validation.DomainInputValidator
 import com.pakomo.data.InstalledAppCatalog
 import com.pakomo.data.PakomoPreferences
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.ui.theme.ThemeMode
 import com.pakomo.vpn.VpnServiceController
 import java.util.UUID
@@ -51,6 +52,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             .getOrDefault(ThemeMode.Standard),
     )
     val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    // Interface language, kept in its own flow for the same reason as [themeMode].
+    private val _language = MutableStateFlow(AppLanguage.fromName(preferences.readLanguage()))
+    val language: StateFlow<AppLanguage> = _language.asStateFlow()
 
     private var configPushJob: Job? = null
     private var appPersistJob: Job? = null
@@ -183,11 +188,11 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addDomain(packageName: String, input: String): String? {
         val domain = DomainInputValidator.normalizeOrNull(input)
-            ?: return "请输入有效域名，例如 api.example.com"
+            ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
         val target = _state.value.apps.firstOrNull { it.packageName == packageName }
-            ?: return "应用已不存在"
+            ?: return _language.value.tr("应用已不存在", "This app no longer exists")
         if (target.domains.any { it.equals(domain, ignoreCase = true) }) {
-            return "这个域名已经添加"
+            return _language.value.tr("这个域名已经添加", "This domain is already added")
         }
         updateApp(packageName) { app -> app.copy(domains = app.domains + domain) }
         persistApps()
@@ -209,9 +214,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addAddressDomain(input: String): String? {
         val domain = DomainInputValidator.normalizeOrNull(input)
-            ?: return "请输入有效域名，例如 api.example.com"
+            ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
         if (_state.value.addressDomains.any { it.equals(domain, ignoreCase = true) }) {
-            return "这个域名已经添加"
+            return _language.value.tr("这个域名已经添加", "This domain is already added")
         }
         val updated = _state.value.addressDomains + domain
         _state.update { it.copy(addressDomains = updated) }
@@ -260,7 +265,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         Log.i(TAG, "Rule duplicated: ${source.name}")
         return source.copy(
             id = UUID.randomUUID().toString(),
-            name = "${source.name}副本",
+            name = _language.value.let { lang ->
+                lang.tr("${source.displayName(lang)}副本", "${source.displayName(lang)} copy")
+            },
             isSystem = false,
         )
     }
@@ -269,7 +276,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         Log.i(TAG, "New rule draft created")
         return NetworkRule(
             id = UUID.randomUUID().toString(),
-            name = "新规则",
+            name = _language.value.tr("新规则", "New rule"),
             latencyMs = 100,
             jitterMs = 20,
             packetLossPercent = 1,
@@ -308,11 +315,19 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { preferences.writeThemeMode(mode.name) }
     }
 
+    fun setLanguage(language: AppLanguage) {
+        if (_language.value == language) return
+        _language.value = language
+        Log.i(TAG, "Language changed: ${language.name}")
+        viewModelScope.launch(Dispatchers.IO) { preferences.writeLanguage(language.name) }
+    }
+
     fun clearLocalData() {
         Log.w(TAG, "Clearing all local configuration")
         preferences.clear()
         _state.value = PakomoUiState()
         _themeMode.value = ThemeMode.Standard
+        _language.value = AppLanguage.DEFAULT
         refreshApps()
     }
 

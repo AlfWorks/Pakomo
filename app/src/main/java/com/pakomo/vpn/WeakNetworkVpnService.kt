@@ -13,9 +13,12 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.pakomo.MainActivity
 import com.pakomo.R
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.core.model.EngineStage
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.TargetScope
+import com.pakomo.data.PakomoPreferences
+import com.pakomo.forwarding.FlowLog
 import com.pakomo.forwarding.SocketProtector
 import com.pakomo.forwarding.DomainRoutingPolicy
 import com.pakomo.forwarding.DomainScopedShaping
@@ -76,6 +79,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var startedAtElapsedMs: Long = 0L
     private val faultHitLogger = FaultHitLogger(TAG)
 
+    // Interface language for user-visible service text (notification, scope labels shown in stats).
+    // Read from preferences on demand; a mid-session language change applies from the next update.
+    private val preferences by lazy { PakomoPreferences(this) }
+    private val appLanguage: AppLanguage
+        get() = AppLanguage.fromName(preferences.readLanguage())
+
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "VPN service created")
@@ -105,12 +114,15 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 // session. Keep the public runtime in FORWARDING so the fixed home controls and
                 // traffic chart do not collapse and re-expand during the short handover.
                 if (VpnServiceController.runtime.value.stage != EngineStage.FORWARDING) {
-                    VpnServiceController.publish(EngineStage.STARTING, "正在建立本地转发链路")
+                    VpnServiceController.publish(
+                        EngineStage.STARTING,
+                        appLanguage.tr("正在建立本地转发链路", "Establishing local forwarding link"),
+                    )
                 }
                 startForeground(
                     NOTIFICATION_ID,
                     buildNotification(
-                        notificationTitle(config.rule.name, config.scope.label),
+                        notificationTitle(config.rule.displayName(appLanguage), config.scope.label(appLanguage)),
                         trafficNotificationText(0L, 0L),
                     ),
                 )
@@ -317,6 +329,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         localSocks: Socks5Server,
     ) {
         val sampler = TunnelStatsSampler()
+        FlowLog.clear()
         statsJob = serviceScope.launch {
             while (isActive) {
                 delay(STATS_INTERVAL_MS)
@@ -348,6 +361,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     },
                 )
                 VpnServiceController.publishStats(stats)
+                FlowLog.pulse()
                 latestUploadBytesPerSecond = stats.uploadBytesPerSecond
                 latestDownloadBytesPerSecond = stats.downloadBytesPerSecond
                 updateRuntimeNotification()
@@ -429,9 +443,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
             shapingPolicy = shaping.policy,
             faultPolicy = faultPolicy,
             hitTracker = hits,
-            scopeLabel = scope.label,
+            scopeLabel = scope.label(appLanguage),
             attributor = shaping.attributor,
-            ruleName = rule.name,
+            ruleName = rule.displayName(appLanguage),
         )
     }
 
@@ -483,7 +497,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         hits: RecentHitTracker,
     ): RuntimeShaping = when (scope) {
         TargetScope.GLOBAL -> RuntimeShaping(
-            policy = ShapingPolicy { ShapeEverythingShaping(scope.label, hits) },
+            policy = ShapingPolicy { ShapeEverythingShaping(scope.label(appLanguage), hits) },
             attributor = null,
         )
 
@@ -492,7 +506,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             RuntimeShaping(
                 policy = ShapingPolicy {
                     DomainScopedShaping(
-                        scope = scope.label,
+                        scope = scope.label(appLanguage),
                         policy = policy,
                         packageName = null,
                         appLabel = null,
@@ -521,7 +535,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 knownPackages = allowedPackages,
             )
             RuntimeShaping(
-                policy = PerAppShapingPolicy(apps, appAttributor, hits, scope.label),
+                policy = PerAppShapingPolicy(apps, appAttributor, hits, scope.label(appLanguage)),
                 attributor = appAttributor,
             )
         }
@@ -545,10 +559,13 @@ class WeakNetworkVpnService : android.net.VpnService() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            getString(R.string.vpn_channel_name),
+            appLanguage.tr("弱网模拟状态", "Weak-network status"),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "显示用户主动启动的 Pakomo 本地 VPN 服务状态"
+            description = appLanguage.tr(
+                "显示用户主动启动的 Pakomo 本地 VPN 服务状态",
+                "Shows the status of the user-started local Pakomo VPN service",
+            )
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
@@ -575,7 +592,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(0, "停止", stopIntent)
+            .addAction(0, appLanguage.tr("停止", "Stop"), stopIntent)
             .build()
     }
 

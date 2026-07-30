@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import com.pakomo.core.model.AppFaultTarget
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.core.model.AppListAccess
 import com.pakomo.core.model.InstalledApp
 import com.pakomo.core.model.NetworkRule
@@ -59,6 +60,8 @@ fun PakomoApp(
     quickControlEnabled: Boolean,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    language: AppLanguage,
+    onLanguageChange: (AppLanguage) -> Unit,
     onToggleService: () -> Unit,
     onVpnPermissionClick: () -> Unit,
     onNotificationPermissionClick: () -> Unit,
@@ -266,6 +269,12 @@ fun PakomoApp(
                         onDnsCacheGuard = { enabled ->
                             mutateDraftFault(faultNav.type) { it.copy(dnsCacheGuard = enabled) }
                         },
+                        onHoldMs = { ms ->
+                            mutateDraftFault(faultNav.type) { it.copy(holdMs = ms) }
+                        },
+                        onHoldBypassBytes = { bytes ->
+                            mutateDraftFault(faultNav.type) { it.copy(holdBypassBytes = bytes) }
+                        },
                     )
                 }
             }
@@ -284,6 +293,8 @@ fun PakomoApp(
                 onQuickControlChanged = onQuickControlChanged,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
+                language = language,
+                onLanguageChange = onLanguageChange,
             )
 
             Screen.About -> AboutScreen(onBack = goBack)

@@ -47,10 +47,13 @@ import androidx.compose.material3.HorizontalDivider
 import com.pakomo.core.model.NetworkRule
 import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.core.model.BlackoutMode
+import com.pakomo.core.model.AppLanguage
 import com.pakomo.core.model.SpecialFaultType
 import com.pakomo.core.model.TargetScope
 import com.pakomo.ui.components.ScreenHeader
+import com.pakomo.ui.theme.LocalAppLanguage
 import com.pakomo.ui.theme.LocalPakomoColors
+import com.pakomo.ui.theme.t
 
 @Composable
 fun RuleEditorScreen(
@@ -100,8 +103,10 @@ fun RuleEditorScreen(
     var showNameDialog by rememberSaveable(draft.id) { mutableStateOf(false) }
     var pendingName by rememberSaveable(draft.id) { mutableStateOf(draft.name) }
     val colors = LocalPakomoColors.current
+    val language = LocalAppLanguage.current
 
     fun buildRule(): RuleValidation = validateRule(
+        language = language,
         draft = draft,
         name = name,
         advanced = advanced,
@@ -145,7 +150,7 @@ fun RuleEditorScreen(
                     )
                     Icon(
                         imageVector = Icons.Rounded.Edit,
-                        contentDescription = "修改规则名称",
+                        contentDescription = t("修改规则名称", "Edit rule name"),
                         tint = colors.textSecondary,
                         modifier = Modifier
                             .padding(start = 5.dp, end = 8.dp)
@@ -159,7 +164,7 @@ fun RuleEditorScreen(
                         val result = buildRule()
                         if (result.rule != null) onSave(result.rule) else error = result.error
                     },
-                ) { Text("保存") }
+                ) { Text(t("保存", "Save")) }
             },
         )
         Column(
@@ -178,24 +183,24 @@ fun RuleEditorScreen(
             ) { advancedMode ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (!advancedMode) {
-                        NumberField("固定延迟", "ms", latency, Modifier.fillMaxWidth()) {
+                        NumberField(t("固定延迟", "Fixed latency"), "ms", latency, Modifier.fillMaxWidth()) {
                             latency = it
                             error = null
                         }
-                        NumberField("抖动", "ms", jitter, Modifier.fillMaxWidth()) {
+                        NumberField(t("抖动", "Jitter"), "ms", jitter, Modifier.fillMaxWidth()) {
                             jitter = it
                             error = null
                         }
-                        NumberField("丢包率", "%", loss, Modifier.fillMaxWidth()) {
+                        NumberField(t("丢包率", "Packet loss"), "%", loss, Modifier.fillMaxWidth()) {
                             loss = it
                             error = null
                         }
                     } else {
-                        DirectionRow("上行延迟", "下行延迟", "ms", upLatency, downLatency,
+                        DirectionRow(t("上行延迟", "Up latency"), t("下行延迟", "Down latency"), "ms", upLatency, downLatency,
                             { upLatency = it; error = null }, { downLatency = it; error = null })
-                        DirectionRow("上行抖动", "下行抖动", "ms", upJitter, downJitter,
+                        DirectionRow(t("上行抖动", "Up jitter"), t("下行抖动", "Down jitter"), "ms", upJitter, downJitter,
                             { upJitter = it; error = null }, { downJitter = it; error = null })
-                        DirectionRow("上行丢包", "下行丢包", "%", upLoss, downLoss,
+                        DirectionRow(t("上行丢包", "Up loss"), t("下行丢包", "Down loss"), "%", upLoss, downLoss,
                             { upLoss = it; error = null }, { downLoss = it; error = null })
                     }
                 }
@@ -205,10 +210,10 @@ fun RuleEditorScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                NumberField("下载", "Kbps", download, Modifier.weight(1f), placeholder = "不限") {
+                NumberField(t("下载", "Download"), "Kbps", download, Modifier.weight(1f), placeholder = t("不限", "∞")) {
                     download = it; error = null
                 }
-                NumberField("上传", "Kbps", upload, Modifier.weight(1f), placeholder = "不限") {
+                NumberField(t("上传", "Upload"), "Kbps", upload, Modifier.weight(1f), placeholder = t("不限", "∞")) {
                     upload = it; error = null
                 }
             }
@@ -238,12 +243,12 @@ fun RuleEditorScreen(
     if (showNameDialog) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
-            title = { Text("修改规则名称") },
+            title = { Text(t("修改规则名称", "Edit rule name")) },
             text = {
                 OutlinedTextField(
                     value = pendingName,
                     onValueChange = { pendingName = it },
-                    label = { Text("规则名称") },
+                    label = { Text(t("规则名称", "Rule name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
@@ -257,10 +262,10 @@ fun RuleEditorScreen(
                         error = null
                         showNameDialog = false
                     },
-                ) { Text("确定") }
+                ) { Text(t("确定", "OK")) }
             },
             dismissButton = {
-                TextButton(onClick = { showNameDialog = false }) { Text("取消") }
+                TextButton(onClick = { showNameDialog = false }) { Text(t("取消", "Cancel")) }
             },
         )
     }
@@ -276,7 +281,7 @@ private fun ModeToggle(advanced: Boolean, onChange: (Boolean) -> Unit) {
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        listOf(false to "简单", true to "高级").forEach { (value, label) ->
+        listOf(false to t("简单", "Simple"), true to t("高级", "Advanced")).forEach { (value, label) ->
             val active = value == advanced
             val segmentColor by animateColorAsState(
                 targetValue = if (active) colors.surface else Color.Transparent,
@@ -361,6 +366,7 @@ private data class RuleValidation(
 )
 
 private fun validateRule(
+    language: AppLanguage,
     draft: NetworkRule,
     name: String,
     advanced: Boolean,
@@ -376,26 +382,26 @@ private fun validateRule(
     download: String,
     upload: String,
 ): RuleValidation {
-    if (name.isBlank()) return RuleValidation(error = "规则名称不能为空")
+    if (name.isBlank()) return RuleValidation(error = language.tr("规则名称不能为空", "Rule name cannot be empty"))
     val downloadValue = download.toIntOrNull()
     val uploadValue = upload.toIntOrNull()
     if (download.isNotBlank() && (downloadValue == null || downloadValue <= 0)) {
-        return RuleValidation(error = "下载限速必须大于 0")
+        return RuleValidation(error = language.tr("下载限速必须大于 0", "Download limit must be greater than 0"))
     }
     if (upload.isNotBlank() && (uploadValue == null || uploadValue <= 0)) {
-        return RuleValidation(error = "上传限速必须大于 0")
+        return RuleValidation(error = language.tr("上传限速必须大于 0", "Upload limit must be greater than 0"))
     }
 
     if (advanced) {
-        val ul = upLatency.toIntOrNull() ?: return RuleValidation(error = "请输入上行延迟")
-        val dl = downLatency.toIntOrNull() ?: return RuleValidation(error = "请输入下行延迟")
-        val uj = upJitter.toIntOrNull() ?: return RuleValidation(error = "请输入上行抖动")
-        val dj = downJitter.toIntOrNull() ?: return RuleValidation(error = "请输入下行抖动")
-        val ulo = upLoss.toIntOrNull() ?: return RuleValidation(error = "请输入上行丢包")
-        val dlo = downLoss.toIntOrNull() ?: return RuleValidation(error = "请输入下行丢包")
-        if (ul !in 0..60_000 || dl !in 0..60_000) return RuleValidation(error = "延迟超出范围")
-        if (uj !in 0..30_000 || dj !in 0..30_000) return RuleValidation(error = "抖动超出范围")
-        if (ulo !in 0..100 || dlo !in 0..100) return RuleValidation(error = "丢包率必须在 0–100%")
+        val ul = upLatency.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入上行延迟", "Enter up latency"))
+        val dl = downLatency.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入下行延迟", "Enter down latency"))
+        val uj = upJitter.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入上行抖动", "Enter up jitter"))
+        val dj = downJitter.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入下行抖动", "Enter down jitter"))
+        val ulo = upLoss.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入上行丢包", "Enter up loss"))
+        val dlo = downLoss.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入下行丢包", "Enter down loss"))
+        if (ul !in 0..60_000 || dl !in 0..60_000) return RuleValidation(error = language.tr("延迟超出范围", "Latency out of range"))
+        if (uj !in 0..30_000 || dj !in 0..30_000) return RuleValidation(error = language.tr("抖动超出范围", "Jitter out of range"))
+        if (ulo !in 0..100 || dlo !in 0..100) return RuleValidation(error = language.tr("丢包率必须在 0–100%", "Packet loss must be 0–100%"))
         return RuleValidation(
             rule = draft.copy(
                 name = name.trim(),
@@ -417,12 +423,12 @@ private fun validateRule(
         )
     }
 
-    val latencyValue = latency.toIntOrNull() ?: return RuleValidation(error = "请输入固定延迟")
-    val jitterValue = jitter.toIntOrNull() ?: return RuleValidation(error = "请输入抖动")
-    val lossValue = loss.toIntOrNull() ?: return RuleValidation(error = "请输入丢包率")
-    if (latencyValue !in 0..60_000) return RuleValidation(error = "固定延迟超出范围")
-    if (jitterValue !in 0..30_000) return RuleValidation(error = "抖动超出范围")
-    if (lossValue !in 0..100) return RuleValidation(error = "丢包率必须在 0–100%")
+    val latencyValue = latency.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入固定延迟", "Enter fixed latency"))
+    val jitterValue = jitter.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入抖动", "Enter jitter"))
+    val lossValue = loss.toIntOrNull() ?: return RuleValidation(error = language.tr("请输入丢包率", "Enter packet loss"))
+    if (latencyValue !in 0..60_000) return RuleValidation(error = language.tr("固定延迟超出范围", "Fixed latency out of range"))
+    if (jitterValue !in 0..30_000) return RuleValidation(error = language.tr("抖动超出范围", "Jitter out of range"))
+    if (lossValue !in 0..100) return RuleValidation(error = language.tr("丢包率必须在 0–100%", "Packet loss must be 0–100%"))
     return RuleValidation(
         rule = draft.copy(
             name = name.trim(),
