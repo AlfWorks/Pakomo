@@ -29,6 +29,8 @@ variables:
   no_proxy: "172.17.0.1,172.30.0.0/16,127.0.0.1,localhost,.nyukit.com"
   ANDROID_SDK_ROOT: "$CI_PROJECT_DIR/.android-sdk"
   GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  # JVM 不读 http_proxy，wrapper 下载和 Gradle 客户端只认系统属性
+  GRADLE_OPTS: "-Dhttp.proxyHost=172.17.0.1 -Dhttp.proxyPort=17890 -Dhttps.proxyHost=172.17.0.1 -Dhttps.proxyPort=17890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|*.nyukit.com"
   DEPLOY_REMOTE_DIR: "pakomo-signing"
   CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 
@@ -40,6 +42,8 @@ release:apk:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
   cache:
     key: pakomo-android
+    # 失败也保存：SDK/NDK 约 5 分钟，不该每次重试都重下
+    when: always
     paths:
       - .gradle/
       - .android-sdk/
@@ -61,6 +65,16 @@ release:apk:
     - export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
     - yes | sdkmanager --licenses >/dev/null 2>&1 || true
     - sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" >/dev/null
+    # 构建 JVM 不继承 GRADLE_OPTS，依赖下载的代理要写进 gradle.properties
+    - mkdir -p "$GRADLE_USER_HOME"
+    - |
+      printf '%s\n' \
+        "systemProp.http.proxyHost=172.17.0.1" \
+        "systemProp.http.proxyPort=17890" \
+        "systemProp.https.proxyHost=172.17.0.1" \
+        "systemProp.https.proxyPort=17890" \
+        "systemProp.http.nonProxyHosts=localhost|127.0.0.1|*.nyukit.com" \
+        > "$GRADLE_USER_HOME/gradle.properties"
     # vendored 转发核心：Linux 无需还原符号链接，仅打 HEV 归属前导补丁
     - |
       if git apply --directory=third_party/hev-socks5-tunnel --check patches/hev-attribution-preamble.patch 2>/dev/null; then
