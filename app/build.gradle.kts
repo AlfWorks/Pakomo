@@ -9,6 +9,12 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
 
+// The `hev` flavor bundles the hev-socks5-tunnel native library; the `kernel` flavor uses the pure
+// Kotlin tun2socks engine instead. Compiling the third_party C sources is slow, so we only wire the
+// ndkBuild sources when a hev-flavor variant is actually being built — `kernel` builds skip the NDK
+// toolchain entirely (no native compile, no timeout).
+val buildingHevVariant = gradle.startParameter.taskNames.any { it.contains("hev", ignoreCase = true) }
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -34,13 +40,27 @@ android {
         ndk {
             abiFilters += setOf("arm64-v8a", "armeabi-v7a")
         }
+    }
 
-        externalNativeBuild {
-            ndkBuild {
-                arguments += listOf(
-                    "APP_PLATFORM=android-29",
-                    "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true",
-                )
+    flavorDimensions += "engine"
+    productFlavors {
+        // Declared first, so the pure-Kotlin engine is the default selected variant (no NDK build).
+        create("kernel") {
+            dimension = "engine"
+            buildConfigField("boolean", "USE_NATIVE_KERNEL", "true")
+        }
+        create("hev") {
+            dimension = "engine"
+            buildConfigField("boolean", "USE_NATIVE_KERNEL", "false")
+            if (buildingHevVariant) {
+                externalNativeBuild {
+                    ndkBuild {
+                        arguments += listOf(
+                            "APP_PLATFORM=android-29",
+                            "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true",
+                        )
+                    }
+                }
             }
         }
     }
@@ -87,9 +107,13 @@ android {
         )
     }
 
-    externalNativeBuild {
-        ndkBuild {
-            path = file("../third_party/hev-socks5-tunnel/Android.mk")
+    // Only the hev flavor compiles the third_party native tunnel. The path is global (AGP requires
+    // it at the android level), but it is wired solely for hev-flavor invocations — see above.
+    if (buildingHevVariant) {
+        externalNativeBuild {
+            ndkBuild {
+                path = file("../third_party/hev-socks5-tunnel/Android.mk")
+            }
         }
     }
 }
