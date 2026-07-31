@@ -47,11 +47,11 @@ android {
         // Declared first, so the pure-Kotlin engine is the default selected variant (no NDK build).
         create("kernel") {
             dimension = "engine"
-            buildConfigField("boolean", "USE_NATIVE_KERNEL", "true")
+            buildConfigField("boolean", "USE_KOTLIN_KERNEL", "true")
         }
         create("hev") {
             dimension = "engine"
-            buildConfigField("boolean", "USE_NATIVE_KERNEL", "false")
+            buildConfigField("boolean", "USE_KOTLIN_KERNEL", "false")
             if (buildingHevVariant) {
                 externalNativeBuild {
                     ndkBuild {

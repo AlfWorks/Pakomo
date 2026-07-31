@@ -1,6 +1,7 @@
 package com.pakomo.forwarding
 
 import android.util.Log
+import com.pakomo.BuildConfig
 import com.pakomo.core.model.BlackoutMode
 import com.pakomo.core.model.DnsFailureResult
 import com.pakomo.security.SecurityPolicy

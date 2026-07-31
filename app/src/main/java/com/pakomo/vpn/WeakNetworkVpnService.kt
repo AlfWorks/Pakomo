@@ -138,7 +138,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                             config.targetDomains,
                             config.domainsByPackage,
                         config.rule,
-                        config.useNativeKernel,
+                        config.useKotlinKernel,
                         )
                     }
                 }
@@ -208,7 +208,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
-        useNativeKernel: Boolean,
+        useKotlinKernel: Boolean,
     ) {
         stopPipeline()
         try {
@@ -270,7 +270,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 ?: error("Android rejected the VPN interface")
             Log.i(TAG, "VPN interface established")
 
-            if (useNativeKernel) {
+            if (useKotlinKernel) {
                 val engineConfig = Tun2SocksConfig(
                     socksPort = socksPort,
                     socksUsername = credentials.username,

@@ -99,10 +99,7 @@ class UdpSession(
 
     private suspend fun sendToRelay(assoc: Socks5Client.UdpAssociation, payload: ByteArray) {
         try {
-            withContext(Dispatchers.IO) {
-                assoc.controlOutput.write(0)
-                assoc.controlOutput.flush()
-            }
+            
             val udpBuf = ByteBuffer.allocate(4 + 4 + 2 + payload.size)
             udpBuf.putShort(0)
             udpBuf.put(0)

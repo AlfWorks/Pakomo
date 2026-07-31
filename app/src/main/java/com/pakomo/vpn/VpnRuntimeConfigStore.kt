@@ -19,7 +19,7 @@ internal data class VpnRuntimeConfig(
     val targetDomains: List<String>,
     val domainsByPackage: Map<String, List<String>>,
     val rule: NetworkRule,
-    val useNativeKernel: Boolean = false,
+    val useKotlinKernel: Boolean = false,
 )
 
 internal object VpnRuntimeConfigStore {
@@ -33,7 +33,7 @@ internal object VpnRuntimeConfigStore {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
-        useNativeKernel: Boolean = false,
+        useKotlinKernel: Boolean = false,
     ): Long {
         val id = nextId.incrementAndGet()
         pending[id] = VpnRuntimeConfig(
@@ -42,7 +42,7 @@ internal object VpnRuntimeConfigStore {
             targetDomains = targetDomains,
             domainsByPackage = domainsByPackage,
             rule = rule,
-            useNativeKernel = useNativeKernel,
+            useKotlinKernel = useKotlinKernel,
         )
         while (pending.size > MAX_PENDING_CONFIGS) {
             pending.remove(pending.keys.first())

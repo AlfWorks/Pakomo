@@ -85,7 +85,7 @@ object VpnServiceController {
     ): Pair<Intent, Long> {
         val configId = VpnRuntimeConfigStore.publish(
             scope, selectedPackages, targetDomains, domainsByPackage, rule,
-            useNativeKernel = com.pakomo.BuildConfig.USE_NATIVE_KERNEL,
+            useKotlinKernel = com.pakomo.BuildConfig.USE_KOTLIN_KERNEL,
         )
         val intent = Intent(context, WeakNetworkVpnService::class.java)
             .setAction(action)
