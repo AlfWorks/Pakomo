@@ -47,9 +47,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     // Theme lives in its own flow so switching it never recomposes the tree keyed on `state`
     // (stats update once per second, so folding theme into PakomoUiState would be wasteful).
+    // Default to the Pako (Companion) theme when the user has never chosen one.
     private val _themeMode = MutableStateFlow(
-        runCatching { ThemeMode.valueOf(preferences.readThemeMode() ?: ThemeMode.Standard.name) }
-            .getOrDefault(ThemeMode.Standard),
+        runCatching { ThemeMode.valueOf(preferences.readThemeMode() ?: ThemeMode.Companion.name) }
+            .getOrDefault(ThemeMode.Companion),
     )
     val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
@@ -326,7 +327,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         Log.w(TAG, "Clearing all local configuration")
         preferences.clear()
         _state.value = PakomoUiState()
-        _themeMode.value = ThemeMode.Standard
+        _themeMode.value = ThemeMode.Companion
         _language.value = AppLanguage.DEFAULT
         refreshApps()
     }

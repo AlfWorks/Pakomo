@@ -1,6 +1,7 @@
 package com.pakomo.ui.components
 
 import android.provider.Settings
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -11,11 +12,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -34,9 +32,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pakomo.R
 import com.pakomo.core.model.EngineStage
 import com.pakomo.ui.theme.LocalPakomoColors
@@ -256,8 +252,13 @@ fun StatusDecor(state: MascotState, modifier: Modifier = Modifier) {
 /** 空状态/装饰角色的分类。占位阶段决定编号标签,真图到位后按 kind 取不同图。 */
 enum class EmptyArtKind { Search, Targets, Address, Logs, Generic }
 
-/** C1 首页主卡可用的角色图集合;差分随机从中取一张(现仅一张,后续加图只需往这里追加)。 */
-private val mascotHomeArt = intArrayOf(R.drawable.mascot_home_1)
+/** C1 首页主卡可用的角色图集合;差分随机从中取一张(后续加图只需往这里追加)。 */
+private val mascotHomeArt = intArrayOf(
+    R.drawable.mascot_home_1,
+    R.drawable.mascot_home_2,
+    R.drawable.mascot_home_3,
+    R.drawable.mascot_home_4,
+)
 
 /**
  * 空状态/装饰角色的**唯一接缝**。真图到位的 kind 走 `painterResource`,其余仍用编号占位(执行文档 §8.1)。
@@ -265,72 +266,64 @@ private val mascotHomeArt = intArrayOf(R.drawable.mascot_home_1)
  * 真图接入方式按 kind 区分:
  * - [EmptyArtKind.Generic](C1 首页主卡):**统一最小档尺寸 + 差分随机**——满宽、贴底、保持比例、不拉伸,
  *   从 `mascot_home_1..n` 随机取一张;区域更高时上方自然留空。详见执行文档 §8.1 C1 方案。**已接入。**
- * - 其余(B 空状态):暂无真图,保持编号占位;到位后按同样方式换成 `painterResource`。
+ *   传入 [refreshKey](随其变化重掷):进入/返回首页靠重组自然重取,启停切换靠 key 变化重取,
+ *   并用 Crossfade 平滑过渡。
+ * - 其余(B 空状态 apps/address/targets/logs):**共用一张** `mascot_empty`(底部渐隐的半身立绘),
+ *   `ContentScale.Fit` 满色居中显示。**已接入。**
  */
 @Composable
-fun EmptyStateArt(kind: EmptyArtKind, modifier: Modifier = Modifier) {
+fun EmptyStateArt(kind: EmptyArtKind, modifier: Modifier = Modifier, refreshKey: Any? = Unit) {
     if (kind == EmptyArtKind.Generic) {
-        // 差分随机:每次进入组合取一张并记住,避免每帧重掷。
-        val art = remember { mascotHomeArt.random() }
-        val painter = painterResource(art)
+        // 差分随机:key 变化(启停切换)或重组(进入/返回首页)时重掷一张,否则保持不变、不每帧重掷。
+        val art = remember(refreshKey) { mascotHomeArt.random() }
         val pageBg = LocalPakomoColors.current.background
         // 略去饱和度,让蓝发/彩色往灰靠一档,更像统一的灰度水印(1=原色,0=纯灰)。
         val desaturate = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.65f) }) }
-        // 两层合成:底层用页面底色按角色轮廓填成**不透明**遮罩,挡住背后 backdrop,
-        // 使碎片/六边形不会透过角色;上层再压低不透明度画真图 → 角色只淡淡浮现,却不漏底。
-        Box(modifier.clearAndSetSemantics {}) {
-            Image(
-                painter = painter,
-                contentDescription = null,
-                contentScale = ContentScale.FillWidth,   // 满宽、保持比例、不拉伸
-                alignment = Alignment.BottomCenter,       // 贴底;区域更高时上方留空
-                colorFilter = ColorFilter.tint(pageBg),   // 轮廓填成页面底色 → 遮住背后装饰
-                modifier = Modifier.matchParentSize(),
-            )
-            Image(
-                painter = painter,
-                contentDescription = null,
-                contentScale = ContentScale.FillWidth,
-                alignment = Alignment.BottomCenter,
-                colorFilter = desaturate,                 // 拉一点灰度
-                alpha = 0.18f,                            // 薄薄的水印,略回正一点
-                modifier = Modifier.matchParentSize(),
-            )
+        // 切换时在两张之间做淡入淡出,避免硬切。
+        Crossfade(
+            targetState = art,
+            modifier = modifier.clearAndSetSemantics {},
+            animationSpec = tween(360),
+            label = "mascotHome",
+        ) { res ->
+            val painter = painterResource(res)
+            // 两层合成:底层用页面底色按角色轮廓填成**不透明**遮罩,挡住背后 backdrop,
+            // 使碎片/六边形不会透过角色;上层再压低不透明度画真图 → 角色只淡淡浮现,却不漏底。
+            Box(Modifier.fillMaxSize()) {
+                Image(
+                    painter = painter,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillWidth,   // 满宽、保持比例、不拉伸
+                    alignment = Alignment.BottomCenter,       // 贴底;区域更高时上方留空
+                    colorFilter = ColorFilter.tint(pageBg),   // 轮廓填成页面底色 → 遮住背后装饰
+                    modifier = Modifier.matchParentSize(),
+                )
+                Image(
+                    painter = painter,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillWidth,
+                    alignment = Alignment.BottomCenter,
+                    colorFilter = desaturate,                 // 拉一点灰度
+                    alpha = 0.18f,                            // 薄薄的水印,略回正一点
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
         }
         return
     }
-    val label = when (kind) {
-        EmptyArtKind.Search -> "B1\nempty_apps"
-        EmptyArtKind.Address -> "B2\nempty_address"
-        EmptyArtKind.Targets -> "B3\nempty_targets"
-        EmptyArtKind.Logs -> "B4\nempty_logs"
-        EmptyArtKind.Generic -> "C1\nmascot_home"
-    }
-    ArtPlaceholder(label = label, modifier = modifier)
-}
-
-/**
- * 占位图基元:白底 + 黑框 + 黑字编号,只为看清角色资源**落在哪个位置**,不做任何美术效果。
- * 编号对应执行文档 §8.1。装饰层:从语义树移除、不可点击。
- */
-@Composable
-private fun ArtPlaceholder(label: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clearAndSetSemantics {}
-            .background(Color.White, RoundedCornerShape(6.dp))
-            .border(1.dp, Color.Black, RoundedCornerShape(6.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = Color.Black,
-            fontSize = 9.sp,
-            lineHeight = 11.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(4.dp),
-        )
-    }
+    // B-series empty states (apps / address / targets / logs) all share one mascot illustration:
+    // a bottom-faded bust so the half-body cut dissolves softly instead of looking chopped in a
+    // small centered box. Softened (slight desaturation + alpha) so it reads as a gentle decoration
+    // rather than a sharp attention-grabbing focal point.
+    val softenB = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.8f) }) }
+    Image(
+        painter = painterResource(R.drawable.mascot_empty),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        alpha = 0.85f,
+        colorFilter = softenB,
+        modifier = modifier.clearAndSetSemantics {},
+    )
 }
 
 /** 系统"减少动画"是否开启(ANIMATOR_DURATION_SCALE == 0)。故障效果据此降级为静态。 */

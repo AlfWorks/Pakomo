@@ -199,7 +199,13 @@ private fun FlowsContent() {
                 value = query,
                 onValueChange = { query = it },
                 singleLine = true,
-                label = { Text(t("按主机 / 端口 / 协议筛选", "Filter by host / port / protocol")) },
+                label = {
+                    Text(
+                        text = t("按主机 / 端口 / 协议筛选", "Filter host / port / proto"),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(10.dp),
             )

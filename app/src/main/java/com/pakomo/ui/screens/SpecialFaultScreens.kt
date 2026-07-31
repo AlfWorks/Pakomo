@@ -504,7 +504,12 @@ fun FaultTargetScreen(
                     }
                 }
 
-                TargetScope.GLOBAL -> EmptyHint(t("全局模式下开启即对整个接管范围生效，无需选择目标。", "In global mode, enabling applies to the entire capture scope; no target selection needed."))
+                // Global mode reaches this page only for Slow Response (to set its params above), so
+                // the target area is a plain note — not an "empty target" illustration.
+                TargetScope.GLOBAL -> EmptyHint(
+                    t("全局模式下开启即对整个接管范围生效，无需选择目标。", "In global mode, enabling applies to the entire capture scope; no target selection needed."),
+                    showArt = false,
+                )
             }
         }
     }
@@ -679,7 +684,7 @@ private fun CheckRow(
 }
 
 @Composable
-private fun EmptyHint(text: String) {
+private fun EmptyHint(text: String, showArt: Boolean = true) {
     val companion = LocalThemeMode.current == ThemeMode.Companion
     Box(
         modifier = Modifier
@@ -688,8 +693,8 @@ private fun EmptyHint(text: String) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            if (companion) {
-                EmptyStateArt(EmptyArtKind.Targets, Modifier.size(112.dp))
+            if (companion && showArt) {
+                EmptyStateArt(EmptyArtKind.Targets, Modifier.size(140.dp))
                 Spacer(Modifier.height(10.dp))
             }
             Text(

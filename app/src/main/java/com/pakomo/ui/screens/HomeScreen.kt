@@ -267,6 +267,9 @@ internal fun HomeScreen(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .aspectRatio(0.95f),
+                    // Re-pick a mascot on start/stop (this flips once each way); entering / returning
+                    // to Home re-picks on its own because the screen recomposes fresh.
+                    refreshKey = state.engineStage == EngineStage.FORWARDING,
                 )
             }
             Column(modifier = Modifier.fillMaxWidth()) {

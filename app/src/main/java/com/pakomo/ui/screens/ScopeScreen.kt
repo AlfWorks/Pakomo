@@ -434,7 +434,7 @@ private fun EmptyMessage(text: String) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (companion) {
-                EmptyStateArt(EmptyArtKind.Search, Modifier.size(96.dp))
+                EmptyStateArt(EmptyArtKind.Search, Modifier.size(120.dp))
                 Spacer(Modifier.height(8.dp))
             }
             Text(text, color = LocalPakomoColors.current.muted, style = MaterialTheme.typography.bodyMedium)
