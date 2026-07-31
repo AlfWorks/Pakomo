@@ -1,7 +1,7 @@
 # Pakomo · Release 构建流水线
 #
 # 触发：受保护 tag `vX.Y.Z`（如 v0.3.0）。
-# 产物：签名 release APK + sha256，作为 job artifact（可从 GitLab 手动下载）。
+# 产物：签名 release APK + sha256 上传到通用包仓库，并自动创建 Release 挂载下载链接。
 #
 # 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
 #   DEPLOY_HOST      —— 172.30.109.1（automation-net 网关；容器源 IP 落在 172.30.109.0/24 才匹配 sshd 密码登录规则）
@@ -93,12 +93,28 @@ release:apk:
     - APK=$(ls app/build/outputs/apk/release/app-release*.apk | head -1)
     - sha256sum "$APK" | tee "$APK.sha256"
     - echo "Built $APK"
+    # 发布：APK 先进通用包仓库（不随 artifact 过期），Release 再挂它的链接
+    - ASSET="pakomo-$PAKOMO_VERSION_NAME.apk"
+    - PKG_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/pakomo/$PAKOMO_VERSION_NAME"
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$APK" "$PKG_URL/$ASSET"'
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$APK.sha256" "$PKG_URL/$ASSET.sha256"'
+    - |
+      cat > release-body.json <<JSON
+      {
+        "name": "Pakomo $PAKOMO_VERSION_NAME",
+        "tag_name": "$CI_COMMIT_TAG",
+        "description": "由流水线 #$CI_PIPELINE_IID 自动构建的签名 release APK。\n\nSHA256: \`$(cut -d' ' -f1 "$APK.sha256")\`",
+        "assets": {
+          "links": [
+            { "name": "$ASSET", "url": "$PKG_URL/$ASSET", "link_type": "package" },
+            { "name": "$ASSET.sha256", "url": "$PKG_URL/$ASSET.sha256", "link_type": "other" }
+          ]
+        }
+      }
+      JSON
+    - 'curl --fail -sS --request POST --header "JOB-TOKEN: $CI_JOB_TOKEN" --header "Content-Type: application/json" --data @release-body.json "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"'
+    - rm -f release-body.json
   after_script:
     # 无论成败都清掉签名材料，绝不进产物/缓存
     - rm -f "$CI_PROJECT_DIR/pakomo-release.jks" "$CI_PROJECT_DIR/keystore.properties"
-  artifacts:
-    name: "pakomo-$CI_COMMIT_TAG"
-    paths:
-      - app/build/outputs/apk/release/app-release*.apk
-      - app/build/outputs/apk/release/*.sha256
-    expire_in: 30 days
+  # 不留 job artifact：APK 唯一的长期副本在通用包仓库，由 Release 挂链接分发。
