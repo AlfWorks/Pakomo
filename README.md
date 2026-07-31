@@ -1,59 +1,156 @@
-# Pakomo
+<div align="center">
+  <img src="docs/pakomo-icon.png" width="120" height="120" alt="Pakomo icon">
 
-Android 10+ 非 Root 弱网模拟工具。
+  <h1>Pakomo</h1>
 
-项目后续方向与特殊故障设计见 [Pakomo 项目方向](docs/PROJECT-DIRECTION.md)。
+  <p>
+    面向选定应用与域名的本地弱网与故障模拟工具，基于 Android <code>VpnService</code>。
+  </p>
 
-## 当前程序状态
+  <p>
+    <img alt="Platform" src="https://img.shields.io/badge/Platform-Android%2010%2B-3ddc84?logo=android&logoColor=white">
+    <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.3-7f52ff?logo=kotlin&logoColor=white">
+    <img alt="Jetpack Compose" src="https://img.shields.io/badge/Jetpack%20Compose-UI-4285f4?logo=jetpackcompose&logoColor=white">
+    <img alt="minSdk" src="https://img.shields.io/badge/minSdk-29-555">
+    <img alt="targetSdk" src="https://img.shields.io/badge/targetSdk-36-555">
+  </p>
 
-首批可运行程序已经包含：
+  <p>
+    <a href="#简介">简介</a>
+    ·
+    <a href="#功能特性">功能特性</a>
+    ·
+    <a href="#快速开始">快速开始</a>
+    ·
+    <a href="#项目结构">项目结构</a>
+    ·
+    <a href="#技术原理">技术原理</a>
+    ·
+    <a href="#文档">文档</a>
+    ·
+    <a href="#声明">声明</a>
+  </p>
+</div>
 
-- Home、接管范围、弱网规则、规则编辑、诊断、设置、安全与隐私页面。
-- `全局 / 指定应用 / 指定地址` 三种互斥接管范围。
-- 从设备读取应用名称、包名和图标，支持搜索与系统应用过滤。
-- 一个应用一张卡片；点击卡片头展开，不设置额外折叠按钮。
-- 每个应用支持多个域名；指定地址模式支持独立的多域名列表。
-- 弱网规则单选互斥，卡片直接展示延迟、抖动、丢包和上下行限速。
-- 内置规则只读，复制后可编辑；自定义规则可编辑、复制和删除。
-- 选择状态、域名和规则保存在应用私有目录，Android 云备份已禁用。
-- 全局/指定应用模式通过本地 TUN → HEV → 认证 SOCKS → `protect()` Socket 转发。
-- 延迟、抖动、上下行限速、UDP 丢包和完全断网规则。
+## 简介
 
-## 重要安全边界
+<img src="docs/pako.png" align="right" width="190" alt="Pako">
 
-- 转发核心固定为 MIT 许可的 `hev-socks5-tunnel` 2.14.4，并从源码构建。
-- SOCKS 服务只监听随机本机端口，使用每次启动生成的随机凭据。
-- 所有连接目标服务器的 TCP/UDP Socket 必须先通过 `VpnService.protect()`。
-- 指定地址模式会观察普通 DNS 的 IPv4 解析结果，只对命中域名及其子域名的连接整形；未命中流量正常旁路。
-- DNS-over-HTTPS/TLS 当前无法识别；应用卡片内的按应用域名限制仍在接入连接归属识别。
-- TCP 流不能直接丢弃字节；非 100% TCP 丢包当前以重传等待模拟，UDP 使用真实概率丢包。
+Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。它以本地 `VpnService` 接管选定应用或域名的流量，在设备本机注入可控的网络劣化与特殊故障，用于验证客户端在弱网、故障与迟到响应场景下的行为。
 
-## 构建
+流量处理全部在本机完成，不经过外部代理。设备 TUN 流量经内置的 `hev-socks5-tunnel` 转发至仅监听本机的认证 SOCKS5 中继；中继按连接对命中规则的流量整形或注入故障，其余流量原样旁路。
 
-项目使用 JDK 17、Gradle Wrapper、Android SDK 36、NDK 28.2：
+适用场景：
+
+- 验证请求超时后旧请求是否真正取消，以及重试期间是否会收到旧请求的响应；
+- 观察客户端在高延迟、抖动、丢包与限速下的表现；
+- 复现连接重置、DNS 失败、网络中断与迟到响应（Late Response）等特殊故障；
+- 逐连接查看经过设备的实际流量，辅助定位问题。
+
+## 功能特性
+
+- **接管范围**：全局 / 指定应用 / 指定地址（域名）三种互斥模式，域名支持子域匹配。
+- **弱网参数**：固定延迟、抖动、丢包率、上下行限速；提供「简单」与「高级（分方向独立设置）」两种模式。
+- **特殊故障**（随规则保存，可同时启用多种）：
+  - 连接重置（TCP RST）；
+  - DNS 失败（NXDOMAIN / SERVFAIL / 超时，含抗缓存）；
+  - 网络中断（静默超时 / 立即失败）；
+  - 慢响应（Slow Response）：将命中连接的下行响应暂扣指定时长后一次性放行，模拟客户端观察到的迟到响应；可设「放行小响应」阈值以放过心跳与探测。
+- **流量记录**：逐连接列出经过 Pakomo 的流量（协议、主机、端口、上下行字节、是否被暂扣、是否整形、状态），支持按主机 / 端口 / 协议过滤。
+- **多语言**：简体中文与 English，可在设置内即时切换。
+- **主题**：内置可切换的 Pako 装饰主题。
+- **快捷悬浮控制**：以悬浮球即时开关接管。
+- **诊断**：实时运行状态、归属命中统计与原始 Logcat 输出。
+
+## 快速开始
+
+### 环境要求
+
+- JDK 17
+- Android SDK 36、NDK 28.2
+- Gradle Wrapper（随仓库提供）
+
+### 准备转发核心
+
+首次构建前，初始化子模块并准备 vendored 转发核心：
 
 ```powershell
 git submodule update --init --recursive
 powershell -ExecutionPolicy Bypass -File .\scripts\prepare-third-party.ps1
-.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-第二条命令准备 vendored 转发核心:还原 Windows 上的 Git 符号链接占位符，并打上 HEV 归属前导补丁 `patches/hev-attribution-preamble.patch`（该原生改动存放在补丁里，不在子模块提交中）。脚本幂等，`git submodule update` 之后重跑即可。Linux/macOS（符号链接可用）无需还原链接，但仍需应用补丁：
+`prepare-third-party.ps1` 在 Windows 上还原 Git 符号链接占位符，并应用 HEV 归属前导补丁 `patches/hev-attribution-preamble.patch`（原生改动以补丁形式维护，不进入子模块提交）。该脚本幂等，可在 `git submodule update` 之后重复运行。
+
+Linux / macOS 环境支持符号链接，无需还原链接，但仍需应用补丁：
 
 ```bash
 git apply --directory=third_party/hev-socks5-tunnel patches/hev-attribution-preamble.patch
 ```
 
-调试 APK 输出：
+### 调试构建
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
+用于本地开发与验证：
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-## 下一阶段
+输出 `app/build/outputs/apk/debug/app-debug.apk`。调试包未经代码混淆与资源压缩，体积明显大于发布包。
 
-1. 真机验证全局/指定应用/指定地址的 TCP、UDP、DNS、网络切换和紧急停止。
-2. 接入连接归属识别，使应用卡片内域名只影响对应应用。
-3. 接入实时统计、前台通知错误状态和转发核心健康检查。
-4. 在 TUN 与 HEV 之间增加 IP 数据包级塑形，实现真实 TCP 丢包/重传。
-5. 完成解析器 Fuzz、队列上限、长连接和多应用并发测试。
+### 发布构建
+
+用于分发，需自行配置签名。发布构建启用 R8 代码混淆与资源压缩，会剔除未使用的代码与资源（例如图标库中未引用的部分），体积显著小于调试包：
+
+```powershell
+.\gradlew.bat :app:assembleRelease
+```
+
+输出 `app/build/outputs/apk/release/app-release.apk`。
+
+## 项目结构
+
+```text
+.
+|-- app/src/main/java/com/pakomo/
+|   |-- core/            # 数据模型、输入校验、界面语言枚举
+|   |-- data/            # 偏好持久化、故障配置编解码、应用清单
+|   |-- forwarding/      # SOCKS5 中继、整形与故障策略、NIO 反应堆、流量记录
+|   |-- shaping/         # 弱网整形器（延迟 / 抖动 / 丢包 / 限速）
+|   |-- vpn/             # VpnService、隧道配置、连接归属、运行时统计
+|   |-- overlay/         # 悬浮球快捷控制
+|   `-- ui/              # Jetpack Compose 界面（screens / components / theme）
+|-- app/src/main/res/                # 资源（图标、drawable、主题）
+|-- third_party/hev-socks5-tunnel/   # vendored 转发核心（git submodule）
+|-- patches/                         # HEV 归属前导补丁
+|-- scripts/                         # 第三方准备脚本
+`-- docs/                            # 项目方向与设计文档
+```
+
+## 技术原理
+
+```text
+App → TUN → HEV (tun2socks) → 本地认证 SOCKS5 (Socks5Server) → protect() Socket → 目标服务器
+```
+
+- **转发链路**：设备 TUN 流量由 `hev-socks5-tunnel` 转发至仅监听本机随机端口的 SOCKS5 中继；所有连出目标服务器的 Socket 先经 `VpnService.protect()`，不再回环进 TUN。
+- **按应用与域名归属**：HEV 透传原始连接五元组，归属由 `ConnectivityManager.getConnectionOwnerUid()` 在 Kotlin 侧解析；域名匹配依据 TLS SNI 与从明文 DNS 学到的目标 IP，以覆盖 QUIC 与无 SNI 的连接。
+- **整形与故障**：中继按连接判定是否整形或注入故障；弱网参数与特殊故障叠加于同一数据面，且互不重复施加。
+- **慢响应**：下行方向以「闸门」缓存命中连接的响应，到期一次性放行，得到恒定的迟到时长，而非将服务器的流式过程整体平移。
+
+> 注：Pakomo 不解密 TLS，故整形与故障的最小粒度为连接，无法只延迟同一条 HTTP/2 连接内的单个请求。HTTPS 与 QUIC 的粒度限制详见文档。
+
+## 文档
+
+- [项目方向](docs/PROJECT-DIRECTION.md)
+- [故障错误码方案](docs/fault-error-codes.md)
+- [实现计划](IMPLEMENTATION_PLAN.md)
+- [UI 设计](UI_DESIGN.md)
+
+## 声明
+
+Pakomo 为网络测试工具，仅限在具备测试授权的网络与应用上用于测试、研究与学习，不得用于未经授权的流量拦截或干扰。
+
+- 转发核心 `hev-socks5-tunnel` 采用 MIT 许可，并从源码构建。
+- SOCKS 服务仅监听本机随机端口，使用每次启动生成的随机凭据。
+- `QUERY_ALL_PACKAGES` 权限仅用于在接管范围内选择已安装应用。
+- 角色「Pako」及相关美术资源为界面装饰，版权归其原作者所有。
