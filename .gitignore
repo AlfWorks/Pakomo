@@ -3,6 +3,10 @@
 .kotlin/
 .idea/
 local.properties
+# Release signing — never commit the keystore or its passwords.
+keystore.properties
+*.jks
+*.keystore
 build/
 captures/
 .externalNativeBuild/

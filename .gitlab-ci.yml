@@ -1,0 +1,90 @@
+# Pakomo · Release 构建流水线
+#
+# 触发：受保护 tag `vX.Y.Z`（如 v0.3.0）。
+# 产物：签名 release APK + sha256，作为 job artifact（可从 GitLab 手动下载）。
+#
+# 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
+#   DEPLOY_HOST      —— 172.30.109.1（automation-net 网关；容器源 IP 落在 172.30.109.0/24 才匹配 sshd 密码登录规则）
+#   DEPLOY_USER      —— ssh 用户名（其家目录/指定目录下存放签名材料）
+#   DEPLOY_PASSWORD  —— 该 ssh 用户密码
+#   DEPLOY_REMOTE_DIR    —— （可选）服务器上签名材料目录，默认 pakomo-signing
+# 服务器该目录下需放：
+#   pakomo-release.jks      —— release keystore
+#   keystore.properties     —— 内含 storeFile=pakomo-release.jks / storePassword / keyAlias / keyPassword
+#
+# 说明：内网出网需走代理 17890；内网地址（gitlab / 服务器）走 NO_PROXY 直连。
+
+stages:
+  - build
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_FORCE_HTTPS: "true"
+  # 容器内出网代理（拉 GitHub submodule、Gradle 依赖、SDK/NDK）
+  http_proxy: "http://172.17.0.1:17890"
+  https_proxy: "http://172.17.0.1:17890"
+  HTTP_PROXY: "http://172.17.0.1:17890"
+  HTTPS_PROXY: "http://172.17.0.1:17890"
+  NO_PROXY: "172.17.0.1,172.30.0.0/16,127.0.0.1,localhost,.nyukit.com"
+  no_proxy: "172.17.0.1,172.30.0.0/16,127.0.0.1,localhost,.nyukit.com"
+  ANDROID_SDK_ROOT: "$CI_PROJECT_DIR/.android-sdk"
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  DEPLOY_REMOTE_DIR: "pakomo-signing"
+  CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+
+release:apk:
+  stage: build
+  image: eclipse-temurin:17-jdk-jammy
+  # 若该 runner 只跑带 tag 的 job，请在此加 tags 或在 GitLab 里给它开「运行未打标签的作业」。
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+  cache:
+    key: pakomo-android
+    paths:
+      - .gradle/
+      - .android-sdk/
+  before_script:
+    # 工具：ssh 取签名材料 + 原生构建需要的 git/unzip
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends sshpass openssh-client git unzip curl ca-certificates >/dev/null
+    # 版本：从 tag 注入（build.gradle.kts 读 PAKOMO_VERSION_*）
+    - export PAKOMO_VERSION_NAME="${CI_COMMIT_TAG#v}"
+    - export PAKOMO_VERSION_CODE="$CI_PIPELINE_IID"
+    - echo "Building Pakomo $PAKOMO_VERSION_NAME (code $PAKOMO_VERSION_CODE)"
+    # Android 命令行工具（缓存后跳过）
+    - |
+      if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        curl -fsSL -o /tmp/cmdline-tools.zip "$CMDLINE_TOOLS_URL"
+        unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+        mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+      fi
+    - export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+    - yes | sdkmanager --licenses >/dev/null 2>&1 || true
+    - sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" >/dev/null
+    # vendored 转发核心：Linux 无需还原符号链接，仅打 HEV 归属前导补丁
+    - |
+      if git apply --directory=third_party/hev-socks5-tunnel --check patches/hev-attribution-preamble.patch 2>/dev/null; then
+        git apply --directory=third_party/hev-socks5-tunnel patches/hev-attribution-preamble.patch
+        echo "HEV patch applied"
+      else
+        echo "HEV patch already applied or not applicable — 跳过"
+      fi
+    # 从服务器取签名材料（ssh 密码认证）
+    - export SSHPASS="$DEPLOY_PASSWORD"
+    - sshpass -e scp -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_REMOTE_DIR/pakomo-release.jks" "$CI_PROJECT_DIR/pakomo-release.jks"
+    - sshpass -e scp -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_REMOTE_DIR/keystore.properties" "$CI_PROJECT_DIR/keystore.properties"
+  script:
+    - chmod +x gradlew
+    - ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+    - APK=$(ls app/build/outputs/apk/release/app-release*.apk | head -1)
+    - sha256sum "$APK" | tee "$APK.sha256"
+    - echo "Built $APK"
+  after_script:
+    # 无论成败都清掉签名材料，绝不进产物/缓存
+    - rm -f "$CI_PROJECT_DIR/pakomo-release.jks" "$CI_PROJECT_DIR/keystore.properties"
+  artifacts:
+    name: "pakomo-$CI_COMMIT_TAG"
+    paths:
+      - app/build/outputs/apk/release/app-release*.apk
+      - app/build/outputs/apk/release/*.sha256
+    expire_in: 30 days
