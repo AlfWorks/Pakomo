@@ -52,6 +52,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.pakomo.kernel.Tun2SocksConfig
+import com.pakomo.kernel.Tun2SocksEngine
+import java.io.FileDescriptor
 
 /**
  * Local on-device forwarding pipeline:
@@ -60,7 +63,7 @@ import kotlinx.coroutines.sync.withLock
 class WeakNetworkVpnService : android.net.VpnService() {
     private var tunnelInterface: ParcelFileDescriptor? = null
     private var socksServer: Socks5Server? = null
-    private var nativeTunnel: TProxyService? = null
+    private var nativeTunnel: Any? = null
     private var tunnelConfig: File? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var statsJob: Job? = null
@@ -134,7 +137,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
                             config.selectedPackages,
                             config.targetDomains,
                             config.domainsByPackage,
-                            config.rule,
+                        config.rule,
+                        config.useNativeKernel,
                         )
                     }
                 }
@@ -204,6 +208,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
+        useNativeKernel: Boolean,
     ) {
         stopPipeline()
         try {
@@ -265,17 +270,30 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 ?: error("Android rejected the VPN interface")
             Log.i(TAG, "VPN interface established")
 
-            val config = HevTunnelConfig.write(cacheDir, socksPort, credentials)
-            tunnelConfig = config
-            val hev = TProxyService()
-            nativeTunnel = hev
-            hev.start(config.absolutePath, tunnelInterface!!.fd)
+            if (useNativeKernel) {
+                val engineConfig = Tun2SocksConfig(
+                    socksPort = socksPort,
+                    socksUsername = credentials.username,
+                    socksPassword = credentials.password,
+                )
+                val engine = Tun2SocksEngine()
+                nativeTunnel = engine
+                engine.start(engineConfig, tunnelInterface!!.fileDescriptor)
+                Log.i(TAG, "Native forwarding engine started")
+            } else {
+                val hevConfig = HevTunnelConfig.write(cacheDir, socksPort, credentials)
+                tunnelConfig = hevConfig
+                val hev = TProxyService()
+                nativeTunnel = hev
+                hev.start(hevConfig.absolutePath, tunnelInterface!!.fd)
+                Log.i(TAG, "HEV forwarding engine started")
+            }
             Log.i(TAG, "HEV forwarding engine started")
 
             // Keep the uptime running across a live reconfigure (which rebuilds the pipeline);
             // only a real stop resets it.
             if (startedAtElapsedMs == 0L) startedAtElapsedMs = SystemClock.elapsedRealtime()
-            startStatsMonitoring(hev, localSocks)
+            startStatsMonitoring(nativeTunnel ?: return, localSocks)
             VpnServiceController.publish(EngineStage.FORWARDING, "本地转发链路已建立")
             Log.i(TAG, "Forwarding pipeline ready")
             updateRuntimeNotification()
@@ -306,7 +324,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
         statsJob = null
         reconfigureJob?.cancel()
         reconfigureJob = null
-        runCatching { nativeTunnel?.stop() }
+        runCatching { (nativeTunnel as? TProxyService)?.stop() }
+        runCatching { (nativeTunnel as? Tun2SocksEngine)?.stop() }
         nativeTunnel = null
         runCatching { tunnelInterface?.close() }
         tunnelInterface = null
@@ -325,7 +344,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun startStatsMonitoring(
-        hev: TProxyService,
+        tunnel: Any,
         localSocks: Socks5Server,
     ) {
         val sampler = TunnelStatsSampler()
@@ -333,17 +352,16 @@ class WeakNetworkVpnService : android.net.VpnService() {
         statsJob = serviceScope.launch {
             while (isActive) {
                 delay(STATS_INTERVAL_MS)
-                val values = runCatching { hev.stats() }
+                val values = runCatching { (tunnel as? TProxyService)?.stats() ?: (tunnel as? Tun2SocksEngine)?.stats() }
                     .onFailure { Log.w(TAG, "Unable to read tunnel stats", it) }
                     .getOrNull()
-                if (values == null || values.size < 4) continue
                 val currentShaper = activeShaper
                 val stats = sampler.sample(
                     counters = TunnelCounters(
-                        uploadPackets = values[0],
-                        uploadBytes = values[1],
-                        downloadPackets = values[2],
-                        downloadBytes = values[3],
+                        uploadPackets = values!![0],
+                        uploadBytes = values!![1],
+                        downloadPackets = values!![2],
+                        downloadBytes = values!![3],
                     ),
                     nowNanos = SystemClock.elapsedRealtimeNanos(),
                     activeConnections = localSocks.activeSessionCount(),

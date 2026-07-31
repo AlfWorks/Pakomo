@@ -244,13 +244,12 @@ class Socks5Server(
                     clientChannel, outbound, shapeTraffic,
                     holdDownstreamNanos, holdBypassBytes, flow, initialUpload,
                 )
-            } catch (error: Exception) {
-                safeLog("SOCKS TCP relay closed", error)
+            } catch (error: Exception) { Log.w("PakomoSocks", "SOCKS TCP relay closed: " + error.message); safeLog("SOCKS TCP relay closed", error)
             } finally {
                 flow.close()
             }
         } catch (error: Exception) {
-            safeLog("SOCKS TCP session failed", error)
+            Log.w("PakomoSocks", "SOCKS TCP session failed: " + error.message); safeLog("SOCKS TCP session failed", error)
         } finally {
             runCatching { outbound.close() }
         }
