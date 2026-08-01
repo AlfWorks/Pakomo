@@ -16,9 +16,11 @@
 3. **DNS 回包端口写反** — 即使校验和正确，DNS 应答也会被送到错误的 UDP 端口。
 4. **隐藏放大器** — 单元测试套件本身编译不过、从没运行过，本该拦住 #2 的校验和测试形同虚设。
 
+> 本文按时间顺序覆盖三轮：**连通性（§1）→ 稳定性与负载崩溃（§2）→ 下载吞吐（§3）**。每一轮都是"上一轮修好后才暴露出来"的更深问题。
+
 ---
 
-## 1 · 缺陷逐个剖析
+## 1 · 第一轮缺陷：连通性
 
 ### 1.1 校验和只累加了第一个字节 `[Critical · 核心根因]`
 
@@ -75,7 +77,86 @@ writeInt16(udpHeader, 2, sourcePort)
 
 ---
 
-## 2 · 版本分化：k 版 / n 版
+## 2 · 第二轮缺陷：稳定性与负载崩溃
+
+连通打通后暴露出四个只在"用一会儿"或"高并发"时才发作的稳定性缺陷——现象是越用越慢最终超时，或一刷 B 站视频列表就"实时流量瞬间归零"。
+
+### 2.1 TCP 连接表泄漏（无空闲回收）`[High]`
+
+**问题**：`Tun2SocksConfig.tcpReadWriteTimeoutMs` 定义了却从未被使用，`TcpConnection` 没有任何空闲超时。空闲的 ESTABLISHED，或卡在 FIN_WAIT/LAST_ACK 的半关闭连接（对端消失、永不 ACK 我们的 FIN），永远留在表里。累积到 `maxSessionCount`(1024) 后 `handleTcp` 静默丢弃所有新 SYN → 新连接全超时。UDP 有空闲回收，TCP 没有。
+
+**处理**：每连接维护 `lastActivityMs`（进出段都刷新）；引擎级 reaper 每 15s 扫描：ESTABLISHED/CLOSE_WAIT 空闲超 `tcpReadWriteTimeoutMs`(300s) 回收，握手中/半关闭状态空闲超 30s 强制关闭（连带 actor 退出、关 SOCKS socket、取消 RTO）。
+
+**验证**：reaper 日志中 tcp 计数在 17–82 间震荡、不再单调爬向 1024。
+
+### 2.2 UDP 下行中继忙等 `[High]`
+
+**问题**：`relayChannel` 是非阻塞的，`relayJob` 在无数据时立即返回 null 并**无任何等待就重来**——每个 UDP 会话满速空转一个协程。DNS/QUIC 短流累积到 ~293 个会话时 CPU 被打满 → 全局变慢。
+
+**处理**：无数据时 `delay(RELAY_POLL_MS)` 让出，消除热自旋；UDP 空闲回收 60s→30s 降低并发驻留数。
+
+**验证**：UDP 会话数稳定在 13–103，CPU 回到空闲。
+
+### 2.3 TunWriter 阻塞队列冻结线程池 `[High]`
+
+**问题**：写队列是 `LinkedBlockingQueue`，满时 `put()` **阻塞调用线程**。下行洪流写不过来 → 队列满 → 所有连接的 `sendSegment → w.send` 阻塞在 `Dispatchers.Default`（线程数≈核数）上 → 整个 Default 线程池被占满 → 协程饿死。
+
+**处理**：改用挂起式 `Channel`，满时发送方**挂起**（让出线程）而非阻塞线程；EAGAIN 重试用 `delay` 取代 `Thread.sleep`。背压沿 TCP 流控自然回传。
+
+### 2.4 IO 线程池耗尽 → 引擎冻结 `[Critical · "刷 B 站→流量归零"]`
+
+**问题**：每个连接的上游中继用**阻塞 `socket.read()` + `Dispatchers.IO`**，读取时占住一个 IO 线程。`Dispatchers.IO` 上限 64。一刷 B 站列表瞬间开上百连接、各自阻塞在 `read()` → 64 个线程被占满 → 连读/写 TUN 的核心循环（也跑在 IO 上）都抢不到线程 → 整个引擎冻结 → **实时流量瞬间归零**。
+
+**日志签名**：reaper（在 Default 上）照常每 15s 打印，但连接表卡死在 `tcp=21 / udp=89` 长达 90s 纹丝不动——Default 还活着，IO 全死。
+
+**处理**：新增 `KernelDispatchers`——`core`(3 线程) 专供 TUN 读/写循环，永不被饿死；`connIo`(256 线程，独立预算) 承载连接阻塞 I/O。`Dispatchers.IO.limitedParallelism` 对 IO 允许突破 64 且各视图互不争抢。
+
+**验证**：反复刷 B 站列表 + 播放，流量图不再归零；连接表数字持续波动、无冻结签名、无写循环报错。
+
+> **局限**：`connIo=256` 仍是"每连接一个阻塞线程"的模型，极端并发下会触顶（但核心已隔离，不再全局冻结）。**正解见 P1-0：上游改非阻塞 NIO。**
+
+---
+
+## 3 · 第三轮缺陷：下载吞吐
+
+标准（无整形）配置下下载被严重压缩——初期"下几 MB 就断"，修复断连后又只有几百 KB/s。诊断走了弯路（慢测试服务器 tele2 给出 0 重传的假象、一度误判为限速），最终用一个能跑满速的国内镜像（清华，原始 56MB/s）复现并逐层定位。
+
+### 3.1 无发送侧流控 → 高速下溢出→重传风暴→RST `[Critical]`
+
+**问题**：`sendDataToApp` 无节制地把上游数据灌给 App，不限制"在途未确认字节 ≤ App 通告窗口"。高速下溢出 App 的 64KB 接收窗口 → App 丢弃并把窗口降到 0 → 同一段重传到 `MAX_RETRANSMIT` → RST 断连（"下几 MB 就断"）。低速（tele2 15KB/s）时不溢出、0 重传——这个假象一度把诊断带偏。
+
+**处理**：仅在 `inFlight < appWindow` 时发送，窗口满则等 ACK（等待放在锁外，让 ACK 能推进窗口），背压沿链路回传。
+
+### 3.2 无窗口缩放 → 吞吐被 64KB/RTT 封顶 `[High]`
+
+**问题**：SYN-ACK 不带 Window Scale 选项，整条连接窗口锁死 ≤64KB。即便流控正确，goodput = 64KB/RTT，手机 RTT 下只有几百 KB/s。
+
+**处理**：SYN-ACK 加 MSS + WScale 选项、解析 App 的 shift、双向缩放窗口字段。实测 App 窗口自动长到 **5–6MB**，吞吐跳升。
+
+### 3.3 并发状态损坏 → 重传风暴（断连真凶）`[Critical]`
+
+**问题**：`sendDataToApp`（socksReadJob 协程）与 ACK 处理（actor 协程）**并发读写同一份发送状态**（`sendQueue`/`sndNxt`/`rtoJob`，非线程安全）。日志实证：同一 seq 被 3 个线程在同一毫秒并发重传——`startRtoTimer` 被并发调用产生多个 RTO 定时器。窗口缩放只是让它跑更快才炸。
+
+**处理**：用 `Mutex` 串行化发送状态修改（`sendSegment`/`processAck`/`retransmit`），reset 路径放锁外避免可重入死锁。断连根治。
+
+### 3.4 单连接吞吐榨取：7MB/s → ~19MB/s
+
+断连修好后单连接稳定但只有 ~7MB/s（窗口 6MB 不受限、发送侧能跑 33MB/s），瓶颈在**每连接的固定串行点**，逐一消除：
+
+- **每段抢锁的乒乓（主因）**：发送与 ACK 每段各抢一次 `Mutex`，互相乒乓 + 上下文切换，恰好卡在 ~7MB/s。→ **一次抢锁批量发多段**（每 16KB 从 ~11 次锁降到 1 次）→ 单连接翻近 3 倍到 ~19MB/s，0 重传。
+- **RTO 定时器每段重建协程**：`sendSegment` 每段 `cancel + launch` 一个协程。→ 只保留一个定时器、仅在 ACK 真正推进时重整。
+- **读/发串行**：socksReadJob "读完再发、发完再读"。→ 拆成生产者/消费者两协程并发流水线。
+- **本地中继串行 + 小缓冲**：本地 `Socks5Server` 的 `copyDirect` 同样读写串行、缓冲 16KB，上游/环回 socket 无大缓冲，正常模式还白走 `delayedPump` 慢路径。→ 中继流水线化、缓冲扩容（上游收 2MB / 发我方 1MB / 拷贝 64KB / 我方环回收 1MB）、空操作 shaper 时旁路 `delayedPump` 走直拷。
+
+**结果**：单连接从"670KB 处断"→ **稳定 16.5–22MB/s、0 重传、完整下完 197MB**；4 连接并发 27MB/s+ 可叠加。
+
+### 3.5 诚实的天花板
+
+原始直连本身在 26–56MB/s 剧烈波动。隧道单连接现约为原速的 **35%–75%**（取决于原始那一刻的波动值）。**单连接 95% 原速在此"存储转发双跳 SOCKS 中继 + 用户态 TCP 栈"架构下不可达**——剩余差距来自每包处理开销、ACK 路径仍逐个抢锁、以及双跳中继的固有成本。若要再逼近，唯一大杠杆是改**单 actor 模型**（发送/ACK/重传全在一个协程、完全去锁），收益递减、风险更高，且仍到不了 95%。
+
+---
+
+## 4 · 版本分化：k 版 / n 版
 
 hev 保留，做成两个独立可选的 Android product flavor（dimension = `engine`）。编译哪一版就只带哪一版的重资源；运行时由 `BuildConfig.USE_NATIVE_KERNEL` 自动选择转发引擎，不再硬编码。
 
@@ -101,7 +182,9 @@ App → TUN → [ Tun2SocksEngine (k) | TProxyService (n) ] → Socks5Client(127
 
 ---
 
-## 3 · 本轮改动清单
+## 5 · 改动清单
+
+**第一轮 · 连通性**
 
 | 文件 | 改动 |
 |---|---|
@@ -110,17 +193,63 @@ App → TUN → [ Tun2SocksEngine (k) | TProxyService (n) ] → Socks5Client(127
 | `build.gradle.kts` | 拆分 kernel / hev 两个 flavor；native 仅 hev 变体编译 |
 | `vpn/VpnServiceController.kt` | 改用 `BuildConfig.USE_NATIVE_KERNEL` 驱动分支 |
 | `test/KernelUnitTest.kt` | 修复 Long/Int 编译错误 + 校正校验和期望值 |
-| `tun/TunWriter.kt` | 非阻塞 fd 下容忍 EAGAIN 重试 |
 | `Tun2SocksEngine.kt` | TUN fd 设非阻塞，stop 可及时中断读循环 |
 | `tcp/TcpConnection.kt` | 移除每包 hex 日志刷屏 |
 
-> 所有改动当前**未提交**。建议拆两个 commit：`fix: correct kernel checksum / DNS port / unit-test suite` 与 `build: split hev & kernel product flavors`。
+**第二轮 · 稳定性与负载**
+
+| 文件 | 改动 |
+|---|---|
+| `Tun2SocksEngine.kt` | 新增空闲连接 reaper（§2.1） |
+| `tcp/TcpConnection.kt` | 每连接 `lastActivityMs` 活跃时间戳（§2.1） |
+| `udp/UdpSession.kt` | 下行中继挂起等待消除忙等（§2.2） |
+| `Tun2SocksConfig.kt` | UDP 空闲回收 60s→30s（§2.2） |
+| `tun/TunWriter.kt` | 阻塞队列 → 挂起式 Channel，EAGAIN 用 delay（§2.3） |
+| `kernel/KernelDispatchers.kt`（新） | core / connIo dispatcher 隔离（§2.4） |
+| `Tun2SocksEngine.kt` · `tun/TunWriter.kt` | 核心读写循环改用 `KernelDispatchers.core`（§2.4） |
+| `socks/Socks5Client.kt` · `tcp/TcpConnection.kt` · `udp/UdpSession.kt` | 连接阻塞 I/O 改用 `KernelDispatchers.connIo`（§2.4） |
+
+**第三轮 · 下载吞吐**
+
+| 文件 | 改动 |
+|---|---|
+| `tcp/TcpConnection.kt` | 发送侧流控（§3.1）；窗口缩放 + WScale/MSS 选项（§3.2）；`sendLock` 串行化发送状态（§3.3）；批量发送 + 单 RTO 定时器 + 读/发流水线（§3.4） |
+| `tcp/TcpSegment.kt` | `build` 支持 TCP 选项（供 SYN-ACK 的 MSS/WScale） |
+| `Tun2SocksEngine.kt` | 解析 App SYN 的 window-scale，传入连接 |
+| `socks/Socks5Client.kt` | 环回 socket 收发缓冲扩容 |
+| `forwarding/Socks5Server.kt` | 中继流水线化；上游/客户端 socket 缓冲扩容；空操作 shaper 时旁路 `delayedPump` |
+| `shaping/TrafficShaper.kt` | 新增 `isNoOp()` 供直拷旁路判断 |
+| `security/SecurityPolicy.kt` | 拷贝缓冲 16KB→64KB |
+
+> 所有改动当前**未提交**。建议拆 commit：`fix: correct kernel checksum / DNS port / unit-test suite`、`build: split hev & kernel product flavors`、`fix: reap idle conns and isolate blocking I/O to survive load bursts`、`perf: fix download flow-control/window-scaling/concurrency and pipeline the relay`。
 
 ---
 
-## 4 · 后续优先级 — 具体处理逻辑
+## 6 · 后续优先级 — 具体处理逻辑
 
-本轮已清掉全部 P0 阻断项。以下按修复后的实际风险排序，重点从"能不能通"转向"弱网健壮性、可维护性与性能"。每项给出**问题 → 处理方法 → 验证方式**。
+三轮已清掉全部阻断项（连通性 + 稳定性 + 下载吞吐）。以下按修复后的实际风险排序，重点从"能不能通/能不能扛住/够不够快"转向"架构可扩展性、弱网健壮性与可维护性"。每项给出**问题 → 处理方法 → 验证方式**。
+
+### P1-(-1) · 单 actor 模型（彻底去锁） `[性能，可选]`
+
+**问题**：§3.4 后单连接 ~19MB/s，剩余瓶颈之一是 ACK 路径仍逐个抢 `sendLock`。发送/ACK/重传分散在多个协程，靠 `Mutex` 串行。
+
+**处理方法**：把下行发送、ACK 处理、RTO 全部收进单个 actor 协程（`select` over inputChannel + downstreamChannel + rtoChannel），维护一个非阻塞的发送泵（窗口满则缓冲、ACK 开窗则续发，绝不在 actor 内阻塞等待），**完全移除 `sendLock`**。
+
+**验证**：单连接吞吐进一步上升、CPU 下降；并发行为不变。
+
+> ⚠️ 收益递减、风险高，且**仍到不了原速 95%**（架构固有成本，见 §3.5）。除非单连接吞吐是硬指标，否则不建议投入。
+
+### P1-0 · 上游 socket 非阻塞化（NIO） `[架构，最高优先]`
+
+**问题**：§2.4 的 dispatcher 隔离只是把连接 I/O 的线程上限从 64 抬到 256，**根子仍是"每连接一个阻塞线程"**——极端并发（大量长连接同时等待上游数据）下 `connIo` 仍会触顶，且几百个阻塞线程的内存开销可观。核心已隔离故不再全局冻结，但连接吞吐会封顶。
+
+**处理方法**：把 `Socks5Client` 的上游 socket 从阻塞 `java.net.Socket` 改为非阻塞 `SocketChannel` + 单个 `Selector` 事件循环（一条 selector 线程服务所有连接的可读/可写事件，零 per-connection 阻塞线程），与本地 `Socks5Server` 已有的 `NioSelectorLoop` 对齐；`TcpConnection`/`UdpSession` 的中继改为由 selector 事件回调驱动，取消 `withContext(connIo){ read() }`。完成后可移除 `connIo` 的大线程池。
+
+**验证**：B 站/多标签高并发下线程数保持个位到几十、内存平稳；连接数可远超 256 而不退化。
+
+---
+
+以下为第一轮遗留项，风险次于 P1-0：
 
 ### P1-1 · SYN-ACK 重传逻辑错误（弱网握手无法自愈）
 
@@ -251,3 +380,5 @@ private suspend fun runActor() {
 - **握手计数**：修复前 `116 SYN / 0 ESTABLISHED`；修复后 `52 SYN / 52 SOCKS5 connected / 52 ESTABLISHED`（1:1:1）。
 - **校验和**：设备抓包 IP 头字段 `0xBAFF`（= 仅首字节 `0x45` 的补码）；修复后应为 `0xE55E`，独立 Python 复算整包校验和 == 0。
 - **变体构建**：`assembleKernelDebug` ~15s 且无 ndkBuild 任务；`assembleHevDebug` 触发 `buildNdkBuild[arm64-v8a]/[armeabi-v7a]` 并打包 `libhev-socks5-tunnel.so`（两 ABI）。
+- **稳定性**：负载下 reaper 轨迹 tcp/udp 计数震荡不再单调爬向 1024；刷 B 站列表不再"流量瞬间归零"（IO 池耗尽冻结的日志签名：reaper 照常打印但连接表卡死 90s）。
+- **下载吞吐**（清华镜像，原始 26–56MB/s 波动）：单连接 `670KB 处断` → **稳定 16.5–22MB/s、0 重传、完整下完 197MB**；4 连接并发 27MB/s+。App 接收窗口经 WScale 自动长到 5–6MB。

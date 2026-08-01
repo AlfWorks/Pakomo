@@ -13,6 +13,20 @@ Pakomo 是一款面向 Android 10+ 的非 Root、按目标生效的网络故障�
 - 首页保持简单，复杂配置进入规则和目标选择页面。
 - 运行状态、原始日志和实际命中目标可验证。
 
+## 1.1 转发引擎架构（现状）
+
+转发链路已从"单一 hev 原生库"演进为**两套可选引擎 + 一个集中式故障层**：
+
+```
+App → TUN → [ k 版 Tun2SocksEngine（纯 Kotlin） | n 版 hev（native） ] → 本地 Socks5Server → 上游
+```
+
+- **两个 build flavor**：`kernel`（默认，纯 Kotlin，无 NDK）与 `hev`（native）。运行时由 `BuildConfig.USE_NATIVE_KERNEL` 选择，互不影响。
+- **故障逻辑与引擎解耦**：所有弱网整形、Connection Reset、DNS 合成失败、网络中断都实现在**本地 `Socks5Server`**（`ConnectionShaping` / `TcpFault` / `UdpFault` / `DnsMessage` / `FlowLog`），两版引擎只负责 tun↔SOCKS 的搬运。因此新增/调整故障能力时**改的是 `Socks5Server`，不是引擎**。
+- 归属前导（attribution preamble）由引擎写入、`Socks5Server` 以 `expectOriginPreamble` 解析，用于把连接归属到应用/域名目标。
+
+> 详细的引擎替换缺陷剖析与稳定性修复见 [kernel-replacement-postmortem.md](kernel-replacement-postmortem.md)。
+
 ## 2. 核心配置模型
 
 Pakomo 的运行配置分成三个相互独立的维度。
@@ -142,7 +156,7 @@ Pakomo 的运行配置分成三个相互独立的维度。
 - 建立连接后延迟触发
 - 传输一定字节数后触发
 
-实现需要验证 SOCKS 转发层关闭连接时，是否能在不同 Android 版本上稳定向应用表现为 TCP RST。必要时调整 HEV 原生转发层。
+实现需要验证 SOCKS 转发层关闭连接时，是否能在不同 Android 版本上稳定向应用表现为 TCP RST。故障行为集中在本地 `Socks5Server`（`resetClient` 用 `SO_LINGER 0` 触发 RST），与转发引擎无关；k / n 两版共用同一套故障逻辑（见 §1.1）。
 
 ### 5.2 DNS 解析失败
 
@@ -217,7 +231,7 @@ DNS 查询必须解析问题域名，再结合应用归属和故障目标判断�
 
 - 实现新连接立即重置。
 - 验证新建长连接、HTTP/2 和高并发连接的重置。
-- 必要时扩展 HEV 原生前导或控制协议。
+- 必要时扩展归属前导（attribution preamble）或控制协议。该前导由转发引擎写入、本地 `Socks5Server` 解析，两版引擎（k 版 Kotlin `Socks5Client` / n 版 hev 补丁）实现一致。
 - 增加长连接、HTTP/2 和高并发验证。
 
 ### 阶段五：可靠性与诊断

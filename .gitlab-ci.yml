@@ -1,7 +1,9 @@
 # Pakomo · Release 构建流水线
 #
 # 触发：受保护 tag `vX.Y.Z`（如 v0.3.0）。
-# 产物：签名 release APK + sha256 上传到通用包仓库，并自动创建 Release 挂载下载链接。
+# 产物：签名 release APK —— k 版（纯 Kotlin 内核，无 native，applicationId com.pakomo）
+#       与 h 版（hev native，applicationId com.pakomo.hev，可与 k 版同机并存）——
+#       各自 + sha256 上传到通用包仓库，并自动创建 Release 挂载两版下载链接。
 #
 # 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
 #   DEPLOY_HOST      —— 172.30.109.1（automation-net 网关；容器源 IP 落在 172.30.109.0/24 才匹配 sshd 密码登录规则）
@@ -89,25 +91,38 @@ release:apk:
     - sshpass -e scp -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_REMOTE_DIR/keystore.properties" "$CI_PROJECT_DIR/keystore.properties"
   script:
     - chmod +x gradlew
-    - ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
-    - APK=$(ls app/build/outputs/apk/release/app-release*.apk | head -1)
-    - sha256sum "$APK" | tee "$APK.sha256"
-    - echo "Built $APK"
-    # 发布：APK 先进通用包仓库（不随 artifact 过期），Release 再挂它的链接
-    - ASSET="pakomo-$PAKOMO_VERSION_NAME.apk"
+    # k 版（纯 Kotlin 内核，无 native）：任务名不含 hev → buildingHevVariant=false → 跳过 NDK。
+    # 单元测试与 lint 只跑这一次即可（kernel 包在两版一致，引擎无关）。
+    - ./gradlew --no-daemon :app:testKernelDebugUnitTest :app:lintKernelRelease :app:assembleKernelRelease
+    # h 版（hev native）：任务名含 hev → 触发 ndkBuild 编译 libhev-socks5-tunnel.so。
+    # 必须与 k 版分开调用，否则 native 会被连带编进 k 版包。
+    - ./gradlew --no-daemon :app:assembleHevRelease
+    # 收集两个签名产物
+    - K_APK=$(ls app/build/outputs/apk/kernel/release/app-kernel-release*.apk | head -1)
+    - H_APK=$(ls app/build/outputs/apk/hev/release/app-hev-release*.apk | head -1)
+    - sha256sum "$K_APK" | tee "$K_APK.sha256"
+    - sha256sum "$H_APK" | tee "$H_APK.sha256"
+    - echo "Built $K_APK / $H_APK"
+    # 发布：两个 APK 各自进通用包仓库（不随 artifact 过期），Release 再挂它们的链接
+    - K_ASSET="pakomo-$PAKOMO_VERSION_NAME-kernel.apk"
+    - H_ASSET="pakomo-$PAKOMO_VERSION_NAME-hev.apk"
     - PKG_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/pakomo/$PAKOMO_VERSION_NAME"
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$APK" "$PKG_URL/$ASSET"'
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$APK.sha256" "$PKG_URL/$ASSET.sha256"'
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK" "$PKG_URL/$K_ASSET"'
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK.sha256" "$PKG_URL/$K_ASSET.sha256"'
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK" "$PKG_URL/$H_ASSET"'
+    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK.sha256" "$PKG_URL/$H_ASSET.sha256"'
     - |
       cat > release-body.json <<JSON
       {
         "name": "Pakomo $PAKOMO_VERSION_NAME",
         "tag_name": "$CI_COMMIT_TAG",
-        "description": "由流水线 #$CI_PIPELINE_IID 自动构建的签名 release APK。\n\nSHA256: \`$(cut -d' ' -f1 "$APK.sha256")\`",
+        "description": "由流水线 #$CI_PIPELINE_IID 自动构建的签名 release APK。\n\nk 版（纯 Kotlin 内核）SHA256: \`$(cut -d' ' -f1 "$K_APK.sha256")\`\nh 版（hev native）SHA256: \`$(cut -d' ' -f1 "$H_APK.sha256")\`",
         "assets": {
           "links": [
-            { "name": "$ASSET", "url": "$PKG_URL/$ASSET", "link_type": "package" },
-            { "name": "$ASSET.sha256", "url": "$PKG_URL/$ASSET.sha256", "link_type": "other" }
+            { "name": "$K_ASSET （k 版 · 纯 Kotlin）", "url": "$PKG_URL/$K_ASSET", "link_type": "package" },
+            { "name": "$K_ASSET.sha256", "url": "$PKG_URL/$K_ASSET.sha256", "link_type": "other" },
+            { "name": "$H_ASSET （h 版 · hev native）", "url": "$PKG_URL/$H_ASSET", "link_type": "package" },
+            { "name": "$H_ASSET.sha256", "url": "$PKG_URL/$H_ASSET.sha256", "link_type": "other" }
           ]
         }
       }

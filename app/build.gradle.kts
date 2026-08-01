@@ -48,10 +48,15 @@ android {
         create("kernel") {
             dimension = "engine"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "true")
+            manifestPlaceholders["appLabel"] = "Pakomo"
         }
         create("hev") {
             dimension = "engine"
+            // Distinct applicationId + label so k 版 and h 版 can be installed side by side.
+            applicationIdSuffix = ".hev"
+            versionNameSuffix = "-hev"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "false")
+            manifestPlaceholders["appLabel"] = "Pakomo (hev)"
             if (buildingHevVariant) {
                 externalNativeBuild {
                     ndkBuild {
