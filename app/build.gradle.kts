@@ -45,14 +45,17 @@ android {
     flavorDimensions += "engine"
     productFlavors {
         // Declared first, so the pure-Kotlin engine is the default selected variant (no NDK build).
+        // Symmetric applicationId per flavor (com.pakomo.<flavor>) + distinct label, so k 版 and h 版
+        // install side by side. No legacy com.pakomo users to preserve, so both carry a suffix.
         create("kernel") {
             dimension = "engine"
+            applicationIdSuffix = ".kernel"
+            versionNameSuffix = "-kernel"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "true")
-            manifestPlaceholders["appLabel"] = "Pakomo"
+            manifestPlaceholders["appLabel"] = "Pakomo (kernel)"
         }
         create("hev") {
             dimension = "engine"
-            // Distinct applicationId + label so k 版 and h 版 can be installed side by side.
             applicationIdSuffix = ".hev"
             versionNameSuffix = "-hev"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "false")

@@ -1,8 +1,8 @@
 # Pakomo · Release 构建流水线
 #
 # 触发：受保护 tag `vX.Y.Z`（如 v0.3.0）。
-# 产物：签名 release APK —— k 版（纯 Kotlin 内核，无 native，applicationId com.pakomo）
-#       与 h 版（hev native，applicationId com.pakomo.hev，可与 k 版同机并存）——
+# 产物：两个签名 release APK，applicationId 对称为 com.pakomo.<flavor>，可同机并存：
+#       k 版（com.pakomo.kernel，纯 Kotlin 内核，无 native）与 h 版（com.pakomo.hev，hev native）——
 #       各自 + sha256 上传到通用包仓库，并自动创建 Release 挂载两版下载链接。
 #
 # 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
