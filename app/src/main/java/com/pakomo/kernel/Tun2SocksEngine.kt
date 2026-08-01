@@ -55,10 +55,7 @@ class Tun2SocksEngine {
         // Non-blocking TUN fd: a blocking Os.read cannot be interrupted by coroutine cancellation,
         // so stop() would leave the read thread parked until the next packet. Non-blocking makes the
         // loop poll the running flag (EAGAIN → short delay) and exit promptly on stop.
-        runCatching {
-            val fl = Os.fcntlInt(tunFd, OsConstants.F_GETFL, 0)
-            Os.fcntlInt(tunFd, OsConstants.F_SETFL, fl or OsConstants.O_NONBLOCK)
-        }
+        if (android.os.Build.VERSION.SDK_INT >= 30) runCatching { val fl = Os.fcntlInt(tunFd, OsConstants.F_GETFL, 0); Os.fcntlInt(tunFd, OsConstants.F_SETFL, fl or OsConstants.O_NONBLOCK) }
 
         socksClient = Socks5Client(
             socksAddress = config.socksAddress,
