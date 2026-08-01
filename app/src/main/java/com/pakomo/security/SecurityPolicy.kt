@@ -14,6 +14,6 @@ object SecurityPolicy {
     const val SOCKS_LISTEN_BACKLOG = 64
     const val SOCKS_HANDSHAKE_TIMEOUT_MS = 10_000
     const val OUTBOUND_CONNECT_TIMEOUT_MS = 10_000
-    const val SOCKS_COPY_BUFFER_BYTES = 16 * 1024
+    const val SOCKS_COPY_BUFFER_BYTES = 64 * 1024
     const val MAX_UDP_PACKET_BYTES = 65_535
 }

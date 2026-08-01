@@ -15,6 +15,6 @@ data class Tun2SocksConfig(
     val maxSessionCount: Int = 1024,
     val connectTimeoutMs: Int = 10000,
     val tcpReadWriteTimeoutMs: Int = 300_000,
-    val udpReadWriteTimeoutMs: Int = 60_000,
+    val udpReadWriteTimeoutMs: Int = 30_000,
     val icmpReplyEnabled: Boolean = true,
 )

@@ -12,7 +12,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.DatagramChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
-import kotlinx.coroutines.Dispatchers
+import com.pakomo.kernel.KernelDispatchers
 import kotlinx.coroutines.withContext
 
 /**
@@ -48,9 +48,14 @@ class Socks5Client(
         sourcePort: Int,
         destinationAddress: Int,
         destinationPort: Int,
-    ): TcpConnection? = withContext(Dispatchers.IO) {
+    ): TcpConnection? = withContext(KernelDispatchers.connIo) {
         try {
             val sock = Socket()
+            // Large loopback buffers (set before connect so the receive window scales) let the local
+            // SOCKS server stream ahead instead of stalling on a small buffer — lifts per-connection
+            // download throughput.
+            runCatching { sock.receiveBufferSize = 1024 * 1024 }
+            runCatching { sock.sendBufferSize = 512 * 1024 }
             sock.connect(
                 InetSocketAddress(socksAddress, socksPort),
                 connectTimeoutMs,
@@ -132,7 +137,7 @@ class Socks5Client(
      * Full SOCKS5 UDP ASSOCIATE with preamble.
      * Returns the control channel + relay address.
      */
-    suspend fun udpAssociate(sourceAddress: Int, sourcePort: Int, destinationAddress: Int = 0, destinationPort: Int = 0): UdpAssociation? = withContext(Dispatchers.IO) {
+    suspend fun udpAssociate(sourceAddress: Int, sourcePort: Int, destinationAddress: Int = 0, destinationPort: Int = 0): UdpAssociation? = withContext(KernelDispatchers.connIo) {
         try {
             val sock = Socket()
             sock.connect(

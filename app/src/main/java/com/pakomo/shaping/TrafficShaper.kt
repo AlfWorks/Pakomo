@@ -100,6 +100,13 @@ class TrafficShaper(
         lossPercentFor(TrafficDirection.UPLOAD) >= 100 ||
             lossPercentFor(TrafficDirection.DOWNLOAD) >= 100
 
+    /** True when the shaper applies no latency, jitter, loss or bandwidth limit in either direction. */
+    fun isNoOp(): Boolean =
+        rule.uploadKbps == null && rule.downloadKbps == null &&
+            lossPercentFor(TrafficDirection.UPLOAD) == 0 && lossPercentFor(TrafficDirection.DOWNLOAD) == 0 &&
+            latencyMsFor(TrafficDirection.UPLOAD) == 0 && latencyMsFor(TrafficDirection.DOWNLOAD) == 0 &&
+            jitterMsFor(TrafficDirection.UPLOAD) == 0 && jitterMsFor(TrafficDirection.DOWNLOAD) == 0
+
     private fun latencyMsFor(direction: TrafficDirection): Int = when {
         !rule.advanced -> rule.latencyMs / 2
         direction == TrafficDirection.UPLOAD -> rule.uploadLatencyMs

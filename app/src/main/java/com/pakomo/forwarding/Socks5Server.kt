@@ -87,6 +87,9 @@ class Socks5Server(
                 } catch (_: IOException) {
                     break
                 }
+                // Large send buffer so the server can stream download data to the local kernel
+                // client over loopback without stalling on a small buffer.
+                runCatching { client.sendBufferSize = 1024 * 1024 }
                 val active = activeSessions.incrementAndGet()
                 if (active > SecurityPolicy.MAX_ACTIVE_FLOWS) {
                     activeSessions.decrementAndGet()
@@ -330,6 +333,9 @@ class Socks5Server(
     private suspend fun connectOutbound(output: OutputStream, request: SocksRequest): SocketChannel? {
         val outbound = SocketChannel.open()
         outbound.configureBlocking(true)
+        // Large receive buffer (set before connect so the window scales) so this upstream leg —
+        // which carries the full download from the real server — isn't capped by a small window.
+        runCatching { outbound.socket().receiveBufferSize = 2 * 1024 * 1024 }
         if (!protector.protect(outbound.socket())) {
             writeReply(output, REPLY_GENERAL_FAILURE, null)
             runCatching { outbound.close() }
@@ -679,34 +685,56 @@ class Socks5Server(
         initial: ByteArray?,
     ) {
         val counter = if (direction == TrafficDirection.DOWNLOAD) flow?.down else flow?.up
-        if (shapeTraffic || holdNanos > 0L) {
+        // A flow can be "in scope" for shaping yet have a no-op shaper (no latency/jitter/loss/
+        // bandwidth). Running the delayedPump pipeline then just adds per-chunk queue/coroutine
+        // overhead for zero effect and caps throughput — use the straight copy instead.
+        val needsShapedPump = (shapeTraffic && !shaper.isNoOp()) || holdNanos > 0L
+        if (needsShapedPump) {
             delayedPump(from, to, direction, shapeTraffic, holdNanos, holdBypassBytes, counter, flow, initial)
         } else {
             copyDirect(from, to, counter, initial)
         }
     }
 
-    /** Straight non-blocking copy for a direction that is not being shaped. */
+    /**
+     * Pipelined non-blocking copy for a direction that is not being shaped. A reader pulls the next
+     * chunk from [from] while a writer flushes the previous one to [to], so throughput tracks the
+     * faster side instead of paying read-latency + write-latency per chunk (which halved single-flow
+     * download speed). A bounded queue provides backpressure.
+     */
     private suspend fun copyDirect(
         from: SocketChannel,
         to: SocketChannel,
         counter: java.util.concurrent.atomic.AtomicLong?,
         initial: ByteArray?,
-    ) {
-        if (initial != null && initial.isNotEmpty()) {
-            counter?.addAndGet(initial.size.toLong())
-            relayLoop.writeFully(to, ByteBuffer.wrap(initial), RELAY_WRITE_TIMEOUT_MS)
+    ) = coroutineScope {
+        val queue = Channel<ByteArray>(RELAY_PIPELINE_DEPTH)
+        val writer = launch {
+            if (initial != null && initial.isNotEmpty()) {
+                counter?.addAndGet(initial.size.toLong())
+                relayLoop.writeFully(to, ByteBuffer.wrap(initial), RELAY_WRITE_TIMEOUT_MS)
+            }
+            for (bytes in queue) {
+                relayLoop.writeFully(to, ByteBuffer.wrap(bytes), RELAY_WRITE_TIMEOUT_MS)
+            }
         }
         val buffer = ByteBuffer.allocate(SecurityPolicy.SOCKS_COPY_BUFFER_BYTES)
-        while (true) {
-            buffer.clear()
-            val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
-            if (count < 0) break
-            if (count == 0) continue
-            counter?.addAndGet(count.toLong())
-            buffer.flip()
-            relayLoop.writeFully(to, buffer, RELAY_WRITE_TIMEOUT_MS)
+        try {
+            while (true) {
+                buffer.clear()
+                val count = relayLoop.read(from, buffer, RELAY_IDLE_TIMEOUT_MS)
+                if (count < 0) break
+                if (count == 0) continue
+                counter?.addAndGet(count.toLong())
+                buffer.flip()
+                val bytes = ByteArray(count)
+                buffer.get(bytes)
+                queue.send(bytes)
+            }
+        } finally {
+            queue.close()
         }
+        writer.join()
     }
 
     /**
@@ -988,6 +1016,8 @@ class Socks5Server(
         // Bounds in-flight shaped chunks (~one delay-window of data); provides backpressure so a
         // bandwidth limit slows the reader instead of buffering unboundedly.
         const val SHAPED_QUEUE_CAPACITY = 128
+        // Chunks the unshaped relay may hold in flight between its reader and writer (pipelining).
+        const val RELAY_PIPELINE_DEPTH = 4
         const val TAG = "PakomoSocks"
     }
 }

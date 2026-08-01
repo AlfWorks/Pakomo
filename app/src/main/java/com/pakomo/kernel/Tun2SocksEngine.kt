@@ -32,6 +32,7 @@ class Tun2SocksEngine {
     private var socksClient: Socks5Client? = null
     private var writer: TunWriter? = null
     private var readJob: Job? = null
+    private var reaperJob: Job? = null
 
     // Connection tables
     private val tcpConnections = ConcurrentHashMap<Long, TcpConnection>()
@@ -68,7 +69,7 @@ class Tun2SocksEngine {
         )
         writer = TunWriter(tunFd, engineScope).also { it.start() }
 
-        readJob = engineScope.launch(Dispatchers.IO) {
+        readJob = engineScope.launch(KernelDispatchers.core) {
             val buffer = ByteArray(config.mtu)
             try {
                 while (running.get() && isActive) {
@@ -90,12 +91,45 @@ class Tun2SocksEngine {
             }
         }
 
+        reaperJob = startReaper(config)
+
         Log.i(TAG, "Engine started: tun=${config.tunAddress}, socks=${config.socksAddress}:${config.socksPort}")
+    }
+
+    /**
+     * Periodically closes idle/abandoned connections so the session tables never fill up. Without
+     * this, TCP connections that go idle in ESTABLISHED or get stuck half-closed (peer vanished,
+     * never ACKs our FIN) linger forever until [Tun2SocksConfig.maxSessionCount] is hit and every
+     * new SYN is silently dropped — the connection works, then "times out" a short while later.
+     */
+    private fun startReaper(config: Tun2SocksConfig) = engineScope.launch {
+        val establishedIdleMs = config.tcpReadWriteTimeoutMs.toLong()
+        while (running.get() && isActive) {
+            delay(REAP_INTERVAL_MS)
+            val now = android.os.SystemClock.elapsedRealtime()
+            var reaped = 0
+            for (conn in tcpConnections.values) {
+                val idle = now - conn.lastActivityMs
+                val stale = when (conn.state) {
+                    // Active data states get the generous read/write idle budget.
+                    TcpConnection.State.ESTABLISHED, TcpConnection.State.CLOSE_WAIT ->
+                        idle > establishedIdleMs
+                    // Handshaking / half-closed states must not linger: a vanished peer leaves them
+                    // here with no traffic to ever close them.
+                    else -> idle > HALF_OPEN_IDLE_MS
+                }
+                if (stale) { runCatching { conn.closeConnection() }; reaped++ }
+            }
+            if (reaped > 0) {
+                Log.i(TAG, "reaper closed $reaped idle conns (tcp=${tcpConnections.size} udp=${udpSessions.size})")
+            }
+        }
     }
 
     fun stop() {
         if (!running.getAndSet(false)) return
         readJob?.cancel()
+        reaperJob?.cancel()
         writer?.stop()
         // Close all connections
         tcpConnections.values.forEach { runCatching { it.closeConnection() } }
@@ -154,6 +188,7 @@ class Tun2SocksEngine {
             socksClient = sc,
             connectionScope = engineScope,
             onClosed = { tcpConnections.remove(key) },
+            peerWindowShift = resolveWindowShift(packet.payload),
         )
         tcpConnections[key] = conn
         conn.accept(seg.sequenceNumber)
@@ -226,7 +261,28 @@ class Tun2SocksEngine {
         return mtu - 40
     }
 
+    /** Parses the TCP window-scale option (kind 3) from the app's SYN, or 0 if absent. */
+    private fun resolveWindowShift(tcpPayload: ByteArray): Int {
+        val dataOffset = ((tcpPayload[12].toInt() and 0xFF) shr 4) * 4
+        if (dataOffset <= 20) return 0
+        var offset = 20
+        while (offset < dataOffset) {
+            val kind = tcpPayload[offset].toInt() and 0xFF
+            if (kind == 0) break
+            if (kind == 1) { offset++; continue }
+            val len = if (offset + 1 < dataOffset) tcpPayload[offset + 1].toInt() and 0xFF else 0
+            if (len < 2 || offset + len > dataOffset) break
+            if (kind == 3 && len == 3) return (tcpPayload[offset + 2].toInt() and 0xFF).coerceAtMost(14)
+            offset += len
+        }
+        return 0
+    }
+
     companion object {
         private const val TAG = "PakomoTun2Socks"
+        private const val REAP_INTERVAL_MS = 15_000L
+        // Handshaking / half-closed connections with no traffic are reaped well before the full
+        // read/write idle budget, since a vanished peer leaves them stuck with nothing to close them.
+        private const val HALF_OPEN_IDLE_MS = 30_000L
     }
 }

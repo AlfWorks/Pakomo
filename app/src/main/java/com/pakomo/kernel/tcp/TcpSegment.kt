@@ -48,14 +48,17 @@ data class TcpSegment(
             flags: Int, windowSize: Int,
             sourceAddress: Int, destinationAddress: Int,
             payload: ByteArray = ByteArray(0), urgentPointer: Int = 0,
+            options: ByteArray = ByteArray(0),
         ): ByteArray {
-            val headerLen = MIN_HEADER_BYTES
+            // options length must be a multiple of 4 (caller pads with NOPs); data offset counts them.
+            val headerLen = MIN_HEADER_BYTES + options.size
             val total = headerLen + payload.size
             val buf = ByteArray(total)
             writeInt16(buf, 0, sourcePort); writeInt16(buf, 2, destinationPort)
             writeInt32(buf, 4, sequenceNumber.toInt()); writeInt32(buf, 8, acknowledgmentNumber.toInt())
             buf[12] = ((headerLen / 4) shl 4).toByte(); buf[13] = flags.toByte()
             writeInt16(buf, 14, windowSize); writeInt16(buf, 16, 0); writeInt16(buf, 18, urgentPointer)
+            if (options.isNotEmpty()) System.arraycopy(options, 0, buf, MIN_HEADER_BYTES, options.size)
             if (payload.isNotEmpty()) System.arraycopy(payload, 0, buf, headerLen, payload.size)
             val csum = computeChecksum(buf, total, sourceAddress, destinationAddress)
             writeInt16(buf, 16, csum)

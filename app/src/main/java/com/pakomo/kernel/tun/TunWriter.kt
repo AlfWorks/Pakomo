@@ -4,23 +4,25 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
+import com.pakomo.kernel.KernelDispatchers
 import java.io.FileDescriptor
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class TunWriter(
     private val tunFd: FileDescriptor,
     private val engineScope: CoroutineScope,
 ) {
-    // Bounded queue provides natural backpressure: when full, callers block
-    private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
+    // Suspending channel: when the writer falls behind (e.g. a video download flood), `send`
+    // SUSPENDS the calling coroutine — releasing its dispatcher thread — instead of blocking it.
+    // The previous blocking queue froze every Dispatchers.Default thread under load, starving all
+    // coroutines and timing out every connection at once ("刷 bilibili → 全局 timeout"). Backpressure
+    // now propagates cleanly back through TCP flow control without freezing the tunnel.
+    private val channel = Channel<ByteArray>(QUEUE_CAPACITY)
     private val running = AtomicBoolean(true)
     private var writeJob: Job? = null
 
@@ -28,18 +30,9 @@ class TunWriter(
     @Volatile var writtenBytes = 0L
 
     fun start() {
-        writeJob = engineScope.launch(Dispatchers.IO) {
+        writeJob = engineScope.launch(KernelDispatchers.core) {
             try {
-                while (running.get() && isActive) {
-                    // Block with timeout so we can check running flag
-                    val packet = queue.poll(500, TimeUnit.MILLISECONDS) ?: continue
-                    writePacket(packet)
-                }
-                // Drain remaining packets before stopping
-                while (true) {
-                    val packet = queue.poll() ?: break
-                    writePacket(packet)
-                }
+                for (packet in channel) writePacket(packet)
             } catch (e: Exception) {
                 if (running.get()) Log.w(TAG, "TUN write loop failed", e)
             }
@@ -48,21 +41,24 @@ class TunWriter(
 
     fun stop() {
         running.set(false)
+        channel.close()
         writeJob?.cancel()
     }
 
     /**
-     * Enqueue a packet for writing. Blocks if the queue is full (backpressure).
+     * Enqueue a packet for writing. Suspends (backpressure) when the writer is behind; never blocks
+     * the calling dispatcher thread.
      */
-    fun send(packet: ByteArray) {
+    suspend fun send(packet: ByteArray) {
         if (!running.get()) return
         try {
-            queue.put(packet)
-        } catch (_: InterruptedException) {
+            channel.send(packet)
+        } catch (_: Exception) {
+            // Channel closed during shutdown — drop silently.
         }
     }
 
-    private fun writePacket(packet: ByteArray) {
+    private suspend fun writePacket(packet: ByteArray) {
         while (true) {
             try {
                 Os.write(tunFd, packet, 0, packet.size)
@@ -70,10 +66,11 @@ class TunWriter(
                 writtenBytes += packet.size
                 return
             } catch (e: ErrnoException) {
-                // The TUN fd is non-blocking; a full kernel queue returns EAGAIN. Retry the same
-                // packet after a brief pause instead of dropping or crashing the writer.
+                // The TUN fd is non-blocking; a full kernel queue returns EAGAIN. Yield briefly and
+                // retry the same packet — this is genuine backpressure (the app can't read faster),
+                // and delay() keeps it off the IO thread.
                 if (e.errno == OsConstants.EAGAIN && running.get()) {
-                    Thread.sleep(1)
+                    delay(1)
                     continue
                 }
                 if (running.get()) throw e
@@ -87,6 +84,6 @@ class TunWriter(
 
     companion object {
         private const val TAG = "PakomoTunWriter"
-        private const val QUEUE_CAPACITY = 512
+        private const val QUEUE_CAPACITY = 1024
     }
 }

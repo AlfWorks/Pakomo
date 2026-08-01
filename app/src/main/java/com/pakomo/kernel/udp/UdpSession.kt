@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.DatagramChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import com.pakomo.kernel.KernelDispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -46,7 +46,7 @@ class UdpSession(
     fun startActor() {
         sessionScope.launch {
             try {
-                val assoc = withContext(Dispatchers.IO) {
+                val assoc = withContext(KernelDispatchers.connIo) {
                     socksClient.udpAssociate(sourceAddress, sourcePort, destinationAddress, destinationPort)
                 }
                 if (assoc == null) {
@@ -64,7 +64,7 @@ class UdpSession(
                     while (isActive && !closed) {
                         buf.clear()
                         val sourceAddr = try {
-                            withContext(Dispatchers.IO) { relayChannel!!.receive(buf) }
+                            withContext(KernelDispatchers.connIo) { relayChannel!!.receive(buf) }
                         } catch (_: Exception) { null }
                         if (sourceAddr != null) {
                             buf.flip()
@@ -72,6 +72,11 @@ class UdpSession(
                             buf.get(raw)
                             val payload = extractUdpPayload(raw)
                             if (payload != null) sendToTun(sourceAddr as? java.net.InetSocketAddress ?: return@launch, payload)
+                        } else {
+                            // The relay channel is non-blocking: with no datagram ready, yield instead of
+                            // hot-spinning. Without this each UDP session pegs a core, and a few hundred
+                            // concurrent DNS/QUIC flows collapse throughput for the whole tunnel.
+                            delay(RELAY_POLL_MS)
                         }
                         if (relayChannel == null || !relayChannel!!.isOpen) break
                     }
@@ -107,7 +112,7 @@ class UdpSession(
             udpBuf.putInt(destinationAddress)
             udpBuf.putShort(destinationPort.toShort())
             udpBuf.put(payload)
-            withContext(Dispatchers.IO) {
+            withContext(KernelDispatchers.connIo) {
                 relayChannel!!.send(udpBuf.flip() as ByteBuffer, assoc.relayAddress)
             }
         } catch (_: Exception) {
@@ -166,6 +171,7 @@ class UdpSession(
 
     companion object {
         private const val IDLE_POLL_MS = 500L
+        private const val RELAY_POLL_MS = 10L
         private const val TAG = "PakomoUdp"
     }
 }
