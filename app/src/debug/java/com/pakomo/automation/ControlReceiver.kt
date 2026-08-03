@@ -18,12 +18,14 @@ import kotlin.concurrent.thread
  * ([PreconditionChecks], §14), and delegates every mutation to
  * [VpnServiceController][com.pakomo.vpn.VpnServiceController] — no engine or policy logic lives here.
  *
- * Examples:
+ * Examples (must be EXPLICIT — Android 8+ blocks implicit broadcasts to manifest receivers, so
+ * `-n <pkg>/…ControlReceiver` is required or the broadcast is silently dropped):
  * ```
- * adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd status
- * adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd start --es rule medium
- * adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd start --es profile checkout_flow
- * adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd stop
+ * C=com.pakomo.kernel/com.pakomo.automation.ControlReceiver
+ * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd status
+ * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd start --es rule medium
+ * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd start --es profile checkout_flow
+ * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd stop
  * ```
  *
  * Command → rule resolution:

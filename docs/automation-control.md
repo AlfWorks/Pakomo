@@ -12,22 +12,29 @@
 ## 快速开始
 
 ```bash
+# 变量:被测 flavor 的组件(kernel 版;hev 版把 .kernel 换成 .hev)
+COMP=com.pakomo.kernel/com.pakomo.automation.ControlReceiver
+
 # 1) 环境前置:授予 VPN 权限(消除系统弹窗,见「VPN 授权」)
 adb shell appops set com.pakomo.kernel ACTIVATE_VPN allow
 
 # 2) 查询状态
-adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd status
+adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd status
 
 # 3) 注入「中度弱网」预设并等待进入 forwarding
-adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd start --es rule medium --es wait true
+adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd start --es rule medium --es wait true
 
 # 4) 恢复正常 / 停止
-adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd reset
-adb shell am broadcast -a com.pakomo.automation.CONTROL --es cmd stop
+adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd reset
+adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd stop --es wait true
 ```
 
-> `applicationId` 按 flavor 带后缀:kernel 版 = `com.pakomo.kernel`,hev 版 = `com.pakomo.hev`。
-> 上面命令里的包名按被测 flavor 替换。定向到组件可加 `-n <pkg>/com.pakomo.automation.ControlReceiver`。
+> **必须用显式广播**(`-n <pkg>/com.pakomo.automation.ControlReceiver`)。Android 8+ 的后台限制下,
+> 清单声明的接收器**收不到隐式广播**(只带 `-a` 而不带 `-n`/`-p` 时),命令会静默无效(`result=0`
+> 但无 `data=`、无 logcat、无 status.json)。
+>
+> `applicationId` 按 flavor 带后缀:kernel 版 = `com.pakomo.kernel`,hev 版 = `com.pakomo.hev`;
+> 接收器类名两版都是 `com.pakomo.automation.ControlReceiver`。
 
 ---
 
