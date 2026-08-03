@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import com.pakomo.BuildConfig
 import com.pakomo.core.model.EngineStage
 import com.pakomo.data.PakomoPreferences
 import com.pakomo.vpn.VpnServiceController
@@ -12,38 +11,20 @@ import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /**
- * Exported entry point for external automation (design §5). Registered only by the debug manifest,
- * so it is absent from release APKs; it also asserts [BuildConfig.AUTOMATION_ENABLED] as
- * defence-in-depth. The receiver parses the wire protocol, runs the precondition asserts
+ * Exported entry point for external automation. It ships in debug and release builds; release
+ * commands are denied until device provisioning installs a token. The receiver parses the wire protocol, runs the precondition asserts
  * ([PreconditionChecks], §14), and delegates every mutation to
  * [VpnServiceController][com.pakomo.vpn.VpnServiceController] — no engine or policy logic lives here.
  *
- * Examples (must be EXPLICIT — Android 8+ blocks implicit broadcasts to manifest receivers, so
- * `-n <pkg>/…ControlReceiver` is required or the broadcast is silently dropped):
- * ```
- * C=com.pakomo.kernel/com.pakomo.automation.ControlReceiver
- * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd status
- * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd start --es rule medium
- * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd start --es profile checkout_flow
- * adb shell am broadcast -a com.pakomo.automation.CONTROL -n $C --es cmd stop
- * ```
- *
  * Command → rule resolution:
- * - `--es profile <name>`: load `profiles/<name>.json` (hermetic, fully specifies scope/apps/rule).
- * - `--es rule <name>`: keep the app's persisted scope/apps, override just the rule by preset or
+ * - `profile=<name>`: load `profiles/<name>.json` (hermetic, fully specifies scope/apps/rule).
+ * - `rule=<name>`: keep the app's persisted scope/apps, override just the rule by preset or
  *   saved-rule name.
  * - neither: use the app's persisted active rule.
  */
 class ControlReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        // §14.A defence-in-depth: refuse if the automation flag is off (never true in release,
-        // which does not even contain this class).
-        if (!BuildConfig.AUTOMATION_ENABLED) {
-            emitSync(context, StatusReporter.failure(null, ControlError.AUTOMATION_DISABLED))
-            return
-        }
-
         val cmd = ControlCommand.fromWire(intent.getStringExtra(AutomationContract.EXTRA_CMD))
         if (cmd == null) {
             emitSync(
@@ -58,7 +39,7 @@ class ControlReceiver : BroadcastReceiver() {
             return
         }
 
-        // §14.A token gate (opt-in; enforced only when a token file is configured).
+        // Release requires a provisioned token; debug enforces it whenever one is configured.
         AutomationConfig.verifyToken(context, intent.getStringExtra(AutomationContract.EXTRA_TOKEN))
             ?.let { emitSync(context, StatusReporter.failure(cmd, it, "token required or mismatched")); return }
 
@@ -78,27 +59,32 @@ class ControlReceiver : BroadcastReceiver() {
         return when (cmd) {
             ControlCommand.STATUS -> {
                 val waitMs = waitMillis(intent, default = 0L)
-                if (waitMs > 0) waitForStage(waitMs) { it == EngineStage.FORWARDING }
-                StatusReporter.success(cmd)
+                awaitOutcome(cmd, waitMs) { it == EngineStage.FORWARDING } ?: StatusReporter.success(cmd)
             }
 
-            ControlCommand.START -> start(context, intent, prefs, hotSwap = false)
-            ControlCommand.UPDATE -> start(context, intent, prefs, hotSwap = true)
+            // State-mutating command handling is serialized. A waited command keeps the lock until
+            // its config is confirmed; a fire-and-forget command may be superseded after it returns.
+            // Concurrent UI-driven reconfiguration remains out of scope for a headless test run.
+            ControlCommand.START -> synchronized(MUTATION_LOCK) { start(context, intent, prefs, hotSwap = false) }
+            ControlCommand.UPDATE -> synchronized(MUTATION_LOCK) { start(context, intent, prefs, hotSwap = true) }
 
-            ControlCommand.STOP -> {
+            ControlCommand.STOP -> synchronized(MUTATION_LOCK) {
                 VpnServiceController.stop(context)
-                if (waitMillis(intent, DEFAULT_WAIT_MS) > 0) {
-                    waitForStage(DEFAULT_WAIT_MS) { !it.isActive }
-                }
-                StatusReporter.success(cmd)
+                val waitMs = waitMillis(intent, DEFAULT_WAIT_MS)
+                awaitOutcome(cmd, waitMs) { !it.isActive } ?: StatusReporter.success(cmd)
             }
 
-            ControlCommand.RESET -> {
-                if (VpnServiceController.runtime.value.stage == EngineStage.FORWARDING) {
-                    applyRunning(context, request(context, prefs, ruleOverride = ProfileCodec.normalRule()), hotSwap = true)
-                    StatusReporter.success(cmd) { put("appliedRule", "normal") }
-                } else {
+            ControlCommand.RESET -> synchronized(MUTATION_LOCK) {
+                if (VpnServiceController.runtime.value.stage != EngineStage.FORWARDING) {
                     StatusReporter.success(cmd) { put("note", "engine not running; nothing to reset") }
+                } else {
+                    val configId = applyRunning(
+                        context, request(context, prefs, ruleOverride = ProfileCodec.normalRule()), hotSwap = true,
+                    )
+                    // Reset waits by default so the response only claims success once normal is applied.
+                    val waitMs = waitMillis(intent, DEFAULT_WAIT_MS)
+                    awaitConfigApplied(cmd, waitMs, configId)
+                        ?: StatusReporter.success(cmd) { put("appliedRule", "normal"); put("confirmed", waitMs > 0) }
                 }
             }
 
@@ -140,30 +126,24 @@ class ControlReceiver : BroadcastReceiver() {
             return StatusReporter.failure(cmd, ControlError.APP_NOT_INSTALLED, "not installed: ${missing.packages}")
         }
 
-        applyRunning(context, resolved, hotSwap)
+        val configId = applyRunning(context, resolved, hotSwap)
 
+        // Honour an explicit wait for UPDATE too; cold START defaults to waiting. Waiting on the
+        // applied config id (not merely FORWARDING) confirms the background start/reconfigure really
+        // took effect — for an update the stage stays FORWARDING throughout, so stage proves nothing.
         val waitMs = waitMillis(intent, if (hotSwap) 0L else DEFAULT_WAIT_MS)
-        if (!hotSwap && waitMs > 0) {
-            when (val stage = waitForStage(waitMs) { it == EngineStage.FORWARDING }) {
-                EngineStage.FORWARDING -> Unit
-                EngineStage.ERROR -> return StatusReporter.failure(
-                    cmd, ControlError.ENGINE_ERROR,
-                    VpnServiceController.runtime.value.message ?: "engine reported error",
-                )
-                else -> return StatusReporter.failure(
-                    cmd,
-                    if (stage == null) ControlError.TIMEOUT else ControlError.ENGINE_ERROR,
-                    "did not reach forwarding within ${waitMs}ms",
-                )
-            }
-        }
+        awaitConfigApplied(cmd, waitMs, configId)?.let { return it }
+        // confirmed=false means "accepted but not waited for" — appliedRule is the requested rule,
+        // not a guarantee it has taken effect. With a wait, reaching here means it was confirmed.
         return StatusReporter.success(cmd) {
             put("appliedRule", resolved.rule.id)
             put("scope", resolved.scope.name.lowercase())
+            put("confirmed", waitMs > 0)
         }
     }
 
-    private fun applyRunning(context: Context, req: ControlRequest, hotSwap: Boolean) {
+    /** Applies the request and returns the config id to confirm against [awaitConfigApplied]. */
+    private fun applyRunning(context: Context, req: ControlRequest, hotSwap: Boolean): Long =
         if (hotSwap) {
             VpnServiceController.update(
                 context, req.scope, req.packages, req.addressDomains, req.domainsByPackage, req.rule,
@@ -173,7 +153,6 @@ class ControlReceiver : BroadcastReceiver() {
                 context, req.scope, req.packages, req.addressDomains, req.domainsByPackage, req.rule,
             )
         }
-    }
 
     private fun resolveRequest(context: Context, prefs: PakomoPreferences, intent: Intent): ProfileResult {
         val profile = intent.getStringExtra(AutomationContract.EXTRA_PROFILE)
@@ -198,6 +177,63 @@ class ControlReceiver : BroadcastReceiver() {
     }
 
     // ---- helpers ----
+
+    /**
+     * Blocks up to [waitMs] for [target]. Returns null when no wait was requested (waitMs <= 0) or
+     * the condition was met (caller then builds the success payload); otherwise a typed failure:
+     * TIMEOUT if the deadline passed, ENGINE_ERROR if the engine reached ERROR first.
+     */
+    private fun awaitOutcome(
+        cmd: ControlCommand,
+        waitMs: Long,
+        target: (EngineStage) -> Boolean,
+    ): JSONObject? {
+        if (waitMs <= 0) return null
+        val stage = waitForStage(waitMs, target)
+        return when {
+            stage == null ->
+                StatusReporter.failure(cmd, ControlError.TIMEOUT, "condition not met within ${waitMs}ms")
+            target(stage) -> null
+            stage == EngineStage.ERROR -> StatusReporter.failure(
+                cmd,
+                ControlError.ENGINE_ERROR,
+                VpnServiceController.runtime.value.message ?: "engine reported error",
+            )
+            else -> StatusReporter.failure(cmd, ControlError.TIMEOUT, "condition not met within ${waitMs}ms")
+        }
+    }
+
+    /**
+     * Like [awaitOutcome] but confirms the specific [configId] was applied — the service bumps
+     * [VpnServiceController.appliedConfigId] only after the pipeline/reconfigure actually finishes.
+     * For an update the stage stays FORWARDING throughout, so waiting on stage alone would return
+     * prematurely (or miss a later failure). Returns null on success / no wait; else a typed failure.
+     */
+    private fun awaitConfigApplied(cmd: ControlCommand, waitMs: Long, configId: Long): JSONObject? {
+        if (waitMs <= 0) return null
+        val deadline = SystemClock.elapsedRealtime() + waitMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val stage = VpnServiceController.runtime.value.stage
+            if (stage == EngineStage.ERROR) {
+                return StatusReporter.failure(
+                    cmd,
+                    ControlError.ENGINE_ERROR,
+                    VpnServiceController.runtime.value.message ?: "engine reported error",
+                )
+            }
+            // A hot reconfigure failure reports its config id here (the tunnel stays FORWARDING with
+            // the previous config, so there is no ERROR stage to observe). Under the mutation lock a
+            // failedConfigId >= ours means our config specifically failed.
+            if (VpnServiceController.failedConfigId.value >= configId) {
+                return StatusReporter.failure(cmd, ControlError.ENGINE_ERROR, "config $configId failed to apply")
+            }
+            if (VpnServiceController.appliedConfigId.value >= configId && stage == EngineStage.FORWARDING) {
+                return null
+            }
+            Thread.sleep(POLL_MS)
+        }
+        return StatusReporter.failure(cmd, ControlError.TIMEOUT, "config $configId not applied within ${waitMs}ms")
+    }
 
     private fun waitMillis(intent: Intent, default: Long): Long {
         val raw = intent.getStringExtra(AutomationContract.EXTRA_WAIT) ?: return default
@@ -243,5 +279,9 @@ class ControlReceiver : BroadcastReceiver() {
     private companion object {
         const val DEFAULT_WAIT_MS = 10_000L
         const val POLL_MS = 100L
+
+        /** Serializes state-mutating commands across concurrent broadcasts (each runs on its own
+         *  goAsync thread). Shared across receiver instances since a new one is created per broadcast. */
+        val MUTATION_LOCK = Any()
     }
 }

@@ -111,6 +111,20 @@ git apply --directory=third_party/hev-socks5-tunnel patches/hev-attribution-prea
 
 > h 版必须与 k 版**分开调用**：构建脚本以「任务名是否含 `hev`」决定是否编译原生库；两版混在一次调用里会把 native 连带编进 k 版包。
 
+### 在自动化测试中使用 Pakomo
+
+Pakomo 的 debug 与 release APK 都包含稳定的自动化控制协议。自动化项目可使用
+任意语言和测试框架适配该协议，把 Pakomo 当作可编程的弱网与故障注入器。仓库不提供
+Python、Java、JavaScript 或特定测试框架的封装。
+
+release 构建默认拒绝未认证请求，设备准备时必须安装 token。debug 构建可不配置 token，方便开发者诊断；一旦配置，两种构建都会校验。
+
+项目内的适配层负责设备选择、token 注入、profile 下发、命令发送、JSON 解析、超时和测试失败后的
+`reset`/`stop` 清理。Pakomo 负责稳定的 `start`、`update`、`status`、`reset`、`stop` 协议语义及
+结构化响应。`scripts/automation-compare.sh` 仅展示 k/h 两个 flavor 的内部对拍流程。
+
+`automation-smoke.ps1/.sh` 仅用于 Pakomo 自身的底层协议检查，不是项目集成示例。Python、TypeScript、Java、C++ 调用示例，以及完整字段、错误码、等待语义和安全说明见 [自动化控制接口](docs/automation-control.md)。
+
 ### 发布构建
 
 用于分发，需自行配置签名。发布构建启用 R8 代码混淆与资源压缩，体积显著小于调试包：
@@ -138,7 +152,7 @@ git apply --directory=third_party/hev-socks5-tunnel patches/hev-attribution-prea
 |-- app/src/main/res/                # 资源（图标、drawable、主题）
 |-- third_party/hev-socks5-tunnel/   # h 版 vendored 转发核心（git submodule）
 |-- patches/                         # h 版 HEV 归属前导补丁
-|-- scripts/                         # 第三方准备脚本
+|-- scripts/                         # 第三方准备与 Pakomo 开发自检脚本
 `-- docs/                            # 项目方向与设计文档
 ```
 
@@ -161,6 +175,7 @@ App → TUN → 转发引擎 [ Tun2SocksEngine（k 版·纯 Kotlin） | hev-sock
 - [项目方向](docs/PROJECT-DIRECTION.md)
 - [内核替换与吞吐优化 postmortem](docs/kernel-replacement-postmortem.md)
 - [故障错误码方案](docs/fault-error-codes.md)
+- [自动化控制接口](docs/automation-control.md)
 - [实现计划](IMPLEMENTATION_PLAN.md)
 - [UI 设计](UI_DESIGN.md)
 

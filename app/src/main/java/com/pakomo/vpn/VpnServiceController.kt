@@ -12,10 +12,31 @@ import com.pakomo.core.model.TargetScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 object VpnServiceController {
     private val _runtime = MutableStateFlow(EngineRuntime())
     val runtime: StateFlow<EngineRuntime> = _runtime.asStateFlow()
+
+    private val _appliedConfigId = MutableStateFlow(0L)
+
+    /**
+     * The highest config id the service has finished applying. Because a start establishes the
+     * pipeline and a hot update runs [reconfigure][WeakNetworkVpnService] on a background coroutine,
+     * [EngineStage.FORWARDING] alone does not prove a specific configuration took effect. Callers
+     * that need that confirmation compare this against the id returned by [start] / [update].
+     * Monotonic; ids come from [VpnRuntimeConfigStore] which never reuses them within a process.
+     */
+    val appliedConfigId: StateFlow<Long> = _appliedConfigId.asStateFlow()
+
+    private val _failedConfigId = MutableStateFlow(0L)
+
+    /**
+     * The highest config id whose hot apply ([reconfigure][WeakNetworkVpnService]) failed, so a
+     * waiter can distinguish a genuine failure from a timeout. Cold-start failures instead surface
+     * as [EngineStage.ERROR]. Monotonic.
+     */
+    val failedConfigId: StateFlow<Long> = _failedConfigId.asStateFlow()
 
     /**
      * The running loopback SOCKS proxy, or null when stopped. Lets in-app diagnostics (the latency
@@ -34,7 +55,7 @@ object VpnServiceController {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
-    ) {
+    ): Long {
         if (_runtime.value.stage != EngineStage.FORWARDING) {
             publish(EngineStage.STARTING, "正在建立本地转发链路")
         }
@@ -48,6 +69,7 @@ object VpnServiceController {
                 Log.e(TAG, "Unable to start VPN service", error)
                 publish(EngineStage.ERROR, error.message ?: "无法启动 VPN 服务")
             }
+        return configId
     }
 
     /**
@@ -62,7 +84,7 @@ object VpnServiceController {
         targetDomains: List<String>,
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
-    ) {
+    ): Long {
         val (intent, configId) = buildIntent(
             context, WeakNetworkVpnService.ACTION_UPDATE, scope,
             selectedPackages, targetDomains, domainsByPackage, rule,
@@ -70,8 +92,10 @@ object VpnServiceController {
         runCatching { context.startService(intent) }
             .onFailure { error ->
                 VpnRuntimeConfigStore.discard(configId)
+                publishFailedConfig(configId)
                 Log.e(TAG, "Unable to update VPN runtime", error)
             }
+        return configId
     }
 
     private fun buildIntent(
@@ -116,6 +140,16 @@ object VpnServiceController {
         if (current.stage == EngineStage.FORWARDING) {
             _runtime.value = current.copy(stats = stats)
         }
+    }
+
+    /** Called by the service once it has finished applying the configuration with [id]. Atomic max. */
+    internal fun publishAppliedConfig(id: Long) {
+        _appliedConfigId.update { current -> maxOf(current, id) }
+    }
+
+    /** Called by the service when the hot apply (reconfigure) of [id] failed. Atomic max. */
+    internal fun publishFailedConfig(id: Long) {
+        _failedConfigId.update { current -> maxOf(current, id) }
     }
 
     private const val TAG = "PakomoVpn"

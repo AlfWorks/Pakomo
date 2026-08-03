@@ -1,12 +1,14 @@
 package com.pakomo.automation
 
 /**
- * Wire contract shared by every automation-control component. Debug-only: these sources live in
- * src/debug and are never compiled into a release APK (see app/build.gradle.kts and the design
- * doc's §9 security note). The contract is intentionally string-based so external drivers can speak
- * it over `adb shell am broadcast` with no client library.
+ * Stable wire contract shared by Pakomo and external automation clients. It is intentionally
+ * string-based so host-side clients can use Android's explicit ordered-broadcast transport without
+ * linking against the app.
  */
 internal object AutomationContract {
+    /** Incremented when the wire contract makes an incompatible change. */
+    const val PROTOCOL_VERSION = 1
+
     /** Broadcast action the [ControlReceiver] listens on. */
     const val ACTION_CONTROL = "com.pakomo.automation.CONTROL"
 
@@ -17,7 +19,7 @@ internal object AutomationContract {
     const val STATUS_DIR = "pakomo"
     const val STATUS_FILE = "status.json"
 
-    // ---- Intent extras (all string-keyed for `am broadcast --es`) ----
+    // ---- String-valued Intent extras used by host clients ----
     const val EXTRA_CMD = "cmd"
     const val EXTRA_TOKEN = "token"
     const val EXTRA_PROFILE = "profile"
@@ -32,7 +34,7 @@ internal object AutomationContract {
     const val RESULT_ERROR = 1
 }
 
-/** Supported commands. P0 implements [STATUS]; the rest are scaffolded for P1/P2. */
+/** Commands implemented by the external control surface. */
 internal enum class ControlCommand(val wire: String) {
     STATUS("status"),
     START("start"),
@@ -47,13 +49,8 @@ internal enum class ControlCommand(val wire: String) {
     }
 }
 
-/**
- * Stable error codes returned in the JSON `error` field and logged for CI to branch on. The full
- * set is defined up front (design §14 precondition checklist) even though P0 only emits a few, so
- * the vocabulary never churns as later phases wire in the remaining assertions.
- */
+/** Stable error codes returned in the JSON `error` field and machine-readable status channels. */
 internal enum class ControlError {
-    AUTOMATION_DISABLED,
     UNAUTHORIZED_CALLER,
     BAD_TOKEN,
     INVALID_ARGS,
@@ -61,9 +58,7 @@ internal enum class ControlError {
     PROFILE_INVALID,
     NEED_VPN_CONSENT,
     APP_NOT_INSTALLED,
-    FGS_START_BLOCKED,
     WRONG_STATE,
     TIMEOUT,
     ENGINE_ERROR,
-    NOT_IMPLEMENTED,
 }

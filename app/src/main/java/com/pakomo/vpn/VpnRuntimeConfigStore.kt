@@ -20,6 +20,10 @@ internal data class VpnRuntimeConfig(
     val domainsByPackage: Map<String, List<String>>,
     val rule: NetworkRule,
     val useKotlinKernel: Boolean = false,
+    // The store key, carried inside the config so the service can report which configuration it
+    // actually applied (see VpnServiceController.appliedConfigId) — lets callers confirm a hot
+    // update / start really took effect instead of only observing the coarse EngineStage.
+    val configId: Long = 0,
 )
 
 internal object VpnRuntimeConfigStore {
@@ -43,6 +47,7 @@ internal object VpnRuntimeConfigStore {
             domainsByPackage = domainsByPackage,
             rule = rule,
             useKotlinKernel = useKotlinKernel,
+            configId = id,
         )
         while (pending.size > MAX_PENDING_CONFIGS) {
             pending.remove(pending.keys.first())

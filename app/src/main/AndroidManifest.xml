@@ -54,5 +54,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-enabled visible overlay for immediate VPN start and stop control." />
         </service>
+
+        <!-- Stable automation endpoint. Release commands require a provisioned token. -->
+        <receiver
+            android:name=".automation.ControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.pakomo.automation.CONTROL" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

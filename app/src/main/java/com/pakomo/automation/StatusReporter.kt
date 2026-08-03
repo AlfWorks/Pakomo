@@ -10,7 +10,7 @@ import java.io.File
 
 /**
  * Builds the machine-readable response and fans it out over all three read-back channels
- * (design §10): the ordered-broadcast result data, a logcat line, and a status file. The caller
+ * through the ordered-broadcast result data, a logcat line, and a status file. The caller
  * ([ControlReceiver]) owns the broadcast result (setResultData must run inside onReceive); this
  * helper produces the JSON and handles the log + file channels.
  */
@@ -38,6 +38,7 @@ internal object StatusReporter {
         }
 
     private fun base(cmd: ControlCommand?): JSONObject = JSONObject().apply {
+        put("protocolVersion", AutomationContract.PROTOCOL_VERSION)
         put("cmd", cmd?.wire ?: JSONObject.NULL)
         put("flavor", flavor)
         put("ts", System.currentTimeMillis())

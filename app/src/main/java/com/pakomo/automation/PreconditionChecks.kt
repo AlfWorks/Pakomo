@@ -7,7 +7,7 @@ import com.pakomo.core.model.TargetScope
 import com.pakomo.vpn.VpnServiceController
 
 /**
- * Contract-level assertions the control layer runs before mutating anything (design §14). Every
+ * Contract-level assertions the control layer runs before mutating anything. Every
  * check only *asserts* a precondition and reports it — it never tries to *satisfy* it (e.g. it does
  * not launch the VPN consent dialog; that is the environment's job, §8). Each returns a
  * [ControlError] to fail-fast on, or `null` when the precondition holds.

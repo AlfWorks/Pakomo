@@ -83,7 +83,7 @@ writeInt16(udpHeader, 2, sourcePort)
 
 ### 2.1 TCP 连接表泄漏（无空闲回收）`[High]`
 
-**问题**：`Tun2SocksConfig.tcpReadWriteTimeoutMs` 定义了却从未被使用，`TcpConnection` 没有任何空闲超时。空闲的 ESTABLISHED，或卡在 FIN_WAIT/LAST_ACK 的半关闭连接（对端消失、永不 ACK 我们的 FIN），永远留在表里。累积到 `maxSessionCount`(1024) 后 `handleTcp` 静默丢弃所有新 SYN → 新连接全超时。UDP 有空闲回收，TCP 没有。
+**问题**：`Tun2SocksConfig.tcpReadWriteTimeoutMs` 定义了却从未被使用，`TcpConnection` 没有任何空闲超时。空闲的 ESTABLISHED，或卡在 FIN_WAIT/LAST_ACK 的半关闭连接（对端消失、永不 ACK 本地 FIN），永远留在表里。累积到 `maxSessionCount`(1024) 后 `handleTcp` 静默丢弃所有新 SYN → 新连接全超时。UDP 有空闲回收，TCP 没有。
 
 **处理**：每连接维护 `lastActivityMs`（进出段都刷新）；引擎级 reaper 每 15s 扫描：ESTABLISHED/CLOSE_WAIT 空闲超 `tcpReadWriteTimeoutMs`(300s) 回收，握手中/半关闭状态空闲超 30s 强制关闭（连带 actor 退出、关 SOCKS socket、取消 RTO）。
 
@@ -146,7 +146,7 @@ writeInt16(udpHeader, 2, sourcePort)
 - **每段抢锁的乒乓（主因）**：发送与 ACK 每段各抢一次 `Mutex`，互相乒乓 + 上下文切换，恰好卡在 ~7MB/s。→ **一次抢锁批量发多段**（每 16KB 从 ~11 次锁降到 1 次）→ 单连接翻近 3 倍到 ~19MB/s，0 重传。
 - **RTO 定时器每段重建协程**：`sendSegment` 每段 `cancel + launch` 一个协程。→ 只保留一个定时器、仅在 ACK 真正推进时重整。
 - **读/发串行**：socksReadJob "读完再发、发完再读"。→ 拆成生产者/消费者两协程并发流水线。
-- **本地中继串行 + 小缓冲**：本地 `Socks5Server` 的 `copyDirect` 同样读写串行、缓冲 16KB，上游/环回 socket 无大缓冲，正常模式还白走 `delayedPump` 慢路径。→ 中继流水线化、缓冲扩容（上游收 2MB / 发我方 1MB / 拷贝 64KB / 我方环回收 1MB）、空操作 shaper 时旁路 `delayedPump` 走直拷。
+- **本地中继串行 + 小缓冲**：本地 `Socks5Server` 的 `copyDirect` 同样读写串行、缓冲 16KB，上游/环回 socket 无大缓冲，正常模式还白走 `delayedPump` 慢路径。→ 中继流水线化、缓冲扩容（上游接收 2MB / 发送 1MB / 拷贝 64KB / 本地环回接收 1MB）、空操作 shaper 时旁路 `delayedPump` 走直拷。
 
 **结果**：单连接从"670KB 处断"→ **稳定 16.5–22MB/s、0 重传、完整下完 197MB**；4 连接并发 27MB/s+ 可叠加。
 
@@ -284,7 +284,7 @@ App → TUN → [ Tun2SocksEngine (k) | TProxyService (n) ] → Socks5Client(127
 
 ### P1-2 · 握手 ACK 携带数据被丢弃
 
-**问题**：`handleSynRcvd` 在 `isAck && ack==iss+1` 时切到 ESTABLISHED，但**不处理 `seg.payload`**。当对端把 ClientHello 与握手 ACK 合并在同一段发送（合法且部分客户端会这么做），这段 payload 被丢，且 `rcvNxt` 已被推进 → 我们后续会 ACK 掉从未转发的数据 → 上游收不到 ClientHello → 该连接 TLS 卡死。
+**问题**：`handleSynRcvd` 在 `isAck && ack==iss+1` 时切到 ESTABLISHED，但**不处理 `seg.payload`**。当对端把 ClientHello 与握手 ACK 合并在同一段发送（合法且部分客户端会这么做），这段 payload 被丢，且 `rcvNxt` 已被推进 → 后续会 ACK 掉从未转发的数据 → 上游收不到 ClientHello → 该连接 TLS 卡死。
 
 **处理方法**（抽出统一的"数据摄取"逻辑，两处复用）：
 

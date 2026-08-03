@@ -1,5 +1,5 @@
 {
-  "_comment": "Example Pakomo automation profile. Push to the device with: adb push checkout_flow.example.json /sdcard/Android/data/<pkg>/files/pakomo/profiles/checkout_flow.json  then drive with: --es cmd start --es profile checkout_flow",
+  "_comment": "Replace com.example.sut with the installed app under test, place this file at pakomo/profiles/checkout_flow.json, then send start with profile=checkout_flow.",
   "scope": "applications",
   "apps": ["com.example.sut"],
   "domainsByApp": { "com.example.sut": ["api.example.com", "cdn.example.com"] },

@@ -139,6 +139,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                             config.domainsByPackage,
                         config.rule,
                         config.useKotlinKernel,
+                        config.configId,
                         )
                     }
                 }
@@ -166,21 +167,32 @@ class WeakNetworkVpnService : android.net.VpnService() {
         val generation = runtimeGeneration.incrementAndGet()
         reconfigureJob = serviceScope.launch {
             val socks = socksServer ?: return@launch
-            runCatching {
-                buildRuntime(
+            try {
+                val runtime = buildRuntime(
                     scope = config.scope,
                     allowedPackages = config.selectedPackages,
                     targetDomains = config.targetDomains,
                     domainsByPackage = config.domainsByPackage,
                     rule = config.rule,
                 )
-            }.onSuccess { runtime ->
-                if (runtimeGeneration.get() != generation) return@onSuccess
-                applyRuntime(runtime)
+                if (runtimeGeneration.get() != generation) return@launch // superseded by a newer config
+                // Switch the fallible data plane FIRST; only publish the new runtime metadata (rule
+                // name, policy refs, attribution) after it succeeds, so a reconfigure failure can't
+                // leave the control plane showing the new rule while SOCKS still relays the old one.
                 socks.reconfigure(runtime.shaper, runtime.shapingPolicy, runtime.faultPolicy)
+                applyRuntime(runtime)
                 Log.i(TAG, "Runtime configuration updated: scope=${config.scope.name}")
-                updateRuntimeNotification()
-            }.onFailure { error ->
+                runCatching { updateRuntimeNotification() }
+                    .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
+                VpnServiceController.publishAppliedConfig(config.configId)
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel // superseded/cancelled — not a failure, and must not be swallowed
+            } catch (error: Throwable) {
+                // Covers buildRuntime, socks.reconfigure and applyRuntime. Report only for the
+                // current generation so a superseded config is not misreported as failed.
+                if (runtimeGeneration.get() == generation) {
+                    VpnServiceController.publishFailedConfig(config.configId)
+                }
                 Log.e(TAG, "Runtime configuration update failed", error)
             }
         }
@@ -209,6 +221,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         domainsByPackage: Map<String, List<String>>,
         rule: NetworkRule,
         useKotlinKernel: Boolean,
+        configId: Long,
     ) {
         stopPipeline()
         try {
@@ -296,7 +309,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
             startStatsMonitoring(nativeTunnel ?: return, localSocks)
             VpnServiceController.publish(EngineStage.FORWARDING, "本地转发链路已建立")
             Log.i(TAG, "Forwarding pipeline ready")
-            updateRuntimeNotification()
+            runCatching { updateRuntimeNotification() }
+                .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
+            VpnServiceController.publishAppliedConfig(configId)
         } catch (error: Throwable) {
             Log.e(TAG, "Failed to start local forwarding", error)
             stopWithError(error.toUserMessage())

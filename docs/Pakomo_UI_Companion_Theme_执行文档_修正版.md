@@ -38,7 +38,7 @@ Phase 2  Companion 视觉增量        —— 状态卡角色槽 / 空状态 / �
 Phase 3  待决策增项(可选)        —— 角色底部装饰、派生故障提示、关于页角色
 ```
 
-每个 Phase 都能独立编译、独立验收、独立合并。Phase 0/1 合并后 App 行为与现在**完全一致**,只是多了一个默认关闭的开关。
+每个 Phase 都能独立编译、独立验证、独立合并。Phase 0/1 合并后 App 行为与现在**完全一致**,只是多了一个默认关闭的开关。
 
 ---
 
@@ -169,11 +169,11 @@ fun PakomoTheme(
 
 - 保留旧顶层 `val`(暂不删)作为过渡,新代码一律走 `LocalPakomoColors.current`。
 - **逐文件**把 `import ...theme.Accent` → 读 `val c = LocalPakomoColors.current; c.accent`。
-- 每迁完一个文件即可编译验收;**未迁移文件仍用旧 val(=Standard 色),不影响运行**。
+- 每迁完一个文件即可编译验证;**未迁移文件仍用旧 val(=Standard 色),不影响运行**。
 - 全部迁移完成后,删除顶层 `val` 与 `PakomoTheme.kt` 里旧的 `private val PakomoColors`。
 - 迁移顺序建议:`PakomoComponents.kt`(共享组件,收益最大)→ `HomeScreen.kt` → `UtilityScreens.kt` → `RulesScreen / ScopeScreen / RuleEditorScreen / LatencyTestScreen / SpecialFaultScreens`。
 
-**Phase 0 验收**:切到 Standard,逐屏与迁移前截图像素对比,应无差异。
+**Phase 0 验证**:切到 Standard,逐屏与迁移前截图像素对比,应无差异。
 
 ---
 
@@ -246,7 +246,7 @@ InfoCard {
 
 > `SettingsScreen` 需新增两个参数 `themeMode` / `onThemeModeChange`,并在 `PakomoApp.kt` 的 `Screen.Settings ->` 分支透传(与现有 `quickControlEnabled` 走法完全一致)。
 
-**Phase 1 验收**:
+**Phase 1 验证**:
 - 切换开关 → 全 App 颜色即时切换,布局/交互/导航零变化。
 - 杀进程重启 → 记住上次选择。
 - 运行 VPN 时切主题 → 服务不中断、stats 不卡顿、不整树重建。
@@ -337,7 +337,7 @@ val CompanionColors = PakomoColors(
 - 严禁:整页滤镜、扫描线、RGB 分离、高频循环、覆盖图表数据。
 - 遵守系统"减少动画":读 `AccessibilityManager` / 动画 scale,为 0 时降级为静态。
 
-**Phase 2 验收**:关闭角色资源(占位)后所有功能仍可用;日志/图表区无装饰干扰;小屏/横屏/大字体不遮挡;Standard 完全不受影响。
+**Phase 2 验证**:关闭角色资源(占位)后所有功能仍可用;日志/图表区无装饰干扰;小屏/横屏/大字体不遮挡;Standard 完全不受影响。
 
 ---
 
@@ -379,8 +379,8 @@ val CompanionColors = PakomoColors(
 
 ### 6.2 停止 VPN 快捷入口（不新增“紧急恢复”语义）
 
-- 当前 App 和引擎不存在独立的“紧急恢复正常网络”能力，因此本执行方案**不新增**该按钮，也不把它列为 UI 验收项。
-- 视觉文档中的“紧急恢复”仅是概念建议，不能据此创造新的业务承诺。
+- 当前 App 和引擎不存在独立的“紧急恢复正常网络”能力，因此本执行方案**不新增**该按钮，也不把它列为 UI 验证项。
+- 视觉文档中的“紧急恢复”仅是概念建议，不能据此创造新的功能承诺。
 - 若后续认为首页需要更显式的安全出口，只允许复用现有“停止 VPN”行为，并使用准确文案，例如：
   - `停止 VPN`
   - `停止弱网模拟`
@@ -437,7 +437,7 @@ val CompanionColors = PakomoColors(
 
 ---
 
-## 9. 验收总表
+## 9. 验证总表
 
 | 维度 | 标准 |
 |---|---|

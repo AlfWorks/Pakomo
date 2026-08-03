@@ -85,12 +85,7 @@ android {
     }
 
     buildTypes {
-        debug {
-            // The automation control surface (exported ControlReceiver) is registered only by the
-            // debug manifest and its sources live in src/debug, so release APKs never contain it.
-            // This BuildConfig flag is a defence-in-depth guard the receiver also asserts at runtime.
-            buildConfigField("boolean", "AUTOMATION_ENABLED", "true")
-        }
+        debug {}
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -101,7 +96,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            buildConfigField("boolean", "AUTOMATION_ENABLED", "false")
         }
     }
 
