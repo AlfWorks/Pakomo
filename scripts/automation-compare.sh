@@ -18,6 +18,11 @@
 #       -- ./run-sut-tests.sh
 set -euo pipefail
 
+# Git Bash (MSYS) rewrites Unix-looking args such as `/sdcard/...` into Windows paths, which breaks
+# `adb push`/`adb shell` device paths. Disable that conversion; harmless on Linux/macOS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 ACTION="com.pakomo.automation.CONTROL"
 FLAVORS=("kernel" "hev")
 OUT_DIR="${OUT_DIR:-build/automation-compare}"

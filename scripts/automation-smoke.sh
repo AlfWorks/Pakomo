@@ -19,6 +19,11 @@
 #   scripts/automation-smoke.sh com.pakomo.kernel docs/automation/profiles/checkout_flow.example.json
 set -uo pipefail
 
+# Git Bash (MSYS) rewrites Unix-looking args such as `/sdcard/...` into Windows paths, which breaks
+# `adb push`/`adb shell` device paths. Disable that conversion; harmless on Linux/macOS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 PKG="${1:-com.pakomo.kernel}"
 PROFILE_FILE="${2:-}"
 ACTION="com.pakomo.automation.CONTROL"
