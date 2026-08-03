@@ -36,10 +36,14 @@ adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd stop -
 > `applicationId` 按 flavor 带后缀:kernel 版 = `com.pakomo.kernel`,hev 版 = `com.pakomo.hev`;
 > 接收器类名两版都是 `com.pakomo.automation.ControlReceiver`。
 
-一键冒烟(含从 `stopped` 的真冷启动 + profile + token 全路径断言):
-[`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh)
+一键冒烟(含从 `stopped` 的真冷启动 + profile + token 全路径断言)。Linux/CI/Git-Bash 用
+[`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh),Windows PowerShell 用
+[`scripts/automation-smoke.ps1`](../scripts/automation-smoke.ps1):
+```powershell
+.\scripts\automation-smoke.ps1 -Pkg com.pakomo.kernel -ProfileFile docs\automation\profiles\checkout_flow.example.json
+```
 ```bash
-scripts/automation-smoke.sh com.pakomo.kernel docs/automation/profiles/checkout_flow.example.json
+bash scripts/automation-smoke.sh com.pakomo.kernel docs/automation/profiles/checkout_flow.example.json
 ```
 
 ---
