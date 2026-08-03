@@ -52,14 +52,14 @@ android {
             applicationIdSuffix = ".kernel"
             versionNameSuffix = "-kernel"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "true")
-            manifestPlaceholders["appLabel"] = "Pakomo (kernel)"
+            manifestPlaceholders["appLabel"] = "Pakomo"
         }
         create("hev") {
             dimension = "engine"
             applicationIdSuffix = ".hev"
             versionNameSuffix = "-hev"
             buildConfigField("boolean", "USE_KOTLIN_KERNEL", "false")
-            manifestPlaceholders["appLabel"] = "Pakomo (hev)"
+            manifestPlaceholders["appLabel"] = "Pakomo"
             if (buildingHevVariant) {
                 externalNativeBuild {
                     ndkBuild {
@@ -85,7 +85,6 @@ android {
     }
 
     buildTypes {
-        debug {}
         release {
             isMinifyEnabled = true
             isShrinkResources = true
