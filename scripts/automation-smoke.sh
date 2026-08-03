@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# Turn-key smoke test for the Pakomo automation control surface (P0–P3).
+# Runs against a single installed debug flavor and asserts each command's JSON response, INCLUDING
+# a true cold start from `stopped` — the FGS-start-from-background path that the ad-hoc manual run
+# did not exercise (the engine was already forwarding). See docs/automation-control.md.
+#
+# Prereqs (environment provisioning, not this script's job):
+#   - the debug APK is installed (default com.pakomo.kernel)
+#   - a device is connected (`adb devices`)
+#
+# Usage:
+#   scripts/automation-smoke.sh [pkg] [profile.json]
+#   TEST_TOKEN=1 scripts/automation-smoke.sh          # also exercise the token gate
+#
+# Examples:
+#   scripts/automation-smoke.sh                                   # kernel flavor, no profile
+#   scripts/automation-smoke.sh com.pakomo.hev                    # hev flavor
+#   scripts/automation-smoke.sh com.pakomo.kernel docs/automation/profiles/checkout_flow.example.json
+set -uo pipefail
+
+PKG="${1:-com.pakomo.kernel}"
+PROFILE_FILE="${2:-}"
+ACTION="com.pakomo.automation.CONTROL"
+COMP="$PKG/com.pakomo.automation.ControlReceiver"
+FILES="/sdcard/Android/data/$PKG/files/pakomo"
+
+pass=0; fail=0
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+red() { printf '\033[31m%s\033[0m\n' "$*"; }
+
+# Send a control broadcast (explicit component — implicit broadcasts are dropped on Android 8+),
+# echo the response JSON extracted from `am`'s `data="..."`.
+send() {
+  adb shell am broadcast -a "$ACTION" -n "$COMP" "$@" 2>/dev/null \
+    | sed -n 's/^Broadcast completed: result=[0-9-]*, data="\(.*\)"$/\1/p'
+}
+
+# assert <label> <json> <grep-pattern>
+assert() {
+  local label="$1" json="$2" pat="$3"
+  if grep -q "$pat" <<<"$json"; then
+    green "  PASS  $label"; pass=$((pass + 1))
+  else
+    red   "  FAIL  $label  — expected /$pat/ in: $json"; fail=$((fail + 1))
+  fi
+}
+
+echo "== automation smoke: $PKG =="
+adb shell appops set "$PKG" ACTIVATE_VPN allow 2>/dev/null || true
+
+echo "-- teardown to a known 'stopped' baseline"
+send --es cmd stop --es wait true >/dev/null
+
+echo "-- P0: status (stopped)"
+assert "status ok + stopped" "$(send --es cmd status)" '"stage":"stopped"'
+
+echo "-- P1: COLD start from stopped (FGS-from-background path)"
+cold="$(send --es cmd start --es rule medium --es wait true)"
+assert "cold start reaches forwarding" "$cold" '"stage":"forwarding"'
+assert "cold start applied medium"     "$cold" '"appliedRule":"medium"'
+assert "cold start ok"                 "$cold" '"ok":true'
+
+echo "-- P1: hot update (running tunnel)"
+assert "update -> severe" "$(send --es cmd update --es rule severe --es wait true)" '"appliedRule":"severe"'
+
+echo "-- P1: update precondition (WRONG_STATE only when stopped) — informational"
+echo "-- P1: reset -> normal"
+assert "reset ok" "$(send --es cmd reset)" '"ok":true'
+
+if [[ -n "$PROFILE_FILE" ]]; then
+  name="$(basename "${PROFILE_FILE%.json}" | sed 's/\.example$//')"
+  echo "-- P2: profile file '$name'"
+  adb shell mkdir -p "$FILES/profiles" 2>/dev/null || true
+  adb push "$PROFILE_FILE" "$FILES/profiles/$name.json" >/dev/null
+  assert "load_profile valid" "$(send --es cmd load_profile --es profile "$name")" '"valid":true'
+  assert "start via profile"  "$(send --es cmd start --es profile "$name" --es wait true)" '"ok":true'
+fi
+
+if [[ "${TEST_TOKEN:-0}" == "1" ]]; then
+  echo "-- P3: token gate"
+  echo -n "smoke-secret" > /tmp/pakomo.token
+  adb push /tmp/pakomo.token "$FILES/automation.token" >/dev/null
+  assert "no token -> BAD_TOKEN"   "$(send --es cmd status)" '"error":"BAD_TOKEN"'
+  assert "good token -> ok"        "$(send --es cmd status --es token smoke-secret)" '"ok":true'
+  adb shell rm "$FILES/automation.token" 2>/dev/null || true  # restore open access
+fi
+
+echo "-- teardown"
+send --es cmd stop --es wait true >/dev/null
+assert "final stopped" "$(send --es cmd status)" '"stage":"stopped"'
+
+echo "== $pass passed, $fail failed =="
+[[ "$fail" -eq 0 ]]
