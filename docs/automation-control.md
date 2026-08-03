@@ -40,10 +40,10 @@ adb shell am broadcast -a com.pakomo.automation.CONTROL -n $COMP --es cmd stop -
 [`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh),Windows PowerShell 用
 [`scripts/automation-smoke.ps1`](../scripts/automation-smoke.ps1):
 ```powershell
-.\scripts\automation-smoke.ps1 -Pkg com.pakomo.kernel -ProfileFile docs\automation\profiles\checkout_flow.example.json
+.\scripts\automation-smoke.ps1 -Pkg com.pakomo.kernel     # add: $env:TEST_TOKEN=1  to also verify the token gate
 ```
 ```bash
-bash scripts/automation-smoke.sh com.pakomo.kernel docs/automation/profiles/checkout_flow.example.json
+bash scripts/automation-smoke.sh com.pakomo.kernel        # prefix: TEST_TOKEN=1  to also verify the token gate
 ```
 
 ---

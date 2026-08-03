@@ -73,19 +73,24 @@ echo "-- P1: update precondition (WRONG_STATE only when stopped) — information
 echo "-- P1: reset -> normal"
 assert "reset ok" "$(send --es cmd reset)" '"ok":true'
 
-if [[ -n "$PROFILE_FILE" ]]; then
-  name="$(basename "${PROFILE_FILE%.json}" | sed 's/\.example$//')"
-  echo "-- P2: profile file '$name'"
-  adb shell mkdir -p "$FILES/profiles" 2>/dev/null || true
-  adb push "$PROFILE_FILE" "$FILES/profiles/$name.json" >/dev/null
-  assert "load_profile valid" "$(send --es cmd load_profile --es profile "$name")" '"valid":true'
-  assert "start via profile"  "$(send --es cmd start --es profile "$name" --es wait true)" '"ok":true'
-fi
+# Auto-generate a global-scope profile so P2 is device-independent (an app-targeting profile like
+# the doc example would — correctly — fail APP_NOT_INSTALLED unless that exact app is installed).
+echo "-- P2: profile file (auto-generated, global scope)"
+prof="./.pakomo-smoke-profile.json"
+printf '%s' '{"scope":"global","apps":[],"domainsByApp":{},"domains":[],"rule":{"id":"smoke","name":"smoke","latencyMs":150,"jitterMs":30,"packetLossPercent":2,"downloadKbps":1024,"uploadKbps":512}}' > "$prof"
+adb shell mkdir -p "$FILES/profiles" 2>/dev/null || true
+adb push "$prof" "$FILES/profiles/smoke_auto.json" >/dev/null
+rm -f "$prof"
+assert "load_profile valid" "$(send --es cmd load_profile --es profile smoke_auto)" '"valid":true'
+assert "start via profile"  "$(send --es cmd start --es profile smoke_auto --es wait true)" '"ok":true'
 
 if [[ "${TEST_TOKEN:-0}" == "1" ]]; then
   echo "-- P3: token gate"
-  echo -n "smoke-secret" > /tmp/pakomo.token
-  adb push /tmp/pakomo.token "$FILES/automation.token" >/dev/null
+  # Relative local path: native adb can't resolve MSYS `/tmp/...` once path conversion is disabled.
+  tok="./.pakomo-smoke.token"
+  printf '%s' "smoke-secret" > "$tok"
+  adb push "$tok" "$FILES/automation.token" >/dev/null
+  rm -f "$tok"
   assert "no token -> BAD_TOKEN"   "$(send --es cmd status)" '"error":"BAD_TOKEN"'
   assert "good token -> ok"        "$(send --es cmd status --es token smoke-secret)" '"ok":true'
   adb shell rm "$FILES/automation.token" 2>/dev/null || true  # restore open access

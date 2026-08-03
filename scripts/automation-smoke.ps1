@@ -65,14 +65,15 @@ Assert "update -> severe" (Send-Control @("--es","cmd","update","--es","rule","s
 Write-Host "-- P1: reset -> normal"
 Assert "reset ok" (Send-Control @("--es","cmd","reset")) '"ok":true'
 
-if ($ProfileFile -ne "") {
-  $name = [IO.Path]::GetFileNameWithoutExtension($ProfileFile) -replace '\.example$',''
-  Write-Host "-- P2: profile file '$name'"
-  & adb shell mkdir -p "$Files/profiles" 2>$null | Out-Null
-  & adb push $ProfileFile "$Files/profiles/$name.json" | Out-Null
-  Assert "load_profile valid" (Send-Control @("--es","cmd","load_profile","--es","profile",$name)) '"valid":true'
-  Assert "start via profile"  (Send-Control @("--es","cmd","start","--es","profile",$name,"--es","wait","true")) '"ok":true'
-}
+# Auto-generate a global-scope profile so P2 is device-independent (an app-targeting profile like
+# the doc example would — correctly — fail APP_NOT_INSTALLED unless that exact app is installed).
+Write-Host "-- P2: profile file (auto-generated, global scope)"
+$prof = Join-Path $env:TEMP "pakomo-smoke-profile.json"
+'{"scope":"global","apps":[],"domainsByApp":{},"domains":[],"rule":{"id":"smoke","name":"smoke","latencyMs":150,"jitterMs":30,"packetLossPercent":2,"downloadKbps":1024,"uploadKbps":512}}' | Set-Content -Path $prof -NoNewline -Encoding ascii
+& adb shell mkdir -p "$Files/profiles" 2>$null | Out-Null
+& adb push $prof "$Files/profiles/smoke_auto.json" | Out-Null
+Assert "load_profile valid" (Send-Control @("--es","cmd","load_profile","--es","profile","smoke_auto")) '"valid":true'
+Assert "start via profile"  (Send-Control @("--es","cmd","start","--es","profile","smoke_auto","--es","wait","true")) '"ok":true'
 
 if ($env:TEST_TOKEN -eq "1") {
   Write-Host "-- P3: token gate"
