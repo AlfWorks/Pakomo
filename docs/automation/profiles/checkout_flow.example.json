@@ -1,0 +1,25 @@
+{
+  "_comment": "Example Pakomo automation profile. Push to the device with: adb push checkout_flow.example.json /sdcard/Android/data/<pkg>/files/pakomo/profiles/checkout_flow.json  then drive with: --es cmd start --es profile checkout_flow",
+  "scope": "applications",
+  "apps": ["com.example.sut"],
+  "domainsByApp": { "com.example.sut": ["api.example.com", "cdn.example.com"] },
+  "domains": [],
+  "rule": {
+    "id": "checkout-medium-reset",
+    "name": "Checkout · Medium + Reset",
+    "latencyMs": 300,
+    "jitterMs": 100,
+    "packetLossPercent": 5,
+    "downloadKbps": 512,
+    "uploadKbps": 128,
+    "specialFaults": {
+      "CONNECTION_RESET": {
+        "enabled": true,
+        "resetTiming": "IMMEDIATE",
+        "appTargets": {
+          "com.example.sut": { "enabled": true, "domains": ["api.example.com"] }
+        }
+      }
+    }
+  }
+}
