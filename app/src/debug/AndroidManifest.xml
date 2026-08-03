@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay. It registers the automation ControlReceiver so external drivers can
+  reach it via `adb shell am broadcast`. Because this file and the receiver's sources live in the
+  debug source set, release APKs contain neither (design §9 security收口). Security hardening
+  (token + caller checks) lands in P3; the debug-only surface is the P0 guard.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name=".automation.ControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.pakomo.automation.CONTROL" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
