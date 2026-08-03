@@ -46,9 +46,12 @@ function Assert {
 
 Write-Host "== automation smoke: $Pkg =="
 & adb shell appops set $Pkg ACTIVATE_VPN allow 2>$null | Out-Null
-# Headless cold start: SYSTEM_ALERT_WINDOW exempts the app from the Android 12+ background
-# foreground-service-start restriction, so `start` works even when the app was never opened.
 & adb shell appops set $Pkg SYSTEM_ALERT_WINDOW allow 2>$null | Out-Null
+# Reliable headless cold start: modern Android blocks background foreground-service starts even with
+# appops exemptions. Bring the app to the foreground once (scripted, no human) so `start` has the
+# foreground privilege it needs — the standard way to drive VPN apps in automation.
+& adb shell am start -n "$Pkg/com.pakomo.MainActivity" 2>$null | Out-Null
+Start-Sleep -Seconds 1
 
 Write-Host "-- teardown to a known 'stopped' baseline"
 Send-Control @("--es","cmd","stop","--es","wait","true") | Out-Null

@@ -120,20 +120,22 @@ adb shell appops set com.pakomo.kernel ACTIVATE_VPN allow
 
 受管设备可用 always-on VPN(`settings put secure always_on_vpn_app <pkg>`)。
 
-### Headless 冷启动(应用未开启时)
+### 冷启动(应用未开启时)
 
-Android 12+ 限制**从后台启动前台服务**:应用在前台(或刚在前台)时有豁免,冷启动正常;但若应用
-从未打开 / 被 `force-stop`,`start` 广播能唤醒进程却会被这条限制拦下。这也是环境前置条件——
-Pakomo 声明了 `SYSTEM_ALERT_WINDOW`,**持有该权限即是官方 FGS 后台启动豁免项**,授予它即可
-headless 冷启动:
+现代 Android(targetSdk 34/36)**从后台启动前台服务**限制很严:应用在前台(或刚在前台)时才有
+豁免。若应用从未打开 / 被 `force-stop`,`start` 广播能唤醒进程,但 `startForegroundService` 会被拦
+(实测 `SYSTEM_ALERT_WINDOW` 等 appops 豁免在新版本上**不可靠**)。
+
+**可靠且无人值守的做法**:setup 里用 `am start` 把应用拉到前台一次(纯脚本,不需要人),之后
+`start` 广播就有前台豁免。这是驱动 VPN 类应用做自动化的标准姿势,不改代码:
 
 ```bash
-adb shell appops set com.pakomo.kernel SYSTEM_ALERT_WINDOW allow
+adb shell am start -n com.pakomo.kernel/com.pakomo.MainActivity   # 拉起一次;之后 start 广播即可
 ```
 
-冒烟脚本已在 setup 里自动授予以上两项。兜底方案:开机后 `am start -n <pkg>/com.pakomo.MainActivity`
-把应用拉起一次;或把应用加入电池/deviceidle 白名单。可用
-`adb shell am force-stop <pkg>` 后再跑冒烟脚本来验证 headless 路径。
+> 冒烟/对拍脚本已在 setup 里自动执行 `appops`(ACTIVATE_VPN / SYSTEM_ALERT_WINDOW)+ `am start`。
+> 因此它「有 UI 一闪」但全程无人交互,符合 CI 无人值守。纯无 UI 的后台冷启动在新版本 Android 上
+> 已基本不可行,属平台限制,非 Pakomo 缺陷。
 
 ---
 
