@@ -46,6 +46,9 @@ function Assert {
 
 Write-Host "== automation smoke: $Pkg =="
 & adb shell appops set $Pkg ACTIVATE_VPN allow 2>$null | Out-Null
+# Headless cold start: SYSTEM_ALERT_WINDOW exempts the app from the Android 12+ background
+# foreground-service-start restriction, so `start` works even when the app was never opened.
+& adb shell appops set $Pkg SYSTEM_ALERT_WINDOW allow 2>$null | Out-Null
 
 Write-Host "-- teardown to a known 'stopped' baseline"
 Send-Control @("--es","cmd","stop","--es","wait","true") | Out-Null

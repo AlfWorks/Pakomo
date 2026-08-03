@@ -53,6 +53,10 @@ assert() {
 
 echo "== automation smoke: $PKG =="
 adb shell appops set "$PKG" ACTIVATE_VPN allow 2>/dev/null || true
+# Headless cold start: Android 12+ blocks starting a foreground service from the background unless
+# the app is exempt. Holding SYSTEM_ALERT_WINDOW is such an exemption, so a `start` broadcast works
+# even when the app was never opened / was force-stopped. (Env provisioning, like ACTIVATE_VPN.)
+adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
 
 echo "-- teardown to a known 'stopped' baseline"
 send --es cmd stop --es wait true >/dev/null

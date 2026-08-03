@@ -42,6 +42,9 @@ broadcast() { # <pkg> <extras...>
 run_flavor() {
   local flavor="$1" pkg="com.pakomo.$flavor"
   echo "== $flavor ($pkg) =="
+  # Exemptions so a `start` broadcast can cold-start headlessly (see automation-control.md §env).
+  adb shell appops set "$pkg" ACTIVATE_VPN allow 2>/dev/null || true
+  adb shell appops set "$pkg" SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
 
   if [[ -n "$PROFILE_FILE" ]]; then
     adb push "$PROFILE_FILE" \
