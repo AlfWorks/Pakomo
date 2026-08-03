@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Dual-flavor 对拍 driver (DRAFT — wire into GitLab CI per your runner setup).
+# Dual-flavor 对拍 driver — run manually / on demand (intentionally NOT wired into CI).
 #
 # Runs the SAME automation profile against the kernel and hev debug builds, captures each
 # flavor's status JSON, then diffs the key fields so the hev flavor guards the kernel flavor as a
