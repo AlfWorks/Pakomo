@@ -20,8 +20,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.pakomo.BuildConfig
 import com.pakomo.ui.theme.LocalAppLanguage
-import dev.novi.compose.NoviUpdateDialogState
-import dev.novi.compose.NoviUpdatePhase
+import com.alphynia.novi.compose.NoviUpdateDialogState
+import com.alphynia.novi.compose.NoviUpdatePhase
 import java.util.Locale
 
 /**
