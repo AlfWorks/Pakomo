@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only. Permits cleartext HTTP to loopback so a local windows-host Novi update
+  source (e.g. http://127.0.0.1:8080 via `adb reverse`) is reachable during testing.
+  Release builds do not include this file and keep cleartext disabled (HTTPS-only).
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

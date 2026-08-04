@@ -56,6 +56,18 @@
                 android:value="User-enabled visible overlay for immediate VPN start and stop control." />
         </service>
 
+        <!-- Hands Novi's verified-APK cache file to the system package installer. Per-flavor
+             authority (com.pakomo.<flavor>.updateprovider) keeps kernel/hev installable side by side. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updateprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
+
         <!-- Stable automation endpoint. Release commands require a provisioned token. -->
         <receiver
             android:name=".automation.ControlReceiver"

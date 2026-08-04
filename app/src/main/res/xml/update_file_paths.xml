@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exposes Novi's verified-APK cache dir (cacheDir/novi) so the verified update can be handed
+     to the system package installer via a content:// URI. -->
+<paths>
+    <cache-path name="novi-updates" path="novi/" />
+</paths>

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.pakomo.BuildConfig
 import dev.novi.CheckResult
 import dev.novi.DownloadListener
@@ -125,7 +126,10 @@ class NoviUpdateController(app: Application) {
             when (result) {
                 is VerificationResult.Success -> {
                     verifiedApk = result.apk
-                    _dialog.value = NoviUpdateDialogState(release, NoviUpdatePhase.READY_TO_INSTALL)
+                    // Tapping "Update" is already the install intent, and the system installer is
+                    // the real consent gate — proceed straight to install rather than parking on a
+                    // redundant second tap.
+                    startInstall(release)
                 }
                 is VerificationResult.Failure -> fail(release, result.error)
             }
@@ -136,6 +140,15 @@ class NoviUpdateController(app: Application) {
         val n = novi ?: return
         val apk = verifiedApk ?: return
         _dialog.value = NoviUpdateDialogState(release, NoviUpdatePhase.INSTALLING)
+        // Without the "install unknown apps" access, hand the verified local APK to the system
+        // package installer via an intent. Android then shows its own "requests to install" prompt
+        // and routes the user to enable this source before continuing — instead of Novi's silent
+        // browser-download fallback. With the access granted, use Novi's PackageInstaller session
+        // (byte re-verification on write + reconcile across process death).
+        if (!appContext.packageManager.canRequestPackageInstalls()) {
+            launchSystemInstaller(apk)
+            return
+        }
         n.installer().install(
             apk,
             InstallCallback { state ->
@@ -153,6 +166,15 @@ class NoviUpdateController(app: Application) {
                 }
             },
         )
+    }
+
+    /** Launch the OS package installer on the verified APK; Android handles the source-permission prompt. */
+    private fun launchSystemInstaller(apk: VerifiedApk) {
+        val uri = FileProvider.getUriForFile(appContext, "${BuildConfig.APPLICATION_ID}.updateprovider", apk.file)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        _pendingIntent.value = intent
     }
 
     private fun fail(release: UpdateRelease, error: NoviError) {

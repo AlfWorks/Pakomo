@@ -29,8 +29,8 @@ import com.pakomo.overlay.QuickControlService
 import com.pakomo.ui.PakomoApp
 import com.pakomo.ui.PakomoViewModel
 import com.pakomo.ui.theme.PakomoTheme
+import com.pakomo.update.PakomoUpdateDialog
 import com.pakomo.vpn.VpnServiceController
-import dev.novi.compose.NoviUpdateDialog
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PakomoViewModel by viewModels()
@@ -150,9 +150,9 @@ class MainActivity : ComponentActivity() {
                 // while foregrounded (system installer confirmation / manual-download browser).
                 val updateDialog by updateController.dialog.collectAsState()
                 updateDialog?.let { state ->
-                    NoviUpdateDialog(
+                    PakomoUpdateDialog(
                         state = state,
-                        onPrimaryAction = { updateController.onPrimaryAction() },
+                        onUpdate = { updateController.onPrimaryAction() },
                         onDismiss = { updateController.dismiss() },
                     )
                 }
