@@ -764,4 +764,4 @@ VPN 授权；受管设备也可预置 always-on VPN。
 
 [`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh) 与
 [`scripts/automation-smoke.ps1`](../scripts/automation-smoke.ps1) 用于 Pakomo 自身开发时验证底层
-广播、profile、等待与 token 通路；它们不是项目集成 API，也不应被复制到自动化项目中。
+广播、profile、等待与 token 通路；这些脚本不是项目集成 API，也不应被复制到自动化项目中。
