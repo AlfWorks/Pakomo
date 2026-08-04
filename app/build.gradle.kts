@@ -37,6 +37,33 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
+        // Novi self-update wiring. Sources are a lightweight packaging-time input:
+        // PAKOMO_UPDATE_SOURCES is a comma-separated, ordered (priority) list of source
+        // roots, added/removed per build (empty -> update stays inert). The per-flavor
+        // track subpath (kernel/ or hev/) is derived from applicationId at runtime.
+        // The trust anchors below are the only set-once, security-critical values; when
+        // absent the controller disables self-update rather than trusting nothing.
+        buildConfigField(
+            "String",
+            "NOVI_UPDATE_SOURCES",
+            "\"${System.getenv("PAKOMO_UPDATE_SOURCES") ?: ""}\"",
+        )
+        buildConfigField(
+            "String",
+            "NOVI_MANIFEST_KEY_ID",
+            "\"${System.getenv("PAKOMO_NOVI_KEY_ID") ?: "manifest-2026"}\"",
+        )
+        buildConfigField(
+            "String",
+            "NOVI_MANIFEST_PUBLIC_KEY",
+            "\"${System.getenv("PAKOMO_NOVI_MANIFEST_PUBKEY") ?: ""}\"",
+        )
+        buildConfigField(
+            "String",
+            "NOVI_APK_SIGNER_SHA256",
+            "\"${System.getenv("PAKOMO_NOVI_APK_SIGNER") ?: ""}\"",
+        )
+
         ndk {
             abiFilters += setOf("arm64-v8a", "armeabi-v7a")
         }
@@ -148,6 +175,11 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // Self-update: core (manifest verify + download + install) and the optional M3 dialog.
+    // Version is nominal — the composite build substitutes these to ../novi projects.
+    implementation("dev.novi:novi-core:0.1.0-SNAPSHOT")
+    implementation("dev.novi:novi-compose:0.1.0-SNAPSHOT")
 
     testImplementation(libs.junit)
 }

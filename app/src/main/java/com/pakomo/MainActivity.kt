@@ -30,10 +30,12 @@ import com.pakomo.ui.PakomoApp
 import com.pakomo.ui.PakomoViewModel
 import com.pakomo.ui.theme.PakomoTheme
 import com.pakomo.vpn.VpnServiceController
+import dev.novi.compose.NoviUpdateDialog
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PakomoViewModel by viewModels()
     private val preferences by lazy { PakomoPreferences(this) }
+    private val updateController by lazy { (application as PakomoApplication).updateController }
     private var vpnPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(false)
     private var quickControlEnabled by mutableStateOf(false)
@@ -143,8 +145,27 @@ class MainActivity : ComponentActivity() {
                         updateQuickControlEnabled(false)
                     },
                 )
+
+                // Self-update surface: Novi owns the state, we only render and launch intents
+                // while foregrounded (system installer confirmation / manual-download browser).
+                val updateDialog by updateController.dialog.collectAsState()
+                updateDialog?.let { state ->
+                    NoviUpdateDialog(
+                        state = state,
+                        onPrimaryAction = { updateController.onPrimaryAction() },
+                        onDismiss = { updateController.dismiss() },
+                    )
+                }
+                val updateIntent by updateController.pendingIntent.collectAsState()
+                LaunchedEffect(updateIntent) {
+                    updateIntent?.let {
+                        startActivity(it)
+                        updateController.consumeIntent()
+                    }
+                }
             }
         }
+        updateController.checkOnce()
         handleQuickControlIntent(intent)
     }
 
