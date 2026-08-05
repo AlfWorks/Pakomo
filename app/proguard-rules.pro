@@ -2,4 +2,4 @@
 -keep class hev.htproxy.TProxyService { *; }
 
 # Public component name is part of the external automation protocol.
--keep public class com.pakomo.automation.ControlReceiver { public <init>(); }
+-keep public class com.alphynia.pakomo.automation.ControlReceiver { public <init>(); }

@@ -5,8 +5,8 @@
 
 ## 已实现（Implemented）
 
-- **双转发引擎并存**：Kernel（纯 Kotlin 自研 tun2socks，`com.pakomo.kernel`，默认，无 NDK）与
-  Hev（原生 `hev-socks5-tunnel`，`com.pakomo.hev`）。中继/整形/故障逻辑两版一致。Kernel 版 **2026-08 真机验收通过**。
+- **双转发引擎并存**：Kernel（纯 Kotlin 自研 tun2socks，`com.alphynia.pakomo.kernel`，默认，无 NDK）与
+  Hev（原生 `hev-socks5-tunnel`，`com.alphynia.pakomo.hev`）。中继/整形/故障逻辑两版一致。Kernel 版 **2026-08 真机验收通过**。
 - **弱网整形**：延迟 / 抖动 / 丢包 / 上下行限速，简单与高级（分方向）两模式。
 - **四种特殊故障**：连接重置、DNS 失败（NXDOMAIN/SERVFAIL/REFUSED/超时 + 抗缓存）、网络中断（静默/立即）、
   慢响应（Late Response，闸门暂扣 + 放行小响应阈值）。随规则保存，可同时启用。

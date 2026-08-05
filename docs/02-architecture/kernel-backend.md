@@ -6,7 +6,7 @@ Kernel 版使用纯 Kotlin 实现 Pakomo 当前业务所需的那部分用户态
 
 ## 覆盖范围
 
-Kernel 内核（`com.pakomo.kernel`）只实现 Pakomo 数据链路实际用到的子集：
+Kernel 内核（`com.alphynia.pakomo.kernel`）只实现 Pakomo 数据链路实际用到的子集：
 
 - IPv4。Pakomo 只添加 `0.0.0.0/0` 的 IPv4 路由，不包含 IPv6 双栈。
 - TCP 转 SOCKS5，通过用户态 TCP 状态机桥接到本地 `Socks5Server`。

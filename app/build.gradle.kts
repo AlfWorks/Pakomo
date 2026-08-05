@@ -22,12 +22,12 @@ plugins {
 }
 
 android {
-    namespace = "com.pakomo"
+    namespace = "com.alphynia.pakomo"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "com.pakomo"
+        applicationId = "com.alphynia.pakomo"
         minSdk = 29
         targetSdk = 36
         // CI injects the version from the release tag; local builds fall back to these defaults.
@@ -72,8 +72,8 @@ android {
     flavorDimensions += "engine"
     productFlavors {
         // Declared first, so the pure-Kotlin engine is the default selected variant (no NDK build).
-        // Symmetric applicationId per flavor (com.pakomo.<flavor>) + distinct label, so k 版 and h 版
-        // install side by side. No legacy com.pakomo users to preserve, so both carry a suffix.
+        // Symmetric applicationId per flavor (com.alphynia.pakomo.<flavor>) + distinct label, so k 版 and h 版
+        // install side by side. No legacy users to preserve, so both carry a suffix.
         create("kernel") {
             dimension = "engine"
             applicationIdSuffix = ".kernel"

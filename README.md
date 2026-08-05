@@ -44,9 +44,9 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
 
 转发引擎有两种可选实现，以 Android build flavor 区分。两种实现的中继逻辑与故障注入完全一致，可同机并存：
 
-- **Kernel 版**（flavor `kernel`，默认，applicationId `com.pakomo.kernel`）：纯 Kotlin 自研 tun2socks 内核
-  （`com.pakomo.kernel`），不含原生代码，构建不依赖 NDK。
-- **Hev 版**（flavor `hev`，applicationId `com.pakomo.hev`）：使用原生 `hev-socks5-tunnel` 转发核心。
+- **Kernel 版**（flavor `kernel`，默认，applicationId `com.alphynia.pakomo.kernel`）：纯 Kotlin 自研 tun2socks 内核
+  （`com.alphynia.pakomo.kernel`），不含原生代码，构建不依赖 NDK。
+- **Hev 版**（flavor `hev`，applicationId `com.alphynia.pakomo.hev`）：使用原生 `hev-socks5-tunnel` 转发核心。
 
 适用场景如下：
 
@@ -72,6 +72,7 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
 - **主题**：内置可切换的 Pako 装饰主题。
 - **快捷悬浮控制**：通过悬浮球即时开关接管。
 - **诊断**：实时运行状态、归属命中统计与原始 Logcat 输出。
+- **应用内自更新**：基于 [novi](https://github.com/AlfWorks/Novi)，清单 P-256 签名 + APK 签名者校验双层信任；CI 打 `vX.Y.Z` tag 时自动发布双轨更新源到 GitLab Pages，应用内弹窗完成检测 → 下载 → 校验 → 安装。
 
 ## 快速开始
 
@@ -147,14 +148,14 @@ Python、TypeScript、Java、C++ 调用示例，以及完整字段、错误码�
 ```
 
 产物为 `app/build/outputs/apk/kernel/release/app-kernel-release.apk` 与 `.../hev/release/app-hev-release.apk`，
-applicationId 分别为 `com.pakomo.kernel` 与 `com.pakomo.hev`，可同机并存。CI（`.gitlab-ci.yml`）在打
+applicationId 分别为 `com.alphynia.pakomo.kernel` 与 `com.alphynia.pakomo.hev`，可同机并存。CI（`.gitlab-ci.yml`）在打
 `vX.Y.Z` tag 时自动构建并发布两个版本。
 
 ## 项目结构
 
 ```text
 .
-|-- app/src/main/java/com/pakomo/
+|-- app/src/main/java/com/alphynia/pakomo/
 |   |-- core/            # 数据模型、输入校验、界面语言枚举
 |   |-- data/            # 偏好持久化、故障配置编解码、应用清单
 |   |-- kernel/          # Kernel 版：纯 Kotlin tun2socks 内核（IP/TCP/UDP、SOCKS5 客户端、连接回收）

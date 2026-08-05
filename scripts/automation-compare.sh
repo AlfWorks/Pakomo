@@ -7,7 +7,7 @@
 # trusted baseline. See docs/automation-control.md.
 #
 # Prereqs on the test device (environment provisioning, NOT this script's job):
-#   - both debug APKs installed (com.pakomo.kernel / com.pakomo.hev)
+#   - both debug APKs installed (com.alphynia.pakomo.kernel / com.alphynia.pakomo.hev)
 #   - VPN consent granted per flavor:  adb shell appops set <pkg> ACTIVATE_VPN allow
 #
 # Usage:
@@ -36,16 +36,16 @@ mkdir -p "$OUT_DIR"
 
 broadcast() { # <pkg> <extras...>
   local pkg="$1"; shift
-  adb shell am broadcast -a "$ACTION" -n "$pkg/com.pakomo.automation.ControlReceiver" "$@"
+  adb shell am broadcast -a "$ACTION" -n "$pkg/com.alphynia.pakomo.automation.ControlReceiver" "$@"
 }
 
 run_flavor() {
-  local flavor="$1" pkg="com.pakomo.$flavor"
+  local flavor="$1" pkg="com.alphynia.pakomo.$flavor"
   echo "== $flavor ($pkg) =="
   # Provisioning so a `start` broadcast succeeds headlessly (see automation-control.md §env).
   adb shell appops set "$pkg" ACTIVATE_VPN allow 2>/dev/null || true
   adb shell appops set "$pkg" SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
-  adb shell am start -n "$pkg/com.pakomo.MainActivity" >/dev/null 2>&1 || true
+  adb shell am start -n "$pkg/com.alphynia.pakomo.MainActivity" >/dev/null 2>&1 || true
   sleep 1
 
   if [[ -n "$PROFILE_FILE" ]]; then

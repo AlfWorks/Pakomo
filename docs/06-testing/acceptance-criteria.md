@@ -13,7 +13,7 @@
 
 ## 2. 双 flavor 对拍
 
-将同一 profile 分别在 Kernel（`com.pakomo.kernel`）与 Hev（`com.pakomo.hev`）上运行，比对行为相关的状态字段，
+将同一 profile 分别在 Kernel（`com.alphynia.pakomo.kernel`）与 Hev（`com.alphynia.pakomo.hev`）上运行，比对行为相关的状态字段，
 以 Hev 版作为可信基线守护 Kernel 版。相应脚本为 `scripts/automation-compare.sh`，用于本地按需运行，不进入 CI。
 
 ## 3. 特殊故障验证矩阵

@@ -56,8 +56,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-PACKAGE = "com.pakomo.kernel"
-COMPONENT = f"{PACKAGE}/com.pakomo.automation.ControlReceiver"
+PACKAGE = "com.alphynia.pakomo.kernel"
+COMPONENT = f"{PACKAGE}/com.alphynia.pakomo.automation.ControlReceiver"
 DEVICE_FILES = f"/sdcard/Android/data/{PACKAGE}/files/pakomo"
 TOKEN = os.environ["PAKOMO_TOKEN"]
 # ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
@@ -81,7 +81,7 @@ def adb(*args):
 def prepare_device(profile: Path, update_profile: Path):
     """每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。"""
     adb("shell", "appops", "set", PACKAGE, "ACTIVATE_VPN", "allow")
-    adb("shell", "am", "start", "-n", f"{PACKAGE}/com.pakomo.MainActivity")
+    adb("shell", "am", "start", "-n", f"{PACKAGE}/com.alphynia.pakomo.MainActivity")
     adb("shell", "mkdir", "-p", f"{DEVICE_FILES}/profiles")
 
     # token 不写入仓库；临时文件仅用于 adb push，完成后自动删除。
@@ -158,8 +158,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const pkg = "com.pakomo.kernel";
-const component = `${pkg}/com.pakomo.automation.ControlReceiver`;
+const pkg = "com.alphynia.pakomo.kernel";
+const component = `${pkg}/com.alphynia.pakomo.automation.ControlReceiver`;
 const deviceFiles = `/sdcard/Android/data/${pkg}/files/pakomo`;
 const token = process.env.PAKOMO_TOKEN!;
 // ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
@@ -179,7 +179,7 @@ function adb(args: string[]) {
 function prepareDevice(profile: string, updateProfile: string) {
   // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
   adb(["shell", "appops", "set", pkg, "ACTIVATE_VPN", "allow"]);
-  adb(["shell", "am", "start", "-n", `${pkg}/com.pakomo.MainActivity`]);
+  adb(["shell", "am", "start", "-n", `${pkg}/com.alphynia.pakomo.MainActivity`]);
   adb(["shell", "mkdir", "-p", `${deviceFiles}/profiles`]);
 
   const directory = mkdtempSync(join(tmpdir(), "pakomo-"));
@@ -276,8 +276,8 @@ import java.util.regex.Pattern;
 
 public final class PakomoExample {
     // kernel/hev 只需替换包名；组件类名和 action 保持不变。
-    static final String PACKAGE = "com.pakomo.kernel";
-    static final String COMPONENT = PACKAGE + "/com.pakomo.automation.ControlReceiver";
+    static final String PACKAGE = "com.alphynia.pakomo.kernel";
+    static final String COMPONENT = PACKAGE + "/com.alphynia.pakomo.automation.ControlReceiver";
     static final String DEVICE_FILES = "/sdcard/Android/data/" + PACKAGE + "/files/pakomo";
     static final String TOKEN = Objects.requireNonNull(System.getenv("PAKOMO_TOKEN"));
     // ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
@@ -311,7 +311,7 @@ public final class PakomoExample {
     static void prepareDevice(Path profile, Path updateProfile) throws Exception {
         // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
         runAdb(List.of("shell", "appops", "set", PACKAGE, "ACTIVATE_VPN", "allow"));
-        runAdb(List.of("shell", "am", "start", "-n", PACKAGE + "/com.pakomo.MainActivity"));
+        runAdb(List.of("shell", "am", "start", "-n", PACKAGE + "/com.alphynia.pakomo.MainActivity"));
         runAdb(List.of("shell", "mkdir", "-p", DEVICE_FILES + "/profiles"));
 
         var tokenFile = Files.createTempFile("pakomo-token-", ".txt");
@@ -431,8 +431,8 @@ nlohmann/json。`runSystemUnderTest()` 可替换为现有 C++ 测试程序或其
 namespace bp = boost::process;
 using Json = nlohmann::json;
 
-const std::string package = "com.pakomo.kernel";
-const std::string component = package + "/com.pakomo.automation.ControlReceiver";
+const std::string package = "com.alphynia.pakomo.kernel";
+const std::string component = package + "/com.alphynia.pakomo.automation.ControlReceiver";
 const std::string deviceFiles = "/sdcard/Android/data/" + package + "/files/pakomo";
 
 // 由现有 C++ 自动化项目实现。
@@ -477,7 +477,7 @@ std::string runAdb(std::vector<std::string> args) {
 void prepareDevice(const std::filesystem::path& profile, const std::filesystem::path& updateProfile) {
     // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
     runAdb({"shell", "appops", "set", package, "ACTIVATE_VPN", "allow"});
-    runAdb({"shell", "am", "start", "-n", package + "/com.pakomo.MainActivity"});
+    runAdb({"shell", "am", "start", "-n", package + "/com.alphynia.pakomo.MainActivity"});
     runAdb({"shell", "mkdir", "-p", deviceFiles + "/profiles"});
 
     const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -596,15 +596,15 @@ void runExample() {
 ## 控制协议
 
 适配层按以下协议发送请求。传输必须是发往
-`<applicationId>/com.pakomo.automation.ControlReceiver` 的显式 ordered broadcast，action 为
+`<applicationId>/com.alphynia.pakomo.automation.ControlReceiver` 的显式 ordered broadcast，action 为
 `com.pakomo.automation.CONTROL`；字符串字段如下。kernel 与 hev 的 applicationId 分别是
-`com.pakomo.kernel` 和 `com.pakomo.hev`。
+`com.alphynia.pakomo.kernel` 和 `com.alphynia.pakomo.hev`。
 
 一条 `start` 请求在线上的规范形态为：
 
 ```yaml
 ordered: true
-component: com.pakomo.kernel/com.pakomo.automation.ControlReceiver
+component: com.alphynia.pakomo.kernel/com.alphynia.pakomo.automation.ControlReceiver
 action: com.pakomo.automation.CONTROL
 extras:
   cmd: start

@@ -19,10 +19,10 @@
 
 Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，**可同机并存**：
 
-- **Kernel（k 版，`com.pakomo.kernel`，默认）**：纯 Kotlin 自研 tun2socks 内核（`com.pakomo.kernel`），
+- **Kernel（k 版，`com.alphynia.pakomo.kernel`，默认）**：纯 Kotlin 自研 tun2socks 内核（`com.alphynia.pakomo.kernel`），
   实现 **Pakomo 当前业务所需的那部分**用户态隧道与转发能力（IPv4、TCP/UDP→SOCKS5、ICMP echo、连接回收）。
   Kernel 版足以承接 Pakomo 现有功能，但**不等于**用 Kotlin 完整重写 `hev-socks5-tunnel`。
-- **Hev（h 版，`com.pakomo.hev`）**：使用原生 `hev-socks5-tunnel` 转发核心，保留更完整、更成熟的底层能力范围。
+- **Hev（h 版，`com.alphynia.pakomo.hev`）**：使用原生 `hev-socks5-tunnel` 转发核心，保留更完整、更成熟的底层能力范围。
 
 两者是不同的实现路径，而非完整版与精简版的关系。中继、整形与故障注入逻辑在两种实现中完全一致，均位于共享的
 `forwarding/Socks5Server` 及策略层，差异仅在 TUN 与 SOCKS 之间的一层。详见 [Kernel 后端](../02-architecture/kernel-backend.md) 与
@@ -67,6 +67,12 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 | 快捷悬浮控制（悬浮球开关接管） | ✔ | ✔ | `Implemented` | 是 | 需 `SYSTEM_ALERT_WINDOW` |
 | 诊断（实时状态 / 归属命中 / Logcat） | ✔ | ✔ | `Implemented` | 是 | |
 
+### 分发与更新
+
+| 能力 | Kernel | Hev | 状态 | UI 开放 | 边界 / 口径 |
+|---|:--:|:--:|---|:--:|---|
+| 应用内自更新（novi） | ✔ | ✔ | `Implemented` | 是 | 基于 [novi](https://github.com/AlfWorks/Novi)（`com.alphynia.novi`）；清单 P-256 签名 + APK 签名者校验双层信任；更新源为 CI 打 tag 时发布到 GitLab Pages 的双轨（kernel/hev）；应用内弹窗完成检测→下载→校验→安装，带校验详情。信任模型与协议详见 novi 文档 |
+
 ### 应用层内容故障 — 明确不做
 
 | 能力 | Kernel | Hev | 状态 | UI 开放 | 边界 |
@@ -100,7 +106,7 @@ HTTP 响应，因此这类能力不属于 Pakomo 的支持范围。此类能力�
 - 特殊故障：`forwarding/FaultPolicy.kt`、`forwarding/Socks5Server.kt`、`data/SpecialFaultCodec.kt`、`core/model/PakomoModels.kt`
 - 归属：`vpn/AndroidConnectionAttributor.kt`、`forwarding/DomainRoutingPolicy.kt`
 - FlowLog：`forwarding/FlowLog.kt`、`core/model/FlowRecord.kt`
-- Kernel 内核：`com/pakomo/kernel/`（tun/ip/tcp/udp/icmp/socks）
+- Kernel 内核：`com/alphynia/pakomo/kernel/`（tun/ip/tcp/udp/icmp/socks）
 - Mascot 状态：`ui/components/PakomoArtwork.kt`（`MascotState` / `mascotStateOf` / `StatusDecor`）
 - 引擎状态：`core/model/PakomoModels.kt`（`EngineStage`：STOPPED/STARTING/FORWARDING/ERROR）
-- 自动化：`app/src/debug/java/com/pakomo/automation/`
+- 自动化：`app/src/debug/java/com/alphynia/pakomo/automation/`

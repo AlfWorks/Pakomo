@@ -1,9 +1,9 @@
 # Pakomo tun2socks 内核替换 · 故障剖析与后续规划
 
-> 把第三方 native 库 `hev-socks5-tunnel` 替换为自研纯 Kotlin 转发内核（`com.pakomo.kernel`）过程中，三个相互独立的缺陷叠加，让整套链路看起来"完全不通"。本文完整剖析每个缺陷、版本分化方案，并给出后续优先级项的**具体处理逻辑**。
+> 把第三方 native 库 `hev-socks5-tunnel` 替换为自研纯 Kotlin 转发内核（`com.alphynia.pakomo.kernel`）过程中，三个相互独立的缺陷叠加，让整套链路看起来"完全不通"。本文完整剖析每个缺陷、版本分化方案，并给出后续优先级项的**具体处理逻辑**。
 
 - **项目**：pakomo · Android VpnService
-- **目标**：hev → `com.pakomo.kernel`
+- **目标**：hev → `com.alphynia.pakomo.kernel`
 - **验证设备**：96800305
 - **结论**：已修复并实测通过（握手 `116/0` → `52/52`，网页正常访问）
 
@@ -24,7 +24,7 @@
 
 ### 1.1 校验和只累加了第一个字节 `[Critical · 核心根因]`
 
-**位置**：`app/src/main/java/com/pakomo/kernel/ip/Checksum.kt:12`
+**位置**：`app/src/main/java/com/alphynia/pakomo/kernel/ip/Checksum.kt:12`
 
 目的是"把长度向下取偶"，但 `0xFFFE.inv()` 算错了：`0xFFFE` 是 Int `0x0000FFFE`，取反得 `0xFFFF0001`。于是 `length and 0xFFFF0001` 对任何小于 65536 的偶数长度都得 **0**，主循环一次都不执行，只把第一个字节加进去就返回。
 
@@ -53,7 +53,7 @@ TUN write hex = 4500 0028 0000 0000 4006 baff debdac66 0a4d0001 …   ← 缺陷
 
 ### 1.3 DNS 回包 UDP 端口写反 `[High · DNS 不通]`
 
-**位置**：`app/src/main/java/com/pakomo/kernel/udp/UdpSession.kt · sendToTun()`
+**位置**：`app/src/main/java/com/alphynia/pakomo/kernel/udp/UdpSession.kt · sendToTun()`
 
 App 查询是 `UDP src=54321 → dst=53`，回包必须镜像为 `src=53 → dst=54321`。但代码把源端口写成了本地中继通道的临时端口 `source.port`，目的端口写成了 `destinationPort`(53)。
 
@@ -71,7 +71,7 @@ writeInt16(udpHeader, 2, sourcePort)
 
 ### 1.4 单元测试套件从未编译通过 `[High · 放大器]`
 
-**位置**：`app/src/test/java/com/pakomo/kernel/KernelUnitTest.kt:70`
+**位置**：`app/src/test/java/com/alphynia/pakomo/kernel/KernelUnitTest.kt:70`
 
 `0xC0A80001` 超过 Int 上限，Kotlin 推断为 `Long`，而 `buildHeader` 要 `Int`，导致 `compileDebugUnitTestKotlin` 失败。整个测试从来没运行过。而 `checksumBasic` 本应算出 `0x3A7B`、抓住上面的校验和 bug（缺陷版会得到 `0xBAFF`）——但因为套件编译不过，它形同虚设。修好编译错误 + 校正期望值后，测试恢复守卫作用。
 

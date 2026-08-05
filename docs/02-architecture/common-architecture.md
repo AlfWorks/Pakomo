@@ -25,7 +25,7 @@ App → TUN → 转发引擎 [ Kernel: Tun2SocksEngine（纯 Kotlin） | Hev: he
 | 故障 | `forwarding/FaultPolicy`、`forwarding/DnsMessage` | 四种特殊故障的判定与注入 |
 | 归属 | `vpn/AndroidConnectionAttributor`、`forwarding/DomainRoutingPolicy`、`forwarding/HostSniffer` | 基于 UID、SNI 与学习 IP 的按应用与域名归属 |
 | 可观测 | `forwarding/FlowLog`、`vpn/TunnelStatsSampler`、`vpn/RecentHitTracker` | 逐连接记录、运行时统计与命中 |
-| 自动化（debug） | `app/src/debug/java/com/pakomo/automation/` | 通过 adb 广播驱动，转发至 `VpnServiceController` |
+| 自动化（debug） | `app/src/debug/java/com/alphynia/pakomo/automation/` | 通过 adb 广播驱动，转发至 `VpnServiceController` |
 
 ## 数据面原则
 
@@ -37,7 +37,7 @@ App → TUN → 转发引擎 [ Kernel: Tun2SocksEngine（纯 Kotlin） | Hev: he
 
 ## flavor 与构建
 
-- `engine` 维度包含两个 flavor：Kernel（默认，applicationId `com.pakomo.kernel`，无 native）与 Hev（`com.pakomo.hev`，
+- `engine` 维度包含两个 flavor：Kernel（默认，applicationId `com.alphynia.pakomo.kernel`，无 native）与 Hev（`com.alphynia.pakomo.hev`，
   native）。
 - 构建脚本以"任务名是否包含 `hev`"决定是否编译原生库；两个 flavor 必须分开调用，否则 native 会连带编入 Kernel 版包。
 - 自动化控制组件仅在 debug 构建（`src/debug`）注册，release 产物不含。

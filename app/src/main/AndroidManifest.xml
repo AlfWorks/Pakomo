@@ -57,7 +57,7 @@
         </service>
 
         <!-- Hands Novi's verified-APK cache file to the system package installer. Per-flavor
-             authority (com.pakomo.<flavor>.updateprovider) keeps kernel/hev installable side by side. -->
+             authority (com.alphynia.pakomo.<flavor>.updateprovider) keeps kernel/hev installable side by side. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.updateprovider"

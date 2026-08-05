@@ -7,7 +7,7 @@
 # §冷启动).
 #
 # Prereqs (environment provisioning, not this script's job):
-#   - the debug APK is installed (default com.pakomo.kernel)
+#   - the debug APK is installed (default com.alphynia.pakomo.kernel)
 #   - a device is connected (`adb devices`)
 #
 # Usage:
@@ -20,7 +20,7 @@
 #
 # Examples:
 #   scripts/automation-smoke.sh                       # kernel flavor, auto profile
-#   scripts/automation-smoke.sh com.pakomo.hev        # hev flavor
+#   scripts/automation-smoke.sh com.alphynia.pakomo.hev        # hev flavor
 set -uo pipefail
 
 # Git Bash (MSYS) rewrites Unix-looking args such as `/sdcard/...` into Windows paths, which breaks
@@ -28,10 +28,10 @@ set -uo pipefail
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
-PKG="${1:-com.pakomo.kernel}"
+PKG="${1:-com.alphynia.pakomo.kernel}"
 PROFILE_FILE="${2:-}"
 ACTION="com.pakomo.automation.CONTROL"
-COMP="$PKG/com.pakomo.automation.ControlReceiver"
+COMP="$PKG/com.alphynia.pakomo.automation.ControlReceiver"
 FILES="/sdcard/Android/data/$PKG/files/pakomo"
 
 pass=0; fail=0
@@ -111,7 +111,7 @@ adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow 2>/dev/null || true
 # service from the background even with appops exemptions. Bringing the app to the foreground once
 # (scripted, no human) gives `start` the foreground privilege it needs. This is the standard way to
 # drive VPN apps in automation; it stays headless (no interaction), just not fully background.
-adb shell am start -n "$PKG/com.pakomo.MainActivity" >/dev/null 2>&1 || true
+adb shell am start -n "$PKG/com.alphynia.pakomo.MainActivity" >/dev/null 2>&1 || true
 sleep 1
 
 echo "-- teardown to a known 'stopped' baseline"

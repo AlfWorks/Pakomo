@@ -1,0 +1,100 @@
+package com.alphynia.pakomo.data
+
+import com.alphynia.pakomo.core.model.AppFaultTarget
+import com.alphynia.pakomo.core.model.BlackoutMode
+import com.alphynia.pakomo.core.model.DEFAULT_RESPONSE_HOLD_MS
+import com.alphynia.pakomo.core.model.DnsFailureResult
+import com.alphynia.pakomo.core.model.ResetTiming
+import com.alphynia.pakomo.core.model.SpecialFault
+import com.alphynia.pakomo.core.model.SpecialFaultConfig
+import com.alphynia.pakomo.core.model.SpecialFaultType
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * Shared JSON (de)serialization for [SpecialFaultConfig]. Used both by [PakomoPreferences] (nested
+ * inside each rule) and by the VPN Intent extras that carry the active rule to the service, so the
+ * on-disk and on-the-wire formats never drift apart.
+ */
+object SpecialFaultCodec {
+
+    fun toJson(config: SpecialFaultConfig): JSONObject {
+        val root = JSONObject()
+        config.all.forEach { fault ->
+            val appTargets = JSONObject()
+            fault.appTargets.forEach { (packageName, target) ->
+                appTargets.put(
+                    packageName,
+                    JSONObject()
+                        .put("enabled", target.enabled)
+                        .put("domains", JSONArray(target.domains)),
+                )
+            }
+            root.put(
+                fault.type.name,
+                JSONObject()
+                    .put("enabled", fault.enabled)
+                    .put("dnsResult", fault.dnsResult.name)
+                    .put("dnsCacheGuard", fault.dnsCacheGuard)
+                    .put("blackoutMode", fault.blackoutMode.name)
+                    .put("resetTiming", fault.resetTiming.name)
+                    .put("holdMs", fault.holdMs)
+                    .put("holdBypassBytes", fault.holdBypassBytes)
+                    .put("appTargets", appTargets)
+                    .put("addressTargets", JSONArray(fault.addressTargets)),
+            )
+        }
+        return root
+    }
+
+    fun fromJson(root: JSONObject?): SpecialFaultConfig {
+        if (root == null) return SpecialFaultConfig()
+        var config = SpecialFaultConfig()
+        SpecialFaultType.entries.forEach { type ->
+            val obj = root.optJSONObject(type.name) ?: return@forEach
+            config = config.withFault(readFault(type, obj))
+        }
+        return config
+    }
+
+    fun encode(config: SpecialFaultConfig): String = toJson(config).toString()
+
+    fun decode(json: String?): SpecialFaultConfig {
+        val root = json?.let { runCatching { JSONObject(it) }.getOrNull() }
+        return fromJson(root)
+    }
+
+    private fun readFault(type: SpecialFaultType, obj: JSONObject): SpecialFault {
+        val appTargets = obj.optJSONObject("appTargets")?.let { apps ->
+            apps.keys().asSequence().associateWith { packageName ->
+                val app = apps.getJSONObject(packageName)
+                AppFaultTarget(
+                    packageName = packageName,
+                    enabled = app.optBoolean("enabled", false),
+                    domains = app.optJSONArray("domains")?.toStringList().orEmpty(),
+                )
+            }
+        }.orEmpty()
+        return SpecialFault(
+            type = type,
+            enabled = obj.optBoolean("enabled", false),
+            dnsResult = obj.optString("dnsResult")
+                .let { name -> DnsFailureResult.entries.firstOrNull { it.name == name } }
+                ?: DnsFailureResult.NXDOMAIN,
+            dnsCacheGuard = obj.optBoolean("dnsCacheGuard", false),
+            blackoutMode = obj.optString("blackoutMode")
+                .let { name -> BlackoutMode.entries.firstOrNull { it.name == name } }
+                ?: BlackoutMode.SILENT,
+            resetTiming = obj.optString("resetTiming")
+                .let { name -> ResetTiming.entries.firstOrNull { it.name == name } }
+                ?: ResetTiming.IMMEDIATE,
+            holdMs = obj.optLong("holdMs", DEFAULT_RESPONSE_HOLD_MS),
+            holdBypassBytes = obj.optInt("holdBypassBytes", 0),
+            appTargets = appTargets,
+            addressTargets = obj.optJSONArray("addressTargets")?.toStringList().orEmpty(),
+        )
+    }
+
+    private fun JSONArray.toStringList(): List<String> =
+        List(length()) { index -> getString(index) }
+}

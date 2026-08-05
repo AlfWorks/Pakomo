@@ -7,20 +7,20 @@
 
 .EXAMPLE
   .\scripts\automation-smoke.ps1
-  .\scripts\automation-smoke.ps1 -Pkg com.pakomo.hev
-  .\scripts\automation-smoke.ps1 -Pkg com.pakomo.kernel -ProfileFile docs\automation\profiles\checkout_flow.example.json
+  .\scripts\automation-smoke.ps1 -Pkg com.alphynia.pakomo.hev
+  .\scripts\automation-smoke.ps1 -Pkg com.alphynia.pakomo.kernel -ProfileFile docs\automation\profiles\checkout_flow.example.json
   $env:TEST_TOKEN=1; .\scripts\automation-smoke.ps1        # also exercise the token gate
 
 .NOTES
   Prereqs (environment provisioning): debug APK installed, device connected (`adb devices`).
 #>
 param(
-  [string]$Pkg = "com.pakomo.kernel",
+  [string]$Pkg = "com.alphynia.pakomo.kernel",
   [string]$ProfileFile = ""
 )
 
 $Action = "com.pakomo.automation.CONTROL"
-$Comp   = "$Pkg/com.pakomo.automation.ControlReceiver"
+$Comp   = "$Pkg/com.alphynia.pakomo.automation.ControlReceiver"
 $Files  = "/sdcard/Android/data/$Pkg/files/pakomo"
 $script:pass = 0
 $script:fail = 0
@@ -102,7 +102,7 @@ Write-Host "== automation smoke: $Pkg =="
 # Reliable headless cold start: modern Android blocks background foreground-service starts even with
 # appops exemptions. Bring the app to the foreground once (scripted, no human) so `start` has the
 # foreground privilege it needs - the standard way to drive VPN apps in automation.
-& adb shell am start -n "$Pkg/com.pakomo.MainActivity" 2>$null | Out-Null
+& adb shell am start -n "$Pkg/com.alphynia.pakomo.MainActivity" 2>$null | Out-Null
 Start-Sleep -Seconds 1
 
 Write-Host "-- teardown to a known 'stopped' baseline"
