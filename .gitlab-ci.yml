@@ -1,9 +1,12 @@
-# Pakomo · Release 构建流水线
+# Pakomo · 构建与发布流水线
 #
-# 触发：受保护 tag `vX.Y.Z`（如 v0.3.0）。
-# 产物：两个签名 release APK，applicationId 对称为 com.pakomo.<flavor>，可同机并存：
-#       k 版（com.pakomo.kernel，纯 Kotlin 内核，无 native）与 h 版（com.pakomo.hev，hev native）——
-#       各自 + sha256 上传到通用包仓库，并自动创建 Release 挂载两版下载链接。
+# 触发与环境：
+#   - 网页 Run pipeline（source=web）→ **test 环境**：构建+签名+发 Pages `/test/` 频道（自动），
+#     APK 自更新指向 test 频道；不建 GitLab Release、不传通用包。push 不触发流水线。
+#   - 受保护 tag `vX.Y.Z`（如 v0.3.0）→ **prod 环境**：构建 + 传通用包 + 建 Release + 发 Pages 根频道，
+#     其中 Pages（推送给用户的自更新源）为 `when: manual` 手动闸门。
+#   产物：两个签名 release APK，applicationId 对称为 com.alphynia.pakomo.<flavor>，可同机并存
+#         （kernel 纯 Kotlin 内核 / hev native）。
 #
 # 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
 #   DEPLOY_HOST      —— 172.30.109.1（automation-net 网关；容器源 IP 落在 172.30.109.0/24 才匹配 sshd 密码登录规则）
@@ -15,8 +18,9 @@
 #   keystore.properties       —— 内含 storeFile=pakomo-release.jks / storePassword / keyAlias / keyPassword
 #   novi-manifest-private.pem —— Novi 自更新清单签名私钥（P-256），仅用于 CI 签 latest.json，不入包/不入库
 #
-# Novi 自更新：pages job 把双轨更新源发布到 GitLab Pages（需项目已启用 Pages）。站点即源根，
-#   <CI_PAGES_URL>/kernel/ 与 /hev/ 对应两 flavor；APK 内烘焙的信任锚（公钥/签名者/源 URL）全部由 CI 现算。
+# Novi 自更新：pages job 用 GitLab Pages 并行部署（path_prefix）让 test 与 prod 双频道共存，互不覆盖。
+#   test → <CI_PAGES_URL>/test/kernel(hev)/ ；prod → <CI_PAGES_URL>/kernel(hev)/。
+#   APK 内烘焙的信任锚（公钥/签名者/源 URL）全部由 CI 现算，无需手填变量。
 #
 # 说明：内网出网需走代理 17890；内网地址（gitlab / 服务器）走 NO_PROXY 直连。
 
@@ -46,8 +50,9 @@ variables:
 release:apk:
   stage: build
   image: eclipse-temurin:17-jdk-jammy
-  # 若该 runner 只跑带 tag 的 job，请在此加 tags 或在 GitLab 里给它开「运行未打标签的作业」。
+  # web 手动触发（test）或正式 tag（prod）都构建；push 不触发。
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
   cache:
     key: pakomo-android
@@ -57,12 +62,22 @@ release:apk:
       - .gradle/
       - .android-sdk/
   before_script:
-    # 工具：ssh 取签名材料 + 原生构建需要的 git/unzip
+    # 工具：ssh 取签名材料 + 原生构建需要的 git/unzip + 签清单的 python3/openssl
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends sshpass openssh-client git unzip curl jq python3 openssl ca-certificates >/dev/null
-    # 版本：从 tag 注入（build.gradle.kts 读 PAKOMO_VERSION_*）
-    - export PAKOMO_VERSION_NAME="${CI_COMMIT_TAG#v}"
-    - export PAKOMO_VERSION_CODE="$CI_PIPELINE_IID"
-    - echo "Building Pakomo $PAKOMO_VERSION_NAME (code $PAKOMO_VERSION_CODE)"
+    # 环境识别：web 手动 → test 频道；正式 tag → prod 根频道。版本名、源 URL 随之而定。
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "web" ]; then
+        export IS_PROD=false PAGES_CHANNEL="test"
+        export PAKOMO_VERSION_NAME="0.0.0-test.$CI_PIPELINE_IID"
+        export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/test/"
+      else
+        export IS_PROD=true PAGES_CHANNEL=""
+        export PAKOMO_VERSION_NAME="${CI_COMMIT_TAG#v}"
+        export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/"
+      fi
+      export PAKOMO_VERSION_CODE="$CI_PIPELINE_IID"
+      test -n "$CI_PAGES_URL" || echo "WARN: CI_PAGES_URL 为空（Pages 未启用？），本次 APK 自更新源将不可用"
+      echo "Env: prod=$IS_PROD channel='${PAGES_CHANNEL:-<root>}' version=$PAKOMO_VERSION_NAME code=$PAKOMO_VERSION_CODE source=$PAKOMO_UPDATE_SOURCES"
     # Android 命令行工具（缓存后跳过）
     - |
       if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
@@ -99,16 +114,14 @@ release:apk:
     # Novi 自更新：清单签名私钥（与 keystore 同源；仅用于签 latest.json，绝不入包/入库）
     - sshpass -e scp -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_REMOTE_DIR/novi-manifest-private.pem" "$CI_PROJECT_DIR/novi-manifest-private.pem"
     # 烘焙进 APK 的信任锚全是公开值——从已取材料现算，无需在 GitLab 里手填变量：
-    #   签名者 SHA256 ← keystore；清单公钥 ← 私钥；源 URL ← CI_PAGES_URL；key-id 固定 manifest-2026。
+    #   签名者 SHA256 ← keystore；清单公钥 ← 私钥；key-id 固定 manifest-2026。源 URL 已在上方按环境设定。
     - |
       NOVI_STOREPASS=$(grep '^storePassword=' keystore.properties | cut -d= -f2-)
       NOVI_KEYALIAS=$(grep '^keyAlias=' keystore.properties | cut -d= -f2-)
       export PAKOMO_NOVI_APK_SIGNER=$(keytool -list -v -keystore pakomo-release.jks -storepass "$NOVI_STOREPASS" -alias "$NOVI_KEYALIAS" | grep -i 'SHA256:' | head -1 | sed 's/.*SHA256: //' | tr -d ': ' | tr 'A-Z' 'a-z')
       export PAKOMO_NOVI_MANIFEST_PUBKEY=$(openssl ec -in novi-manifest-private.pem -pubout 2>/dev/null | grep -v -- '-----' | tr -d '\n')
       export PAKOMO_NOVI_KEY_ID="manifest-2026"
-      export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/"
-      test -n "$CI_PAGES_URL" || echo "WARN: CI_PAGES_URL 为空（Pages 未启用？），本次 APK 自更新源将不可用"
-      echo "Novi: signer=${PAKOMO_NOVI_APK_SIGNER:0:16}… keyId=$PAKOMO_NOVI_KEY_ID source=$PAKOMO_UPDATE_SOURCES"
+      echo "Novi: signer=${PAKOMO_NOVI_APK_SIGNER:0:16}… keyId=$PAKOMO_NOVI_KEY_ID"
   script:
     - chmod +x gradlew
     # k 版（纯 Kotlin 内核，无 native）：任务名不含 hev → buildingHevVariant=false → 跳过 NDK。
@@ -125,11 +138,16 @@ release:apk:
     - echo "Built $K_APK / $H_APK"
     # 更新日志：供 Novi 更新弹窗与 GitLab Release 共用（须在 novi_track 之前生成）
     - |
-      PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${CI_COMMIT_TAG}^" --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
-      if [ -n "$PREVIOUS_TAG" ]; then RELEASE_RANGE="$PREVIOUS_TAG..$CI_COMMIT_TAG"; else RELEASE_RANGE="$CI_COMMIT_TAG"; fi
-      git log --no-merges --pretty=format:'- %s (`%h`)' "$RELEASE_RANGE" > release-notes.md
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${CI_COMMIT_TAG}^" --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+        if [ -n "$PREVIOUS_TAG" ]; then RANGE="$PREVIOUS_TAG..$CI_COMMIT_TAG"; else RANGE="$CI_COMMIT_TAG"; fi
+        git log --no-merges --pretty=format:'- %s (`%h`)' "$RANGE" > release-notes.md
+      else
+        # 测试构建（web）：无 tag，取最近提交作为 changelog
+        git log --no-merges -n 20 --pretty=format:'- %s (`%h`)' > release-notes.md
+      fi
     # Novi 更新源：为两 flavor 各签一份 latest.json，组装成 Pages 发布目录 public/<track>/。
-    # 每轨仅放当前版本（Pages 整站替换，无需保留历史；latest.json 指向最新即可）。
+    # test 与 prod 都产出 public/，由 pages job 按 path_prefix 部署到各自频道。
     - |
       novi_track() {
         apk="$1"; appid="$2"; track="$3"; out="public/$track"
@@ -146,61 +164,71 @@ release:apk:
       novi_track "$K_APK" com.alphynia.pakomo.kernel kernel
       novi_track "$H_APK" com.alphynia.pakomo.hev hev
       echo "Novi source assembled under public/ (kernel, hev)"
-    # 发布：两个 APK 各自进通用包仓库（不随 artifact 过期），Release 再挂它们的链接
-    - K_ASSET="pakomo-$PAKOMO_VERSION_NAME-kernel.apk"
-    - H_ASSET="pakomo-$PAKOMO_VERSION_NAME-hev.apk"
-    - PKG_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/pakomo/$PAKOMO_VERSION_NAME"
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK" "$PKG_URL/$K_ASSET"'
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK.sha256" "$PKG_URL/$K_ASSET.sha256"'
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK" "$PKG_URL/$H_ASSET"'
-    - 'curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK.sha256" "$PKG_URL/$H_ASSET.sha256"'
+    # 仅正式 tag（prod）：APK 进通用包仓库 + 创建 GitLab Release。测试构建（web）跳过，只发 Pages test 频道。
     - |
-      RELEASE_DESCRIPTION=$(printf '## 更新内容\n\n%s\n\n## SHA256\n\n- Kernel: `%s`\n- Hev: `%s`' \
-        "$(cat release-notes.md)" \
-        "$(cut -d' ' -f1 "$K_APK.sha256")" \
-        "$(cut -d' ' -f1 "$H_APK.sha256")")
-      jq -n \
-        --arg name "Pakomo $PAKOMO_VERSION_NAME" \
-        --arg tag "$CI_COMMIT_TAG" \
-        --arg description "$RELEASE_DESCRIPTION" \
-        --arg k_name "$K_ASSET" \
-        --arg k_url "$PKG_URL/$K_ASSET" \
-        --arg k_sha_name "$K_ASSET.sha256" \
-        --arg k_sha_url "$PKG_URL/$K_ASSET.sha256" \
-        --arg h_name "$H_ASSET" \
-        --arg h_url "$PKG_URL/$H_ASSET" \
-        --arg h_sha_name "$H_ASSET.sha256" \
-        --arg h_sha_url "$PKG_URL/$H_ASSET.sha256" \
-        '{name: $name, tag_name: $tag, description: $description, assets: {links: [
-          {name: $k_name, url: $k_url, link_type: "package"},
-          {name: $k_sha_name, url: $k_sha_url, link_type: "other"},
-          {name: $h_name, url: $h_url, link_type: "package"},
-          {name: $h_sha_name, url: $h_sha_url, link_type: "other"}
-        ]}}' > release-body.json
-    - 'curl --fail -sS --request POST --header "JOB-TOKEN: $CI_JOB_TOKEN" --header "Content-Type: application/json" --data @release-body.json "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"'
-    - rm -f release-body.json release-notes.md
+      if [ "$IS_PROD" = "true" ]; then
+        K_ASSET="pakomo-$PAKOMO_VERSION_NAME-kernel.apk"
+        H_ASSET="pakomo-$PAKOMO_VERSION_NAME-hev.apk"
+        PKG_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/pakomo/$PAKOMO_VERSION_NAME"
+        curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK" "$PKG_URL/$K_ASSET"
+        curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK.sha256" "$PKG_URL/$K_ASSET.sha256"
+        curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK" "$PKG_URL/$H_ASSET"
+        curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK.sha256" "$PKG_URL/$H_ASSET.sha256"
+        RELEASE_DESCRIPTION=$(printf '## 更新内容\n\n%s\n\n## SHA256\n\n- Kernel: `%s`\n- Hev: `%s`' \
+          "$(cat release-notes.md)" \
+          "$(cut -d' ' -f1 "$K_APK.sha256")" \
+          "$(cut -d' ' -f1 "$H_APK.sha256")")
+        jq -n \
+          --arg name "Pakomo $PAKOMO_VERSION_NAME" \
+          --arg tag "$CI_COMMIT_TAG" \
+          --arg description "$RELEASE_DESCRIPTION" \
+          --arg k_name "$K_ASSET" --arg k_url "$PKG_URL/$K_ASSET" \
+          --arg k_sha_name "$K_ASSET.sha256" --arg k_sha_url "$PKG_URL/$K_ASSET.sha256" \
+          --arg h_name "$H_ASSET" --arg h_url "$PKG_URL/$H_ASSET" \
+          --arg h_sha_name "$H_ASSET.sha256" --arg h_sha_url "$PKG_URL/$H_ASSET.sha256" \
+          '{name: $name, tag_name: $tag, description: $description, assets: {links: [
+            {name: $k_name, url: $k_url, link_type: "package"},
+            {name: $k_sha_name, url: $k_sha_url, link_type: "other"},
+            {name: $h_name, url: $h_url, link_type: "package"},
+            {name: $h_sha_name, url: $h_sha_url, link_type: "other"}
+          ]}}' > release-body.json
+        curl --fail -sS --request POST --header "JOB-TOKEN: $CI_JOB_TOKEN" --header "Content-Type: application/json" --data @release-body.json "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"
+        rm -f release-body.json
+      else
+        echo "Test build (web): 跳过通用包与 GitLab Release，仅发布 Pages test 频道。"
+      fi
+      rm -f release-notes.md
   after_script:
     # 无论成败都清掉签名材料（含 novi 清单私钥），绝不进产物/缓存
     - rm -f "$CI_PROJECT_DIR/pakomo-release.jks" "$CI_PROJECT_DIR/keystore.properties" "$CI_PROJECT_DIR/novi-manifest-private.pem"
-  # public/（Novi 更新源，无秘密）交给 pages job 发布；APK 长期副本仍在通用包仓库。
+  # public/（Novi 更新源，无秘密）交给 pages job 发布；APK 长期副本（prod）在通用包仓库。
   artifacts:
     paths:
       - public/
     expire_in: 1 day
 
-# Novi 自更新源：把 release:apk 组装的 public/ 发布到 GitLab Pages。
-# 站点根即更新源根：<CI_PAGES_URL>/kernel/latest.json、/hev/latest.json，与 APK 内烘焙的
-# PAKOMO_UPDATE_SOURCES=<CI_PAGES_URL>/ + 运行时轨道后缀（kernel/hev）对应。整站替换，仅存最新版本。
+# Novi 自更新源发布到 GitLab Pages（并行部署，path_prefix 让 test 与 prod 频道共存、互不覆盖）：
+#   web 手动触发 → path_prefix "test" → <CI_PAGES_URL>/test/kernel(hev)/（自动，测试频道）
+#   正式 tag     → 根部署（无 prefix） → <CI_PAGES_URL>/kernel(hev)/（when: manual 手动闸门）
 pages:
   stage: deploy
   image: alpine:latest
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      variables:
+        PAGES_PREFIX: "test"
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+      when: manual
+      allow_failure: true
+      variables:
+        PAGES_PREFIX: ""
   needs:
     - job: release:apk
       artifacts: true
+  pages:
+    path_prefix: "$PAGES_PREFIX"
   script:
-    - echo "Publishing Novi update source to $CI_PAGES_URL (kernel, hev)"
+    - echo "Publishing Novi update source (channel='${PAGES_PREFIX:-<root>}') to $CI_PAGES_URL"
   artifacts:
     paths:
       - public
