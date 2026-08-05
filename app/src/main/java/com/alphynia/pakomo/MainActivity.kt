@@ -154,6 +154,7 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         onUpdate = { updateController.onPrimaryAction() },
                         onDismiss = { updateController.dismiss() },
+                        onIgnore = { updateController.ignoreCurrentVersion() },
                     )
                 }
                 val updateIntent by updateController.pendingIntent.collectAsState()

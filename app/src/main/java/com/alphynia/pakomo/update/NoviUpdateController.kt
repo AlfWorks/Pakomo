@@ -26,6 +26,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.URL
 
+/** Status of an explicit user-triggered "check for updates" (for the About screen's feedback). */
+sealed interface UpdateCheckStatus {
+    data object Idle : UpdateCheckStatus
+    data object Checking : UpdateCheckStatus
+    data object UpToDate : UpdateCheckStatus
+    data object Disabled : UpdateCheckStatus
+    data class Failed(val message: String) : UpdateCheckStatus
+}
+
 /**
  * Application-scoped orchestrator around [Novi]. Owns the update dialog state and drives the
  * check -> download -> verify -> install progression; the Activity only renders [dialog] and
@@ -43,6 +52,12 @@ class NoviUpdateController(app: Application) {
 
     private val appContext: Context = app.applicationContext
     private val novi: Novi? = buildNovi(appContext)
+    private val prefs = appContext.getSharedPreferences("pakomo_update", Context.MODE_PRIVATE)
+
+    /** versionCode the user chose to ignore. The auto-check skips it; a manual check still shows it. */
+    private var ignoredVersion: Long
+        get() = prefs.getLong("ignored_version", -1L)
+        set(value) { prefs.edit().putLong("ignored_version", value).apply() }
 
     /** True when sources and trust anchors are provisioned and Novi initialised cleanly. */
     val isEnabled: Boolean get() = novi != null
@@ -53,6 +68,13 @@ class NoviUpdateController(app: Application) {
     /** One-shot intents (system installer confirmation / manual-download browser) for the Activity. */
     private val _pendingIntent = MutableStateFlow<Intent?>(null)
     val pendingIntent: StateFlow<Intent?> = _pendingIntent.asStateFlow()
+
+    /** Result of an explicit [checkNow] request, surfaced to the About screen. */
+    private val _checkStatus = MutableStateFlow<UpdateCheckStatus>(UpdateCheckStatus.Idle)
+    val checkStatus: StateFlow<UpdateCheckStatus> = _checkStatus.asStateFlow()
+
+    /** Resolved per-flavor update-source root URLs (base + kernel/hev track) — the exact URLs Novi checks. */
+    val sourceUrls: List<String> get() = resolvedSourceUrls()
 
     private var verifiedApk: VerifiedApk? = null
     private var manualInstallIntent: Intent? = null
@@ -73,9 +95,33 @@ class NoviUpdateController(app: Application) {
         val n = novi ?: return
         n.checkOncePerProcess { result ->
             when (result) {
-                is CheckResult.Available -> _dialog.value = available(result.release)
+                is CheckResult.Available ->
+                    if (result.release.manifest.versionCode == ignoredVersion) {
+                        Log.i(TAG, "Update ${result.release.manifest.versionCode} ignored by user")
+                    } else {
+                        _dialog.value = available(result.release)
+                    }
                 is CheckResult.UpToDate -> Log.i(TAG, "Up to date")
                 is CheckResult.Failed -> Log.i(TAG, "Update check failed: ${result.errors}")
+            }
+        }
+    }
+
+    /** Explicit user-triggered check (re-runnable, unlike [checkOnce]); surfaces [checkStatus] for the UI. */
+    fun checkNow() {
+        val n = novi ?: run { _checkStatus.value = UpdateCheckStatus.Disabled; return }
+        if (_checkStatus.value == UpdateCheckStatus.Checking) return
+        _checkStatus.value = UpdateCheckStatus.Checking
+        n.check { result ->
+            when (result) {
+                is CheckResult.Available -> {
+                    _checkStatus.value = UpdateCheckStatus.Idle
+                    _dialog.value = available(result.release)
+                }
+                is CheckResult.UpToDate -> _checkStatus.value = UpdateCheckStatus.UpToDate
+                is CheckResult.Failed -> _checkStatus.value = UpdateCheckStatus.Failed(
+                    result.errors.firstOrNull()?.let { it.message ?: it.code.name } ?: "unknown",
+                )
             }
         }
     }
@@ -94,6 +140,13 @@ class NoviUpdateController(app: Application) {
     }
 
     fun dismiss() {
+        _dialog.value = null
+    }
+
+    /** Suppress the current release's version from future auto-checks (a manual check still shows it). */
+    fun ignoreCurrentVersion() {
+        val release = _dialog.value?.release ?: return
+        ignoredVersion = release.manifest.versionCode
         _dialog.value = null
     }
 
@@ -191,18 +244,26 @@ class NoviUpdateController(app: Application) {
     private companion object {
         const val TAG = "NoviUpdate"
 
+        /**
+         * Packaging-time base source roots + per-flavor track (kernel/hev derived from applicationId) —
+         * the exact per-track root URLs Novi checks. Empty when no sources are configured.
+         */
+        fun resolvedSourceUrls(): List<String> {
+            val track = BuildConfig.APPLICATION_ID.substringAfterLast('.')
+            return BuildConfig.NOVI_UPDATE_SOURCES.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                .map { it.trimEnd('/') + "/" + track + "/" }
+        }
+
         fun buildNovi(context: Context): Novi? {
-            val roots = BuildConfig.NOVI_UPDATE_SOURCES.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val roots = resolvedSourceUrls()
             val publicKey = BuildConfig.NOVI_MANIFEST_PUBLIC_KEY.trim()
             val signer = BuildConfig.NOVI_APK_SIGNER_SHA256.trim().lowercase()
             if (roots.isEmpty() || publicKey.isEmpty() || signer.isEmpty()) {
                 Log.i(TAG, "Self-update disabled: sources or trust anchors not provisioned")
                 return null
             }
-            // kernel / hev — each flavor's applicationId suffix is its update track subpath.
-            val track = BuildConfig.APPLICATION_ID.substringAfterLast('.')
-            val sources = roots.mapIndexed { index, base ->
-                HttpUpdateSource(id = "s$index", rootUrl = URL(base.trimEnd('/') + "/" + track + "/"))
+            val sources = roots.mapIndexed { index, url ->
+                HttpUpdateSource(id = "s$index", rootUrl = URL(url))
             }
             return runCatching {
                 Novi(

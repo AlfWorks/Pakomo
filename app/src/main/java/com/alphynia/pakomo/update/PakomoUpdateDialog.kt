@@ -35,6 +35,7 @@ fun PakomoUpdateDialog(
     state: NoviUpdateDialogState,
     onUpdate: () -> Unit,
     onDismiss: () -> Unit,
+    onIgnore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lang = LocalAppLanguage.current
@@ -85,16 +86,29 @@ fun PakomoUpdateDialog(
                 )
             }
         },
+        // Custom button row: "忽略该版本" on the left, "稍后 / 更新" kept together on the right.
+        // (AlertDialog's confirm/dismiss slots right-align everything, so both go in confirmButton.)
         confirmButton = {
-            TextButton(onClick = onUpdate, enabled = !busy) {
-                Text(primaryLabel(state.phase, ::t))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                if (canDismiss && state.phase == NoviUpdatePhase.AVAILABLE) {
+                    TextButton(onClick = onIgnore) { Text(t("忽略该版本", "Ignore")) }
+                } else {
+                    Row {}
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (canDismiss) {
+                        TextButton(onClick = onDismiss) { Text(t("稍后", "Later")) }
+                    }
+                    TextButton(onClick = onUpdate, enabled = !busy) {
+                        Text(primaryLabel(state.phase, ::t))
+                    }
+                }
             }
         },
-        dismissButton = if (canDismiss) {
-            { TextButton(onClick = onDismiss) { Text(t("稍后", "Later")) } }
-        } else {
-            null
-        },
+        dismissButton = null,
     )
 }
 
