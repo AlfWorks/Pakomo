@@ -68,7 +68,7 @@ release:apk:
     - |
       if [ "$CI_PIPELINE_SOURCE" = "web" ]; then
         export IS_PROD=false PAGES_CHANNEL="test"
-        export PAKOMO_VERSION_NAME="0.0.0-test.$CI_PIPELINE_IID"
+        export PAKOMO_VERSION_NAME="0.0.0-test.$CI_PIPELINE_IID+$CI_COMMIT_SHORT_SHA"
         export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/test/"
       else
         export IS_PROD=true PAGES_CHANNEL=""
