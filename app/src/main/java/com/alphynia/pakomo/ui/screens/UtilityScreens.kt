@@ -32,6 +32,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -59,6 +60,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alphynia.pakomo.BuildConfig
+import com.alphynia.pakomo.PakomoApplication
+import com.alphynia.pakomo.update.UpdateCheckStatus
 import com.alphynia.pakomo.core.model.AppLanguage
 import com.alphynia.pakomo.core.model.AppListAccess
 import com.alphynia.pakomo.core.model.EngineStage
@@ -485,6 +488,9 @@ fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val language = LocalAppLanguage.current
     val network = remember(language) { readNetworkSummary(context, language) }
+    val updateController = remember { (context.applicationContext as PakomoApplication).updateController }
+    val checkStatus by updateController.checkStatus.collectAsState()
+    val colors = LocalPakomoColors.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -502,12 +508,58 @@ fun AboutScreen(onBack: () -> Unit) {
                 subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             )
             SettingRow(
+                title = t("包名", "Package"),
+                subtitle = BuildConfig.APPLICATION_ID,
+            )
+            SettingRow(
+                title = t("转发引擎", "Engine"),
+                subtitle = if (BuildConfig.USE_KOTLIN_KERNEL) "Kernel" else "Hev",
+            )
+            SettingRow(
+                title = t("构建", "Build"),
+                subtitle = (if (BuildConfig.DEBUG) "Debug" else "Release") + " · " + BuildConfig.BUILD_SHA,
+            )
+            SettingRow(
                 title = "Android",
                 subtitle = "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}",
             )
             SettingRow(
                 title = t("设备", "Device"),
                 subtitle = "${Build.MANUFACTURER} ${Build.MODEL}",
+            )
+
+            SectionLabel(t("更新", "Update"))
+            SettingRow(
+                title = t("更新源", "Update source"),
+                subtitle = updateController.sourceUrls.joinToString("\n")
+                    .ifEmpty { t("未配置", "Not configured") },
+            )
+            val checkState = checkStatus
+            SettingRow(
+                title = t("检查更新", "Check for updates"),
+                subtitle = when {
+                    !updateController.isEnabled -> t("此版本未启用更新", "Updates not enabled in this build")
+                    checkState == UpdateCheckStatus.Checking -> t("检查中…", "Checking…")
+                    checkState == UpdateCheckStatus.UpToDate -> t("已是最新版本", "Already up to date")
+                    checkState is UpdateCheckStatus.Failed -> t("检查失败：", "Check failed: ") + checkState.message
+                    else -> t("点按检查最新版本", "Tap to check for the latest version")
+                },
+                onClick = if (updateController.isEnabled && checkState != UpdateCheckStatus.Checking) {
+                    { updateController.checkNow() }
+                } else {
+                    null
+                },
+                trailing = if (checkState == UpdateCheckStatus.Checking) {
+                    {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = colors.accent,
+                        )
+                    }
+                } else {
+                    null
+                },
             )
 
             SectionLabel(t("网络", "Network"))

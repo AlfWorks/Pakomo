@@ -15,6 +15,17 @@ val keystoreProps = Properties().apply {
 // toolchain entirely (no native compile, no timeout).
 val buildingHevVariant = gradle.startParameter.taskNames.any { it.contains("hev", ignoreCase = true) }
 
+// Short git SHA of this build, surfaced in the About screen. CI provides CI_COMMIT_SHORT_SHA; local
+// builds fall back to `git rev-parse`, or "unknown" when git is unavailable.
+val buildShortSha: String = System.getenv("CI_COMMIT_SHORT_SHA")
+    ?: runCatching {
+        ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+            .inputStream.bufferedReader().use { it.readText() }.trim()
+    }.getOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -63,6 +74,7 @@ android {
             "NOVI_APK_SIGNER_SHA256",
             "\"${System.getenv("PAKOMO_NOVI_APK_SIGNER") ?: ""}\"",
         )
+        buildConfigField("String", "BUILD_SHA", "\"$buildShortSha\"")
 
         ndk {
             abiFilters += setOf("arm64-v8a", "armeabi-v7a")
