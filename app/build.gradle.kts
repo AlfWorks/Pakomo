@@ -176,10 +176,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // Self-update: core (manifest verify + download + install) and the optional M3 dialog.
-    // Version is nominal — the composite build substitutes these to ../novi projects.
-    implementation("com.alphynia.novi:novi-core:0.1.0-SNAPSHOT")
-    implementation("com.alphynia.novi:novi-compose:0.1.0-SNAPSHOT")
+    // Self-update: core (manifest verify + download + install) and the optional M3 dialog,
+    // consumed from Maven Central (com.alphynia.novi, published by AlfWorks).
+    implementation("com.alphynia.novi:novi-core:0.1.0")
+    implementation("com.alphynia.novi:novi-compose:0.1.0")
 
     testImplementation(libs.junit)
 }
