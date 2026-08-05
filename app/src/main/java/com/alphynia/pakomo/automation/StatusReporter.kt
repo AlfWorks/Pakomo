@@ -28,13 +28,28 @@ internal object StatusReporter {
             extra()
         }
 
-    /** Error payload carrying a stable [ControlError] code and a human-readable [message]. */
+    /**
+     * Error payload for **authorized** callers (a valid token already passed), carrying a stable
+     * [ControlError] code, a human-readable [message], and the live runtime snapshot.
+     */
     fun failure(cmd: ControlCommand?, error: ControlError, message: String? = null): JSONObject =
         base(cmd).apply {
             put("ok", false)
             put("error", error.name)
             if (message != null) put("message", message)
             putRuntime(VpnServiceController.runtime.value)
+        }
+
+    /**
+     * Minimal rejection for **pre-authorization** failures (unknown command, bad/missing token).
+     * Deliberately omits the runtime snapshot so an unauthenticated caller cannot read engine state
+     * (stage / stats) via the ordered-broadcast result. Use [failure] only after the token gate.
+     */
+    fun rejected(cmd: ControlCommand?, error: ControlError, message: String? = null): JSONObject =
+        base(cmd).apply {
+            put("ok", false)
+            put("error", error.name)
+            if (message != null) put("message", message)
         }
 
     private fun base(cmd: ControlCommand?): JSONObject = JSONObject().apply {

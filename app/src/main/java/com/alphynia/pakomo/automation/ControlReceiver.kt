@@ -27,9 +27,10 @@ class ControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val cmd = ControlCommand.fromWire(intent.getStringExtra(AutomationContract.EXTRA_CMD))
         if (cmd == null) {
+            // Pre-authorization: no runtime snapshot in the reply (see StatusReporter.rejected).
             emitSync(
                 context,
-                StatusReporter.failure(
+                StatusReporter.rejected(
                     null,
                     ControlError.INVALID_ARGS,
                     "unknown or missing cmd; expected one of " +
@@ -40,8 +41,9 @@ class ControlReceiver : BroadcastReceiver() {
         }
 
         // Release requires a provisioned token; debug enforces it whenever one is configured.
+        // On failure reply without the runtime snapshot — the caller is not yet authorized.
         AutomationConfig.verifyToken(context, intent.getStringExtra(AutomationContract.EXTRA_TOKEN))
-            ?.let { emitSync(context, StatusReporter.failure(cmd, it, "token required or mismatched")); return }
+            ?.let { emitSync(context, StatusReporter.rejected(cmd, it, "token required or mismatched")); return }
 
         // Commands may block (start/stop wait for a stage transition), so hop off the main thread.
         val ordered = isOrderedBroadcast
