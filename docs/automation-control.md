@@ -714,10 +714,18 @@ VPN 授权；受管设备也可预置 always-on VPN。
 控制组件同时存在于 debug 与 release：
 
 1. **release 默认拒绝**：`automation.token` 不存在或为空时，所有命令返回 `BAD_TOKEN`。
-2. **凭据由环境注入**：设备准备流程把 token 写入 Pakomo 的 app-specific external files，并在
-   每条请求的 `token` 字段中携带同一值。token 不应提交到仓库或打印到测试日志。
-3. **debug 面向开发者**：未配置 token 时允许本地诊断；配置后同样强制匹配。
-4. manifest `BroadcastReceiver` 无法可靠获得发送者 uid，因此不以伪造的 caller-uid 检查代替认证。
+2. **凭据由环境注入**：设备准备流程把 token 写入 Pakomo 的 app-specific external files
+   （`getExternalFilesDir()/pakomo/automation.token`），并在每条请求的 `token` 字段中携带同一值。
+   选用外部 files 是为了 **release（non-debuggable）仍可用 adb push 注入**；内部
+   `/data/data/<pkg>/` 对 release 无法 `run-as` 写入。token 不应提交到仓库或打印到测试日志
+   （CI 请用 Masked 变量，勿打印含 `--es token` 的完整命令）。
+3. **debug 面向开发者**：未配置 token 时允许本地诊断；配置后同样强制匹配。debug 包不外发。
+4. **鉴权前不泄露状态**：未知/`cmd` 缺失与 token 校验失败走 `StatusReporter.rejected`——响应只含
+   错误码与必要元数据，**不附带** `stage`/`stats` 等运行时快照。鉴权通过后的成功/失败响应仍可含快照。
+5. manifest `BroadcastReceiver` 无法可靠获得发送者 uid，因此不以伪造的 caller-uid 检查代替认证；
+   **token 即边界**。
+
+更完整的攻击面与处置见 [威胁模型](05-security/threat-model.md)。
 
 ---
 

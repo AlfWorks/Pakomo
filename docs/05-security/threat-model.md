@@ -12,16 +12,20 @@
 
 ## 自动化控制面
 
-自动化控制协议允许外部通过 adb 广播驱动 Pakomo，包括启停与切换故障 profile。一个能够启动 VPN、丢弃流量、修改 DNS
-的 exported 组件如果进入 release，构成严重风险。为此采用三层收口：
+自动化控制协议允许外部通过 adb 广播驱动 Pakomo，包括启停与切换故障 profile。控制入口 `ControlReceiver` 声明在
+`src/main/AndroidManifest.xml`，`exported="true"` 且不带 permission——**debug 与 release 构建都包含并导出**（组件名可
+从文档或反编译获知）。因此真实的安全边界不是「该组件是否存在」，而是下列收口：
 
-1. **构建门禁**：控制组件（`ControlReceiver` 等）的源码与 manifest 仅在 debug 构建（`src/debug`）中存在，release 产物
-   不含该接收器。`AUTOMATION_ENABLED` BuildConfig 作为纵深防御。
-2. **共享令牌**：放置 `automation.token` 后即开启强制校验，之后每条命令须携带匹配的 token；release 场景要求配置该令牌。
-3. **前置断言**：只断言、不满足。VPN 未授权时返回 `NEED_VPN_CONSENT` 并快速失败，不尝试绕过系统弹窗。
+1. **共享令牌（主边界）**：`AutomationConfig.verifyToken` 校验 `automation.token`。
+   - **release**：未配置 token 时任何命令一律 `BAD_TOKEN`——安装正式包不会暴露未鉴权的控制面。
+   - **debug**：未配置 token 时放行以便本地诊断；一旦配置则强制校验。
+   - 配置后每条命令须携带与 token 文件常量时间匹配的值。
+2. **前置断言（不绕过）**：只断言、不满足。VPN 未授权时返回 `NEED_VPN_CONSENT` 并快速失败，不尝试绕过系统弹窗。
+3. **鉴权前不泄露状态**：命令解析失败与 token 校验失败（pre-authorization）的响应只回错误码，**不附带运行时快照**
+   （`stage`/`stats`），避免同机应用发无 token 的 ordered 广播从 result 侧信道读取引擎状态。
 
 Pakomo 未采用基于 calling-uid 的校验，因为广播接收器在 `onReceive` 中无法获取可靠的发送方 uid，此类检查不构成真实
-边界。真实边界是 debug-only 与令牌。详见 [自动化控制接口](../automation-control.md) 的安全一节。
+边界。**真实边界是令牌**（release 强制）。详见 [自动化控制接口](../automation-control.md) 的安全一节。
 
 ## 显式广播要求
 
