@@ -150,7 +150,7 @@ build:apk:
     # test 与 prod 都产出 public/，由 pages job 按 path_prefix 部署到各自频道。
     - |
       novi_track() {
-        apk="$1"; appid="$2"; track="$3"; out="public/$track"
+        apk="$1"; appid="$2"; track="$3"; out="public${PAGES_CHANNEL:+/$PAGES_CHANNEL}/$track"
         mkdir -p "$out/artifacts/$CI_PIPELINE_IID"
         python3 scripts/novi-prepare-release.py \
           --apk "$apk" --application-id "$appid" \
@@ -207,28 +207,24 @@ build:apk:
       - public/
     expire_in: 1 day
 
-# Novi 自更新源发布到 GitLab Pages（并行部署，path_prefix 让 test 与 prod 频道共存、互不覆盖）：
-#   web 手动触发 → path_prefix "test" → <CI_PAGES_URL>/test/kernel(hev)/（自动，测试频道）
-#   正式 tag     → 根部署（无 prefix） → <CI_PAGES_URL>/kernel(hev)/（when: manual 手动闸门）
+# Novi 自更新源发布到 GitLab Pages。频道用 public/<channel>/ 子目录承载(build:apk 里按环境写入)，
+# 根部署即可，不依赖 path_prefix 的 URL 规则(唯一域下 path_prefix 无法可靠映射到 <base>/<prefix>/)：
+#   web 手动触发 → public/test/kernel(hev)/ → <CI_PAGES_URL>/test/kernel(hev)/(自动，测试频道)
+#   正式 tag     → public/kernel(hev)/      → <CI_PAGES_URL>/kernel(hev)/(when: manual 手动闸门)
+# ⚠️ Pages 整站替换：当前部署只含本次频道，另一频道会被覆盖。test 与 prod 并存需上线时另加"拉回另一频道"合并步。
 pages:
   stage: deploy
   image: alpine:latest
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
-      variables:
-        PAGES_PREFIX: "test"
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
       when: manual
       allow_failure: true
-      variables:
-        PAGES_PREFIX: ""
   needs:
     - job: build:apk
       artifacts: true
-  pages:
-    path_prefix: "$PAGES_PREFIX"
   script:
-    - echo "Publishing Novi update source (channel='${PAGES_PREFIX:-<root>}') to $CI_PAGES_URL"
+    - echo "Publishing Novi update source (public/) to $CI_PAGES_URL"
   artifacts:
     paths:
       - public
