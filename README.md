@@ -30,6 +30,10 @@
     ·
     <a href="#声明">声明</a>
   </p>
+
+  <p>
+    <a href="README_EN.md">English</a> · 简体中文
+  </p>
 </div>
 
 ## 简介
@@ -212,4 +216,14 @@ Pakomo 是网络测试工具，仅限在具备测试授权的网络与应用上�
 - 转发核心 `hev-socks5-tunnel` 采用 MIT 许可，并从源码构建。
 - SOCKS 服务仅监听本机随机端口，使用每次启动生成的随机凭据。
 - `QUERY_ALL_PACKAGES` 权限仅用于在接管范围内选择已安装应用。
-- 角色"Pako"及相关美术资源为界面装饰，版权归其原作者所有。
+- 角色"Pako"及相关美术资源为界面装饰，由 Stable Diffusion 生成（AI 生成内容）。
+
+## 许可 · License
+
+Pakomo 采用 **GNU General Public License v3.0 或更新版本**（`GPL-3.0-or-later`）授权，完整条款见 [LICENSE](LICENSE)。
+
+Copyright (C) 2026 AlfWorks
+
+> 本程序是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证（第 3 版，或你选择的任何更新版本）的条款重新分发和/或修改它。本程序的分发是希望它有用，但**不提供任何担保**；甚至不包含适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
+
+第三方组件保留各自许可，均与 GPLv3 兼容：转发核心 `hev-socks5-tunnel`（MIT）、自更新库 Novi（Apache-2.0）。角色"Pako"及美术资源不在本许可覆盖范围内（见上「声明」）。

@@ -1,5 +1,7 @@
 # 状态映射（State Mapping）
 
+[English](state-mapping_EN.md) | 简体中文
+
 Pakomo 的可视状态由真实引擎状态派生，共五个，均已实现。界面文案、Mascot 视觉与美术资源使用同一套状态标识。
 
 ## 状态来源
@@ -44,6 +46,6 @@ Pakomo 未单独设立美术需求文档。已实现的视觉资源如下：
 
 - **主题**：`ui/theme/`，通过 `ThemeMode` 切换，包含 `PakomoColors` 与 `PakomoTheme`。
 - **Pako 美术**：`ui/components/PakomoArtwork.kt`，包含 `StatusDecor` 等装饰。角色"Pako"及相关美术为界面装饰，
-  版权归其原作者所有。
+  由 Stable Diffusion 生成（AI 生成内容）。
 
 后续如需扩充 Mascot 视觉，交付资源需与上表的状态标识一一对应。
