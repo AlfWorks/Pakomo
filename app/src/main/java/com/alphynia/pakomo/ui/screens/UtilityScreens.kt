@@ -505,7 +505,7 @@ fun AboutScreen(onBack: () -> Unit) {
             SectionLabel(t("应用与系统", "App & system"))
             SettingRow(
                 title = t("应用版本", "App version"),
-                subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                subtitle = BuildConfig.VERSION_NAME,
             )
             SettingRow(
                 title = t("包名", "Package"),
