@@ -18,9 +18,10 @@
 #   keystore.properties       —— 内含 storeFile=pakomo-release.jks / storePassword / keyAlias / keyPassword
 #   novi-manifest-private.pem —— Novi 自更新清单签名私钥（P-256），仅用于 CI 签 latest.json，不入包/不入库
 #
-# Novi 自更新：pages job 用 GitLab Pages 并行部署（path_prefix）让 test 与 prod 双频道共存，互不覆盖。
-#   test → <CI_PAGES_URL>/test/kernel(hev)/ ；prod → <CI_PAGES_URL>/kernel(hev)/。
-#   APK 内烘焙的信任锚（公钥/签名者/源 URL）全部由 CI 现算，无需手填变量。
+# Novi 自更新：内容部署到 GitLab Pages 的 public/<channel>/ 下（见 pages job）：
+#   test → Pages .../test/kernel(hev)/ ；prod → Pages .../kernel(hev)/。
+#   但 APK 内烘焙的更新源是中性域名 $PUBLIC_UPDATE_BASE（Cloudflare Worker 反代 Pages，
+#   藏住 GitLab，设备只连该中性域名）。信任锚（公钥/签名者）由 CI 现算，无需手填变量。
 #
 # 说明：内网出网需走代理 17890；内网地址（gitlab / 服务器）走 NO_PROXY 直连。
 
@@ -46,6 +47,9 @@ variables:
   GRADLE_OPTS: "-Dhttp.proxyHost=172.17.0.1 -Dhttp.proxyPort=17890 -Dhttps.proxyHost=172.17.0.1 -Dhttps.proxyPort=17890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|*.nyukit.com"
   DEPLOY_REMOTE_DIR: "pakomo-signing"
   CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+  # 烘焙进 APK 的公开更新源基址：中性域名（Cloudflare Worker 反代 GitLab Pages，藏住 GitLab；
+  # 设备只连它）。会进每个已发布的包，必须永久稳定，勿改。Pages 实际内容仍发到 $CI_PAGES_URL。
+  PUBLIC_UPDATE_BASE: "https://pakomo.resources.alphynia.com"
 
 build:apk:
   stage: build
@@ -69,11 +73,11 @@ build:apk:
       if [ "$CI_PIPELINE_SOURCE" = "web" ]; then
         export IS_PROD=false PAGES_CHANNEL="test"
         export PAKOMO_VERSION_NAME="0.0.0-test.$CI_PIPELINE_IID+$CI_COMMIT_SHORT_SHA"
-        export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/test/"
+        export PAKOMO_UPDATE_SOURCES="$PUBLIC_UPDATE_BASE/test/"
       else
         export IS_PROD=true PAGES_CHANNEL=""
         export PAKOMO_VERSION_NAME="${CI_COMMIT_TAG#v}"
-        export PAKOMO_UPDATE_SOURCES="$CI_PAGES_URL/"
+        export PAKOMO_UPDATE_SOURCES="$PUBLIC_UPDATE_BASE/"
       fi
       export PAKOMO_VERSION_CODE="$CI_PIPELINE_IID"
       test -n "$CI_PAGES_URL" || echo "WARN: CI_PAGES_URL 为空（Pages 未启用？），本次 APK 自更新源将不可用"
