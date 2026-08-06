@@ -92,7 +92,7 @@ fun PakomoUpdateDialog(
                     keyId = manifest.keyId,
                     sha256 = manifest.artifact.sha256,
                     signer = BuildConfig.NOVI_APK_SIGNER_SHA256,
-                    sources = BuildConfig.NOVI_UPDATE_SOURCES,
+                    sources = UpdateSources.display(t("（已隐藏）", "(redacted)")).joinToString(", "),
                     artifactPath = manifest.artifact.path,
                     mandatory = manifest.mandatory,
                     t = ::t,

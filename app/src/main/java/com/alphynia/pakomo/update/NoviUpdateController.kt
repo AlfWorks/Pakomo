@@ -26,6 +26,37 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.URL
 
+/**
+ * Packaging-time update-source parsing, shared by the controller (which roots Novi checks) and the
+ * UI (which of those to reveal). Entries come from [BuildConfig.NOVI_UPDATE_SOURCES] — a
+ * comma-separated, ordered (priority) list. An entry prefixed with '!' is *redacted*: Novi still
+ * checks and downloads from it, but the UI shows a placeholder instead of its URL. Redaction is
+ * display-only; the real URL is still present in the built BuildConfig string (not a secret).
+ */
+internal object UpdateSources {
+    private data class Entry(val rootUrl: String, val redacted: Boolean)
+
+    private fun entries(): List<Entry> =
+        BuildConfig.NOVI_UPDATE_SOURCES.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            .map {
+                if (it.startsWith("!")) Entry(it.removePrefix("!").trim(), redacted = true)
+                else Entry(it, redacted = false)
+            }
+            .filter { it.rootUrl.isNotEmpty() }
+
+    private fun track(rootUrl: String): String {
+        val track = BuildConfig.APPLICATION_ID.substringAfterLast('.')
+        return rootUrl.trimEnd('/') + "/" + track + "/"
+    }
+
+    /** The exact per-track root URLs Novi checks (redaction markers stripped). */
+    fun resolved(): List<String> = entries().map { track(it.rootUrl) }
+
+    /** Per-track URLs for display; redacted entries collapse to [redactedLabel]. */
+    fun display(redactedLabel: String): List<String> =
+        entries().map { if (it.redacted) redactedLabel else track(it.rootUrl) }
+}
+
 /** Status of an explicit user-triggered "check for updates" (for the About screen's feedback). */
 sealed interface UpdateCheckStatus {
     data object Idle : UpdateCheckStatus
@@ -74,7 +105,10 @@ class NoviUpdateController(app: Application) {
     val checkStatus: StateFlow<UpdateCheckStatus> = _checkStatus.asStateFlow()
 
     /** Resolved per-flavor update-source root URLs (base + kernel/hev track) — the exact URLs Novi checks. */
-    val sourceUrls: List<String> get() = resolvedSourceUrls()
+    val sourceUrls: List<String> get() = UpdateSources.resolved()
+
+    /** Same list for display; entries marked redacted (leading '!') collapse to [redactedLabel]. */
+    fun displaySourceUrls(redactedLabel: String): List<String> = UpdateSources.display(redactedLabel)
 
     private var verifiedApk: VerifiedApk? = null
     private var manualInstallIntent: Intent? = null
@@ -244,18 +278,8 @@ class NoviUpdateController(app: Application) {
     private companion object {
         const val TAG = "NoviUpdate"
 
-        /**
-         * Packaging-time base source roots + per-flavor track (kernel/hev derived from applicationId) —
-         * the exact per-track root URLs Novi checks. Empty when no sources are configured.
-         */
-        fun resolvedSourceUrls(): List<String> {
-            val track = BuildConfig.APPLICATION_ID.substringAfterLast('.')
-            return BuildConfig.NOVI_UPDATE_SOURCES.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                .map { it.trimEnd('/') + "/" + track + "/" }
-        }
-
         fun buildNovi(context: Context): Novi? {
-            val roots = resolvedSourceUrls()
+            val roots = UpdateSources.resolved()
             val publicKey = BuildConfig.NOVI_MANIFEST_PUBLIC_KEY.trim()
             val signer = BuildConfig.NOVI_APK_SIGNER_SHA256.trim().lowercase()
             if (roots.isEmpty() || publicKey.isEmpty() || signer.isEmpty()) {

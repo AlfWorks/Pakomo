@@ -52,6 +52,9 @@ android {
         // PAKOMO_UPDATE_SOURCES is a comma-separated, ordered (priority) list of source
         // roots, added/removed per build (empty -> update stays inert). The per-flavor
         // track subpath (kernel/ or hev/) is derived from applicationId at runtime.
+        // Prefix an entry with '!' to redact it: Novi still checks/downloads from it, but
+        // the UI shows "(redacted)" instead of its URL (display-only; the URL is still in
+        // this BuildConfig string). E.g. PAKOMO_UPDATE_SOURCES="https://updates/,!http://127.0.0.1:49221/".
         // The trust anchors below are the only set-once, security-critical values; when
         // absent the controller disables self-update rather than trusting nothing.
         buildConfigField(

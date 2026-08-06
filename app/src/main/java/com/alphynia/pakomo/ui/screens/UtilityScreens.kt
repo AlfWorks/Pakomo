@@ -531,7 +531,7 @@ fun AboutScreen(onBack: () -> Unit) {
             SectionLabel(t("更新", "Update"))
             SettingRow(
                 title = t("更新源", "Update source"),
-                subtitle = updateController.sourceUrls.joinToString("\n")
+                subtitle = updateController.displaySourceUrls(t("[已隐藏]", "[redacted]")).joinToString("\n")
                     .ifEmpty { t("未配置", "Not configured") },
             )
             val checkState = checkStatus
