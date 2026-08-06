@@ -146,6 +146,10 @@ build:apk:
         # 测试构建（web）：无 tag，取最近提交作为 changelog
         git log --no-merges -n 20 --pretty=format:'- %s (`%h`)' > release-notes.md
       fi
+      # 弹窗用精简 changelog：只取最近 6 项，避免整段 git log 撑爆更新弹窗；完整列表仍进 GitLab Release。
+      head -n 6 release-notes.md > changelog-brief.md
+      extra=$(( $(grep -c '^- ' release-notes.md) - 6 ))
+      [ "$extra" -gt 0 ] && printf '\n- …（另有 %s 项）' "$extra" >> changelog-brief.md
     # Novi 更新源：为两 flavor 各签一份 latest.json，组装成 Pages 发布目录 public/<track>/。
     # test 与 prod 都产出 public/，由 pages job 按 path_prefix 部署到各自频道。
     - |
@@ -157,7 +161,7 @@ build:apk:
           --version-code "$CI_PIPELINE_IID" --version-name "$PAKOMO_VERSION_NAME" \
           --artifact-path "artifacts/$CI_PIPELINE_IID/app.apk" \
           --key-id "$PAKOMO_NOVI_KEY_ID" --private-key novi-manifest-private.pem \
-          --changelog-file release-notes.md \
+          --changelog-file changelog-brief.md \
           --output "$out"
         cp "$apk" "$out/artifacts/$CI_PIPELINE_IID/app.apk"
       }
@@ -197,7 +201,7 @@ build:apk:
       else
         echo "Test build (web): 跳过通用包与 GitLab Release，仅发布 Pages test 频道。"
       fi
-      rm -f release-notes.md
+      rm -f release-notes.md changelog-brief.md
   after_script:
     # 无论成败都清掉签名材料（含 novi 清单私钥），绝不进产物/缓存
     - rm -f "$CI_PROJECT_DIR/pakomo-release.jks" "$CI_PROJECT_DIR/keystore.properties" "$CI_PROJECT_DIR/novi-manifest-private.pem"

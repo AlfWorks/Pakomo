@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.alphynia.pakomo.BuildConfig
@@ -54,11 +58,20 @@ fun PakomoUpdateDialog(
         onDismissRequest = { if (canDismiss) onDismiss() },
         title = { Text(t("发现新版本", "Update available") + " · " + manifest.versionName) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.5f).dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 // Phase status line + progress.
                 when (state.phase) {
                     NoviUpdatePhase.AVAILABLE ->
-                        Text(manifest.changelog ?: t("有可用的新版本。", "A new version is ready."))
+                        Text(
+                            text = manifest.changelog?.takeIf { it.isNotBlank() }
+                                ?: t("有可用的新版本。", "A new version is ready."),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     NoviUpdatePhase.DOWNLOADING -> {
                         val p = state.progress
                         Text(if (p == null) t("下载中…", "Downloading…") else t("下载中… %d%%", "Downloading… %d%%").format((p * 100).toInt()))
