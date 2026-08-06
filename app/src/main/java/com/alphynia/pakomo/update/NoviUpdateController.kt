@@ -286,10 +286,13 @@ class NoviUpdateController(app: Application) {
                 Log.i(TAG, "Self-update disabled: sources or trust anchors not provisioned")
                 return null
             }
-            val sources = roots.mapIndexed { index, url ->
-                HttpUpdateSource(id = "s$index", rootUrl = URL(url))
-            }
             return runCatching {
+                // URL parsing and HttpUpdateSource construction (which enforces HTTPS-except-loopback)
+                // are inside the guard on purpose: a misconfigured packaging-time source must disable
+                // self-update, not crash the app on startup.
+                val sources = roots.mapIndexed { index, url ->
+                    HttpUpdateSource(id = "s$index", rootUrl = URL(url))
+                }
                 Novi(
                     NoviConfig(
                         context = context,
