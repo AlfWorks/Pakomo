@@ -13,6 +13,8 @@
 #   DEPLOY_USER      —— ssh 用户名（其家目录/指定目录下存放签名材料）
 #   DEPLOY_PASSWORD  —— 该 ssh 用户密码
 #   DEPLOY_REMOTE_DIR    —— （可选）服务器上签名材料目录，默认 pakomo-signing
+#   GITHUB_ACCESS_TOKEN  —— （可选，仅 prod）GitHub fine-grained PAT，限 AlfWorks/Pakomo、Contents R/W；
+#                           用于建 GitHub Release + 推 gh-pages 更新源镜像。缺则跳过 GitHub 发布，不影响 GitLab。
 # 服务器该目录下需放：
 #   pakomo-release.jks        —— release keystore
 #   keystore.properties       —— 内含 storeFile=pakomo-release.jks / storePassword / keyAlias / keyPassword
@@ -202,6 +204,36 @@ build:apk:
           ]}}' > release-body.json
         curl --fail -sS --request POST --header "JOB-TOKEN: $CI_JOB_TOKEN" --header "Content-Type: application/json" --data @release-body.json "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"
         rm -f release-body.json
+        # GitHub 公开发布（AlfWorks/Pakomo）：Release 下载页 + gh-pages 更新源镜像。
+        # 需 GitLab CI 变量 GITHUB_ACCESS_TOKEN（fine-grained：Contents R/W，含 gh-pages 推送）。
+        # 缺变量则跳过，不阻断 GitLab 侧发布。自更新主源仍是中性域名（见文件头）。
+        if [ -n "$GITHUB_ACCESS_TOKEN" ]; then
+          GH_REPO="AlfWorks/Pakomo"
+          echo "Publishing GitHub Release + gh-pages to $GH_REPO"
+          REL_ID=$(curl --fail -sS -X POST "https://api.github.com/repos/$GH_REPO/releases" \
+            -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Accept: application/vnd.github+json" \
+            -d "$(jq -n --arg tag "$CI_COMMIT_TAG" --arg name "Pakomo $PAKOMO_VERSION_NAME" --arg body "$RELEASE_DESCRIPTION" '{tag_name:$tag,name:$name,body:$body}')" \
+            | jq -r '.id')
+          UP="https://uploads.github.com/repos/$GH_REPO/releases/$REL_ID/assets"
+          curl --fail -sS -X POST "$UP?name=$K_ASSET"        -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$K_APK"
+          curl --fail -sS -X POST "$UP?name=$H_ASSET"        -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$H_APK"
+          curl --fail -sS -X POST "$UP?name=$K_ASSET.sha256" -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: text/plain" --data-binary @"$K_APK.sha256"
+          curl --fail -sS -X POST "$UP?name=$H_ASSET.sha256" -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: text/plain" --data-binary @"$H_APK.sha256"
+          echo "GitHub Release $CI_COMMIT_TAG published (id=$REL_ID)"
+          # gh-pages：整分支替换为本次 public/（含 kernel/ hev/），作公开更新源镜像（当前 App 未指向它，供备用/冗余）。
+          if [ -d public ]; then
+            git config --global user.email "ci@alphynia.com"; git config --global user.name "Pakomo CI"
+            rm -rf ghp; mkdir ghp
+            ( cd ghp && git init -q && git checkout -q -b gh-pages \
+              && cp -r ../public/* . && touch .nojekyll \
+              && git add -A && git commit -q -m "chore(pages): update source for $PAKOMO_VERSION_NAME" \
+              && git push -q -f "https://x-access-token:$GITHUB_ACCESS_TOKEN@github.com/$GH_REPO.git" gh-pages )
+            rm -rf ghp
+            echo "gh-pages mirror pushed"
+          fi
+        else
+          echo "GITHUB_ACCESS_TOKEN not set; skipping GitHub publish."
+        fi
       else
         echo "Test build (web): 跳过通用包与 GitLab Release，仅发布 Pages test 频道。"
       fi
