@@ -92,7 +92,9 @@ fun PakomoUpdateDialog(
                     keyId = manifest.keyId,
                     sha256 = manifest.artifact.sha256,
                     signer = BuildConfig.NOVI_APK_SIGNER_SHA256,
-                    sources = UpdateSources.display(t("（已隐藏）", "(redacted)")).joinToString(", "),
+                    // The one source that actually served this release, not the whole baked list.
+                    sources = UpdateSources.display(t("（已隐藏）", "(redacted)"))
+                        .getOrNull(state.release.selectedSourceIndex) ?: t("未知", "unknown"),
                     artifactPath = manifest.artifact.path,
                     mandatory = manifest.mandatory,
                     t = ::t,
