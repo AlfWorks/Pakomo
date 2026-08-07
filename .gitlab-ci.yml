@@ -193,6 +193,7 @@ build:apk:
         curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$K_APK.sha256" "$PKG_URL/$K_ASSET.sha256"
         curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK" "$PKG_URL/$H_ASSET"
         curl --fail -sS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$H_APK.sha256" "$PKG_URL/$H_ASSET.sha256"
+        # GitLab 用扁平 Markdown（不含 <details>，避免部分版本/视图不渲染 HTML 折叠）。
         RELEASE_DESCRIPTION=$(printf '## 更新内容\n\n%s\n\n## SHA256\n\n- Kernel: `%s`\n- Hev: `%s`' \
           "$(cat release-notes.md)" \
           "$(cut -d' ' -f1 "$K_APK.sha256")" \
@@ -220,11 +221,16 @@ build:apk:
           GH_REPO="AlfWorks/Pakomo"; GH_API="https://api.github.com/repos/$GH_REPO"
           GH_AUTH="Authorization: Bearer $GITHUB_ACCESS_TOKEN"; GH_ACC="Accept: application/vnd.github+json"
           echo "Publishing GitHub Release + gh-pages to $GH_REPO"
+          # GitHub 支持 <details>：把更新日志折叠起来（GitLab 那份保持扁平，见上）。
+          GH_BODY=$(printf '## 更新内容 · Changelog\n\n<details>\n<summary>展开完整更新日志 · Full changelog</summary>\n\n%s\n\n</details>\n\n## SHA256\n\n- Kernel: `%s`\n- Hev: `%s`' \
+            "$(cat release-notes.md)" \
+            "$(cut -d' ' -f1 "$K_APK.sha256")" \
+            "$(cut -d' ' -f1 "$H_APK.sha256")")
           # 幂等：先看该 tag 是否已有 Release，有则复用其 id；没有再建。建失败则打印响应体（如 422 的具体 error）。
           REL_ID=$(curl -sS -H "$GH_AUTH" -H "$GH_ACC" "$GH_API/releases/tags/$CI_COMMIT_TAG" | jq -r '.id // empty')
           if [ -z "$REL_ID" ]; then
             RESP=$(curl -sS -X POST "$GH_API/releases" -H "$GH_AUTH" -H "$GH_ACC" \
-              -d "$(jq -n --arg tag "$CI_COMMIT_TAG" --arg name "Pakomo $PAKOMO_VERSION_NAME" --arg body "$RELEASE_DESCRIPTION" '{tag_name:$tag,name:$name,body:$body}')")
+              -d "$(jq -n --arg tag "$CI_COMMIT_TAG" --arg name "Pakomo $PAKOMO_VERSION_NAME" --arg body "$GH_BODY" '{tag_name:$tag,name:$name,body:$body}')")
             REL_ID=$(printf '%s' "$RESP" | jq -r '.id // empty')
             [ -n "$REL_ID" ] || { echo "GitHub release create failed: $RESP"; exit 1; }
           fi
