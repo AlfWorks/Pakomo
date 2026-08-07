@@ -90,6 +90,14 @@ class NoviUpdateController(app: Application) {
         get() = prefs.getLong("ignored_version", -1L)
         set(value) { prefs.edit().putLong("ignored_version", value).apply() }
 
+    /**
+     * Whether the automatic once-per-launch check runs. Default on. Turning it off only stops the
+     * silent launch check; the manual "check for updates" action still works regardless.
+     */
+    var autoUpdateEnabled: Boolean
+        get() = prefs.getBoolean("auto_update_enabled", true)
+        set(value) { prefs.edit().putBoolean("auto_update_enabled", value).apply() }
+
     /** True when sources and trust anchors are provisioned and Novi initialised cleanly. */
     val isEnabled: Boolean get() = novi != null
 
@@ -124,9 +132,10 @@ class NoviUpdateController(app: Application) {
             .onFailure { Log.w(TAG, "reconcilePending failed", it) }
     }
 
-    /** Kick off the once-per-process check. No-op when disabled or already run. */
+    /** Kick off the once-per-process check. No-op when disabled, auto-update off, or already run. */
     fun checkOnce() {
         val n = novi ?: return
+        if (!autoUpdateEnabled) return
         n.checkOncePerProcess { result ->
             when (result) {
                 is CheckResult.Available ->

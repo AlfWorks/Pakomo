@@ -534,6 +534,23 @@ fun AboutScreen(onBack: () -> Unit) {
                 subtitle = updateController.displaySourceUrls(t("[已隐藏]", "[redacted]")).joinToString("\n")
                     .ifEmpty { t("未配置", "Not configured") },
             )
+            var autoUpdate by remember { mutableStateOf(updateController.autoUpdateEnabled) }
+            SettingRow(
+                title = t("自动检查更新", "Auto-check for updates"),
+                subtitle = t("启动时自动检查新版本", "Check for a new version on launch"),
+                onClick = if (updateController.isEnabled) {
+                    { autoUpdate = !autoUpdate; updateController.autoUpdateEnabled = autoUpdate }
+                } else {
+                    null
+                },
+                trailing = {
+                    Switch(
+                        checked = autoUpdate,
+                        enabled = updateController.isEnabled,
+                        onCheckedChange = { autoUpdate = it; updateController.autoUpdateEnabled = it },
+                    )
+                },
+            )
             val checkState = checkStatus
             SettingRow(
                 title = t("检查更新", "Check for updates"),
