@@ -79,7 +79,7 @@ Typical scenarios:
 - **Theme**: a built-in, switchable Pako decorative theme.
 - **Floating quick control**: instantly toggle takeover via a floating ball.
 - **Diagnostics**: live runtime status, attribution-hit statistics, and raw Logcat output.
-- **In-app self-update**: based on [novi](https://github.com/AlfWorks/Novi), with two-layer trust of a P-256 manifest signature + APK signer verification; when CI tags a `vX.Y.Z` release it automatically publishes a dual-track update source to GitLab Pages, and an in-app dialog runs detect → download → verify → install.
+- **In-app self-update**: based on [novi](https://github.com/AlfWorks/Novi), with two-layer trust of a P-256 manifest signature + APK signer verification; when CI tags a `vX.Y.Z` release it automatically publishes a signed dual-track (kernel/hev) public update source, and an in-app dialog runs detect → download → verify → install.
 
 ## Quick Start
 

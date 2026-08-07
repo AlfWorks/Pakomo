@@ -84,7 +84,7 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
 - **主题**：内置可切换的 Pako 装饰主题。
 - **快捷悬浮控制**：通过悬浮球即时开关接管。
 - **诊断**：实时运行状态、归属命中统计与原始 Logcat 输出。
-- **应用内自更新**：基于 [novi](https://github.com/AlfWorks/Novi)，清单 P-256 签名 + APK 签名者校验双层信任；CI 打 `vX.Y.Z` tag 时自动发布双轨更新源到 GitLab Pages，应用内弹窗完成检测 → 下载 → 校验 → 安装。
+- **应用内自更新**：基于 [novi](https://github.com/AlfWorks/Novi)，清单 P-256 签名 + APK 签名者校验双层信任；CI 打 `vX.Y.Z` tag 时自动发布签名的双轨（kernel/hev）公开更新源，应用内弹窗完成检测 → 下载 → 校验 → 安装。
 
 ## 快速开始
 

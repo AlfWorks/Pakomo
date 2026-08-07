@@ -69,7 +69,7 @@ Legend: ✔ supported · ✘ not supported · — not applicable
 
 | Capability | Kernel | Hev | Status | UI-exposed | Boundary / measurement |
 |---|:--:|:--:|---|:--:|---|
-| In-app self-update (novi) | ✔ | ✔ | `Implemented` | Yes | Based on [novi](https://github.com/AlfWorks/Novi) (`com.alphynia.novi`); two-layer trust of a P-256 manifest signature + APK signer verification; the update source is the dual-track (kernel/hev) published to GitLab Pages when CI tags a release; an in-app dialog runs detect → download → verify → install with verification details. See the novi docs for the trust model and protocol |
+| In-app self-update (novi) | ✔ | ✔ | `Implemented` | Yes | Based on [novi](https://github.com/AlfWorks/Novi) (`com.alphynia.novi`); two-layer trust of a P-256 manifest signature + APK signer verification; the update source is a signed dual-track (kernel/hev) source published when CI tags a release; an in-app dialog runs detect → download → verify → install with verification details. See the novi docs for the trust model and protocol |
 
 ### Application-layer content faults — deliberately not done
 

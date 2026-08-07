@@ -73,7 +73,7 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 
 | 能力 | Kernel | Hev | 状态 | UI 开放 | 边界 / 口径 |
 |---|:--:|:--:|---|:--:|---|
-| 应用内自更新（novi） | ✔ | ✔ | `Implemented` | 是 | 基于 [novi](https://github.com/AlfWorks/Novi)（`com.alphynia.novi`）；清单 P-256 签名 + APK 签名者校验双层信任；更新源为 CI 打 tag 时发布到 GitLab Pages 的双轨（kernel/hev）；应用内弹窗完成检测→下载→校验→安装，带校验详情。信任模型与协议详见 novi 文档 |
+| 应用内自更新（novi） | ✔ | ✔ | `Implemented` | 是 | 基于 [novi](https://github.com/AlfWorks/Novi)（`com.alphynia.novi`）；清单 P-256 签名 + APK 签名者校验双层信任；更新源为 CI 打 tag 时发布的签名双轨（kernel/hev）公开更新源；应用内弹窗完成检测→下载→校验→安装，带校验详情。信任模型与协议详见 novi 文档 |
 
 ### 应用层内容故障 — 明确不做
 
