@@ -18,6 +18,8 @@
   <p>
     <a href="#introduction">Introduction</a>
     ·
+    <a href="#screenshots">Screenshots</a>
+    ·
     <a href="#features">Features</a>
     ·
     <a href="#quick-start">Quick Start</a>
@@ -55,6 +57,12 @@ Typical scenarios:
 - Observe how a client behaves under high latency, jitter, packet loss, and rate limiting;
 - Reproduce special faults such as connection reset, DNS failure, network outage, and late response;
 - Inspect, per connection, the actual traffic passing through the device to help locate problems.
+
+## Runtime-Screenshots
+
+| Home | Select apps | Rule editor | Traffic log |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.png" width="200" alt="Home"> | <img src="docs/screenshots/by-apps.png" width="200" alt="Select apps"> | <img src="docs/screenshots/rules.png" width="200" alt="Rule editor"> | <img src="docs/screenshots/traffic.png" width="200" alt="Traffic log"> |
 
 ## Features
 

@@ -18,6 +18,8 @@
   <p>
     <a href="#简介">简介</a>
     ·
+    <a href="#截图">截图</a>
+    ·
     <a href="#功能特性">功能特性</a>
     ·
     <a href="#快速开始">快速开始</a>
@@ -58,6 +60,12 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
 - 观察客户端在高延迟、抖动、丢包与限速下的表现；
 - 复现连接重置、DNS 失败、网络中断与迟到响应（Late Response）等特殊故障；
 - 逐连接查看经过设备的实际流量，辅助定位问题。
+
+## 运行时截图
+
+| 首页 | 按应用接管 | 规则编辑 | 流量记录 |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.png" width="200" alt="首页"> | <img src="docs/screenshots/by-apps.png" width="200" alt="按应用接管"> | <img src="docs/screenshots/rules.png" width="200" alt="规则编辑"> | <img src="docs/screenshots/traffic.png" width="200" alt="流量记录"> |
 
 ## 功能特性
 
