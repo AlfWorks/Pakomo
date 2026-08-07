@@ -18,7 +18,8 @@
   <p>
     <a href="#introduction">Introduction</a>
     ·
-    <a href="#screenshots">Screenshots</a>
+    <a href="#runtime-screenshots">Runtime-Screenshots
+</a>
     ·
     <a href="#features">Features</a>
     ·
