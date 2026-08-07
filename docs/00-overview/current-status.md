@@ -1,5 +1,7 @@
 # 当前状态（Current Status）
 
+[English](current-status_EN.md) | 简体中文
+
 > 现状快照。能力的权威清单以 [能力矩阵](../01-capabilities/capability-matrix.md) 为准；本文只做叙述性总览。
 > 只记录**已实现**的现状与**明确不做**的边界；已废弃的未来设想不在此列。
 
@@ -23,4 +25,3 @@
 ## 参见
 
 - 边界依据：[原则与边界](principles-and-boundaries.md)
-- 自研内核替换历史：[kernel-replacement-postmortem](../kernel-replacement-postmortem.md)

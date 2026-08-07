@@ -1,5 +1,7 @@
 # 威胁模型（Threat Model）
 
+[English](threat-model_EN.md) | 简体中文
+
 本文关注 Pakomo 作为一个能够接管流量、且能被程序化驱动的工具，其攻击面与收口方式。数据与隐私边界参见
 [隐私边界](privacy-boundary.md)。
 

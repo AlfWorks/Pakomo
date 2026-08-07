@@ -1,5 +1,7 @@
 # 项目概览（Project Overview）
 
+[English](project-overview_EN.md) | 简体中文
+
 Pakomo 是一款基于 Android `VpnService` 的非 Root 弱网与故障模拟工具。Pakomo 通过本地 TUN 接管选定应用或域名的流量，
 在设备本机注入可控的网络劣化与特殊故障，用于验证客户端在弱网、故障与迟到响应场景下的行为。
 

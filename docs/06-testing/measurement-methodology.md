@@ -1,5 +1,7 @@
 # 测量口径（Measurement Methodology）
 
+[English](measurement-methodology_EN.md) | 简体中文
+
 Pakomo 设置的弱网参数与第三方测速工具显示的数值不一定一一对应。本文说明 Pakomo 在哪个层面采样、上行与下行是否
 独立、丢包发生在哪一层，以及推荐的验证方法与容差。
 

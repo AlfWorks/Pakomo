@@ -207,7 +207,6 @@ App → TUN → 转发引擎 [ Tun2SocksEngine（Kernel 版·纯 Kotlin） | hev
 - [UI 规范](docs/03-product/ui-specification.md) · [状态映射](docs/03-product/state-mapping.md)
 - [自动化控制接口](docs/automation-control.md)
 - [验收标准](docs/06-testing/acceptance-criteria.md) · [测量口径](docs/06-testing/measurement-methodology.md)
-- [内核替换 postmortem（历史）](docs/kernel-replacement-postmortem.md)
 
 ## 声明
 

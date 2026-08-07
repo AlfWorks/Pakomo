@@ -182,7 +182,6 @@ The documentation is organized by responsibility; the index is [docs/README_EN.m
 - [UI Specification](docs/03-product/ui-specification_EN.md) · [State Mapping](docs/03-product/state-mapping_EN.md)
 - [Automation Control Interface](docs/automation-control_EN.md)
 - [Acceptance Criteria](docs/06-testing/acceptance-criteria_EN.md) · [Measurement Methodology](docs/06-testing/measurement-methodology_EN.md)
-- [Kernel-Replacement Postmortem (historical)](docs/kernel-replacement-postmortem_EN.md)
 
 ## Notice
 

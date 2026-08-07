@@ -1,5 +1,7 @@
 # 隐私边界（Privacy Boundary）
 
+[English](privacy-boundary_EN.md) | 简体中文
+
 本文是 [原则与边界](../00-overview/principles-and-boundaries.md) 在隐私与数据处理方面的具体说明。
 
 ## 数据不出设备

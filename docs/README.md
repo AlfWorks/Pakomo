@@ -1,5 +1,7 @@
 # Pakomo 文档
 
+[English](README_EN.md) | 简体中文
+
 文档按职责分区。能力的权威清单是 [能力矩阵](01-capabilities/capability-matrix.md)。
 
 | 分区 | 主题 | 内容 |
@@ -14,7 +16,6 @@
 其他文档：
 
 - [automation-control.md](automation-control.md)：自动化控制接口，包含协议、命令、回读与安全。
-- [kernel-replacement-postmortem.md](kernel-replacement-postmortem.md)：自研内核替换的历史记录。
 
 ## 状态标签
 

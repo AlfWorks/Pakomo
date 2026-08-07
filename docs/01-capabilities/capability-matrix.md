@@ -1,5 +1,7 @@
 # 能力矩阵（Capability Matrix）
 
+[English](capability-matrix_EN.md) | 简体中文
+
 本文件列出 Pakomo 的能力及其实现状态，并说明 Kernel 与 Hev 两条实现路径的差异。
 
 ## 状态标签

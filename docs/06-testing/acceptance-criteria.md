@@ -1,5 +1,7 @@
 # 验收标准（Acceptance Criteria）
 
+[English](acceptance-criteria_EN.md) | 简体中文
+
 本文说明验证 Pakomo 已实现能力的方法。基本原则是先确认协议行为，再记录应用侧错误码；后者不作为唯一通过条件，
 参见 [故障模型](../01-capabilities/fault-models.md) 与 [测量口径](measurement-methodology.md)。
 

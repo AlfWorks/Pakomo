@@ -1,5 +1,7 @@
 # 数据流（Data Flow）
 
+[English](data-flow_EN.md) | 简体中文
+
 本文追踪一条连接如何被接管、归属、整形与注入故障。故障行为的定义以 [故障模型](../01-capabilities/fault-models.md) 为准。
 
 ## 1. 建立接管

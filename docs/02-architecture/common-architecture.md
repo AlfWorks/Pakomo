@@ -1,5 +1,7 @@
 # 公共架构（Common Architecture）
 
+[English](common-architecture_EN.md) | 简体中文
+
 本文说明 Pakomo 如何实现其能力。能力清单以 [能力矩阵](../01-capabilities/capability-matrix.md) 为准。
 
 ## 总链路
@@ -45,4 +47,3 @@ App → TUN → 转发引擎 [ Kernel: Tun2SocksEngine（纯 Kotlin） | Hev: he
 ## 参见
 
 - 端到端数据流与故障注入点：[数据流](data-flow.md)。
-- 自研内核替换的历史与吞吐优化：[内核替换 postmortem](../kernel-replacement-postmortem.md)。

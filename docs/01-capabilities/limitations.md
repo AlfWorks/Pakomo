@@ -1,5 +1,7 @@
 # 限制（Limitations）
 
+[English](limitations_EN.md) | 简体中文
+
 本文件记录 Pakomo 现有能力的边界与已知限制。与产品定位相关的硬边界（不解密、不进行中间人解密、不修改报文内容等）
 参见 [原则与边界](../00-overview/principles-and-boundaries.md)。
 

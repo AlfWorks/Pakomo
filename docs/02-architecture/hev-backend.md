@@ -1,5 +1,7 @@
 # Hev 后端（原生 hev-socks5-tunnel）
 
+[English](hev-backend_EN.md) | 简体中文
+
 Hev 版使用原生 `hev-socks5-tunnel` 作为转发核心，保留更完整、更成熟的底层能力范围。Hev 版与 Kernel 版是不同的
 实现路径，两者的中继、整形与故障逻辑完全一致，均位于共享的 `forwarding/`。
 

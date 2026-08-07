@@ -1,5 +1,7 @@
 # 故障模型（Fault Models）
 
+[English](fault-models_EN.md) | 简体中文
+
 本文件定义四种特殊故障与弱网整形的行为。所有条目均已实现，其源码位置见文末。边界与已知限制集中于
 [限制](limitations.md)，本文不再重复。
 

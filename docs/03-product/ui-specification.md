@@ -1,5 +1,7 @@
 # UI 规范（UI Specification）
 
+[English](ui-specification_EN.md) | 简体中文
+
 本文说明 Pakomo 已实现界面如何呈现其能力。状态的视觉与状态标识的映射参见 [状态映射](state-mapping.md)。
 
 ## 设计语言

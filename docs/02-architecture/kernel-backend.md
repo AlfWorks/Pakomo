@@ -1,5 +1,7 @@
 # Kernel 后端（纯 Kotlin tun2socks）
 
+[English](kernel-backend_EN.md) | 简体中文
+
 Kernel 版使用纯 Kotlin 实现 Pakomo 当前业务所需的那部分用户态隧道与转发能力，足以承接 Pakomo 已有功能，
 但并不等于用 Kotlin 完整重写 `hev-socks5-tunnel`。如果 Pakomo 未来新增底层网络能力，Kernel 内核需要同步扩展。
 两者属于不同的实现路径，而非完整版与精简版的关系。
@@ -45,5 +47,4 @@ IP、TCP、UDP 与 ICMP 的解析与校验和均有测试覆盖。
 
 ## 历史
 
-自研内核替换 hev 的过程，包括校验和缺陷、DNS 端口错误与吞吐优化，详见
-[内核替换 postmortem](../kernel-replacement-postmortem.md)。Kernel 版已于 2026 年 8 月通过真机验收。
+Kernel 版已于 2026 年 8 月通过真机验收；替换 hev 的过程中修复了校验和缺陷、DNS 端口错误并完成了吞吐优化。

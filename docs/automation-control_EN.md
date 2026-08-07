@@ -1,54 +1,48 @@
-# Pakomo 自动化接入
+# Pakomo Automation Integration
 
-[English](automation-control_EN.md) | 简体中文
+English | [简体中文](automation-control.md)
 
-Pakomo 是可由测试代码控制的弱网与网络故障注入工具。debug 和 release APK 使用同一套稳定
-协议。仓库不提供语言、测试框架或设备农场封装；接入项目根据所用技术栈实现适配层。
-Android explicit ordered broadcast 是协议传输，不要求在终端手工操作。
+Pakomo is a weak-network and network-fault injection tool that can be controlled by test code. The debug and release APKs use the same stable protocol. The repository provides no language, test-framework, or device-farm wrapper; an integrating project implements an adapter layer for its own stack. The Android explicit ordered broadcast is the protocol transport and does not require manual terminal operation.
 
-控制层只解析协议并转发到现有 `VpnServiceController`，不复制引擎或策略逻辑。
+The control layer only parses the protocol and forwards to the existing `VpnServiceController`; it does not duplicate engine or policy logic.
 
 ---
 
-## 协议范围
+## Protocol scope
 
-自动化协议包含：
+The automation protocol covers:
 
-- 显式 ordered broadcast 的 action、component 与字符串字段。
-- profile JSON 格式、命令语义、错误码和结构化响应。
-- release token 校验，以及等待具体配置生效的确认语义。
-- 每个响应中的 `protocolVersion`；不兼容变更才递增该整数。
+- The action, component, and string fields of the explicit ordered broadcast.
+- The profile JSON format, command semantics, error codes, and structured responses.
+- Release token verification, and the confirmation semantics of waiting for a specific config to take effect.
+- A `protocolVersion` in every response; only incompatible changes bump this integer.
 
-项目适配层负责：
+The project's adapter layer is responsible for:
 
-- 按自身框架选择设备并发送协议请求。
-- 从项目采用的密钥存储中取得 token，准备设备并下发 profile。
-- 解析 JSON、处理超时与错误，并在用例结束或失败时调用 `reset` 和 `stop`。
-- 将这些操作组织成自己框架中的 fixture、hook、rule 或 helper。
+- Selecting a device and sending protocol requests using its own framework.
+- Obtaining the token from the project's secret store, preparing the device, and delivering profiles.
+- Parsing JSON, handling timeouts and errors, and calling `reset` and `stop` at the end of a case or on failure.
+- Organizing these operations into its framework's fixtures, hooks, rules, or helpers.
 
-典型生命周期为：设备准备与认证 → 下发 profile → `start(wait=true)` → 运行被测流程 → 按需
-`update`/`status` → `reset(wait=true)` → `stop(wait=true)`。
+A typical lifecycle is: device preparation and authentication → deliver profile → `start(wait=true)` → run the flow under test → `update`/`status` as needed → `reset(wait=true)` → `stop(wait=true)`.
 
-### 常用语言示例
+### Common language examples
 
-以下代码直接实现协议调用，不依赖 Pakomo SDK。每个示例都包含设备准备、token/profile 写入、
-命令调用和清理；运行前只需安装 release APK、准备本地的 `profiles/checkout.json` 与
-`profiles/checkout_offline.json`，并设置 `PAKOMO_TOKEN`。`runSystemUnderTest()` 和
-`runReconnectAssertions()` 代表已有的自动化测试流程。
+The code below implements the protocol calls directly, without depending on a Pakomo SDK. Each example includes device preparation, token/profile writing, command invocation, and cleanup; before running, you only need to install the release APK, prepare local `profiles/checkout.json` and `profiles/checkout_offline.json`, and set `PAKOMO_TOKEN`. `runSystemUnderTest()` and `runReconnectAssertions()` represent your existing automated test flow.
 
-各示例中的 `control` 函数用法相同：
+The `control` function is used the same way in each example:
 
 ```text
-control("status")                                  # 查询当前阶段和统计
-control("start",  profile="checkout", wait=true) # 建立 VPN 并等待 profile 生效
-control("update", profile="checkout_offline", wait=true) # 运行中热切 profile，不重建隧道
-control("reset",  wait=true)                      # 恢复 normal 规则
-control("stop",   wait=true)                      # 停止 VPN
+control("status")                                  # Query the current stage and stats
+control("start",  profile="checkout", wait=true) # Establish the VPN and wait for the profile to take effect
+control("update", profile="checkout_offline", wait=true) # Hot-switch the profile while running, without rebuilding the tunnel
+control("reset",  wait=true)                      # Restore the normal rule
+control("stop",   wait=true)                      # Stop the VPN
 ```
 
-`profile`、`wait` 等写法是意图示意；复制时按所选语言的参数或 Map 语法调整。
+The `profile`, `wait`, etc. notation is illustrative of intent; when copying, adjust to the argument or map syntax of your chosen language.
 
-#### Python（pytest / Appium）
+#### Python (pytest / Appium)
 
 ```python
 import json
@@ -62,12 +56,12 @@ PACKAGE = "com.alphynia.pakomo.kernel"
 COMPONENT = f"{PACKAGE}/com.alphynia.pakomo.automation.ControlReceiver"
 DEVICE_FILES = f"/sdcard/Android/data/{PACKAGE}/files/pakomo"
 TOKEN = os.environ["PAKOMO_TOKEN"]
-# ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
+# ANDROID_SERIAL is optional; used to select the target device when several are connected.
 ADB = ["adb", *(["-s", os.environ["ANDROID_SERIAL"]] if os.getenv("ANDROID_SERIAL") else [])]
 
 
 class PakomoError(RuntimeError):
-    """保留协议错误码，便于区分设备准备、测试配置和引擎错误。"""
+    """Retains the protocol error code, to distinguish device-prep, test-config, and engine errors."""
 
     def __init__(self, response):
         self.code = response.get("error", "UNKNOWN")
@@ -76,17 +70,17 @@ class PakomoError(RuntimeError):
 
 
 def adb(*args):
-    """执行 ADB，不经过 shell；自动应用可选的 ANDROID_SERIAL。"""
+    """Run ADB without going through a shell; auto-applies the optional ANDROID_SERIAL."""
     return subprocess.run([*ADB, *args], check=True, capture_output=True, text=True).stdout
 
 
 def prepare_device(profile: Path, update_profile: Path):
-    """每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。"""
+    """Run once per device or per suite: authorize, foreground-launch, write the token and two profiles."""
     adb("shell", "appops", "set", PACKAGE, "ACTIVATE_VPN", "allow")
     adb("shell", "am", "start", "-n", f"{PACKAGE}/com.alphynia.pakomo.MainActivity")
     adb("shell", "mkdir", "-p", f"{DEVICE_FILES}/profiles")
 
-    # token 不写入仓库；临时文件仅用于 adb push，完成后自动删除。
+    # The token is not committed to the repo; the temp file is only for adb push and is deleted afterward.
     with tempfile.TemporaryDirectory() as directory:
         token_file = Path(directory) / "automation.token"
         token_file.write_text(TOKEN, encoding="utf-8")
@@ -96,8 +90,8 @@ def prepare_device(profile: Path, update_profile: Path):
 
 
 def control(cmd: str, **fields):
-    """发送一条 Pakomo 命令，返回已经校验成功的响应字典。"""
-    # 所有字段使用 --es 发送为字符串；release 的每条请求都必须携带 token。
+    """Send one Pakomo command and return the already-validated response dict."""
+    # All fields are sent as strings via --es; every release request must carry the token.
     args = [
         "shell", "am", "broadcast",
         "-a", "com.pakomo.automation.CONTROL", "-n", COMPONENT,
@@ -105,12 +99,12 @@ def control(cmd: str, **fields):
     ]
     for key, value in {**fields, "token": TOKEN}.items():
         args += ["--es", key, str(value).lower() if isinstance(value, bool) else str(value)]
-    # am broadcast 等待 ordered broadcast 完成，result data 中包含 Pakomo JSON。
+    # am broadcast waits for the ordered broadcast to finish; the result data contains the Pakomo JSON.
     output = adb(*args)
     payload = re.search(r'data="(.*)"$', output, re.MULTILINE).group(1)
     try:
         response = json.loads(payload)
-    except json.JSONDecodeError:  # Android 版本可能转义 result data
+    except json.JSONDecodeError:  # some Android versions escape the result data
         response = json.loads(json.loads(f'"{payload}"'))
     if not response["ok"]:
         raise PakomoError(response)
@@ -119,22 +113,22 @@ def control(cmd: str, **fields):
 
 def run_case():
     try:
-        # start：建立 VPN，并等待 checkout profile 真正生效。
+        # start: establish the VPN and wait for the checkout profile to actually take effect.
         started = control("start", profile="checkout", wait=True)
         assert started["protocolVersion"] == 1 and started["confirmed"]
 
-        # status(wait=True)：独立等待 forwarding，并查询实时阶段和统计。
+        # status(wait=True): independently wait for forwarding, and query the live stage and stats.
         status = control("status", wait=True)
         assert status["stage"] == "forwarding" and status["active"]
 
         runSystemUnderTest()
 
-        # update：不中断 VPN，直接切换到另一个完整 profile。
+        # update: switch to another complete profile without interrupting the VPN.
         updated = control("update", profile="checkout_offline", wait=True)
         assert updated["confirmed"]
         runReconnectAssertions()
     finally:
-        # 即使用例失败也恢复正常网络；嵌套 finally 保证 reset 失败后仍尝试 stop。
+        # Restore the normal network even if the case failed; the nested finally still attempts stop after a failed reset.
         try:
             control("reset", wait=True)
         finally:
@@ -149,10 +143,10 @@ except PakomoError as error:
         raise RuntimeError(f"Pakomo device setup failed: {error}") from error
     if error.code in {"PROFILE_NOT_FOUND", "PROFILE_INVALID", "INVALID_ARGS", "WRONG_STATE"}:
         raise RuntimeError(f"Pakomo test configuration failed: {error}") from error
-    raise  # ENGINE_ERROR / TIMEOUT 保留为运行时失败
+    raise  # ENGINE_ERROR / TIMEOUT are kept as runtime failures
 ```
 
-#### TypeScript（Appium / WebdriverIO）
+#### TypeScript (Appium / WebdriverIO)
 
 ```typescript
 import { execFileSync } from "node:child_process";
@@ -164,7 +158,7 @@ const pkg = "com.alphynia.pakomo.kernel";
 const component = `${pkg}/com.alphynia.pakomo.automation.ControlReceiver`;
 const deviceFiles = `/sdcard/Android/data/${pkg}/files/pakomo`;
 const token = process.env.PAKOMO_TOKEN!;
-// ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
+// ANDROID_SERIAL is optional; used to select the target device when several are connected.
 const serialArgs = process.env.ANDROID_SERIAL ? ["-s", process.env.ANDROID_SERIAL] : [];
 
 class PakomoError extends Error {
@@ -174,12 +168,12 @@ class PakomoError extends Error {
 }
 
 function adb(args: string[]) {
-  // 使用参数数组而不是 shell 字符串，并自动应用可选的 ANDROID_SERIAL。
+  // Use an argument array rather than a shell string, and auto-apply the optional ANDROID_SERIAL.
   return execFileSync("adb", [...serialArgs, ...args], { encoding: "utf8" });
 }
 
 function prepareDevice(profile: string, updateProfile: string) {
-  // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
+  // Run once per device or per suite: authorize, foreground-launch, write the token and two profiles.
   adb(["shell", "appops", "set", pkg, "ACTIVATE_VPN", "allow"]);
   adb(["shell", "am", "start", "-n", `${pkg}/com.alphynia.pakomo.MainActivity`]);
   adb(["shell", "mkdir", "-p", `${deviceFiles}/profiles`]);
@@ -197,12 +191,12 @@ function prepareDevice(profile: string, updateProfile: string) {
 }
 
 function control(cmd: string, fields: Record<string, string> = {}) {
-  // 组装字符串 extras，并确保 release 请求携带 token。
+  // Assemble the string extras, ensuring the release request carries the token.
   const extras = { cmd, ...fields, token };
   const args = ["shell", "am", "broadcast", "-a", "com.pakomo.automation.CONTROL", "-n", component];
   for (const [key, value] of Object.entries(extras)) args.push("--es", key, value);
 
-  // execFileSync 不经过 shell；返回时 ordered broadcast 已经完成。
+  // execFileSync does not go through a shell; the ordered broadcast has finished by the time it returns.
   const output = adb(args);
   const payload = output.match(/data="(.*)"$/m)?.[1];
   if (!payload) throw new Error(`Missing Pakomo response: ${output}`);
@@ -219,22 +213,22 @@ function control(cmd: string, fields: Record<string, string> = {}) {
 
 async function runCase() {
   try {
-    // start：建立 VPN，并等待 checkout profile 真正生效。
+    // start: establish the VPN and wait for the checkout profile to actually take effect.
     const started = control("start", { profile: "checkout", wait: "true" });
     if (started.protocolVersion !== 1 || !started.confirmed) throw new Error("Pakomo not ready");
 
-    // status(wait=true)：独立等待 forwarding，并查询实时阶段和统计。
+    // status(wait=true): independently wait for forwarding, and query the live stage and stats.
     const status = control("status", { wait: "true" });
     if (status.stage !== "forwarding" || !status.active) throw new Error("Pakomo is not forwarding");
 
     await runSystemUnderTest();
 
-    // update：不中断 VPN，直接切换到另一个完整 profile。
+    // update: switch to another complete profile without interrupting the VPN.
     const updated = control("update", { profile: "checkout_offline", wait: "true" });
     if (!updated.confirmed) throw new Error("Pakomo update was not confirmed");
     await runReconnectAssertions();
   } finally {
-    // 无论测试结果如何，都恢复 normal 并停止 VPN。
+    // Whatever the test result, restore normal and stop the VPN.
     try {
       control("reset", { wait: "true" });
     } finally {
@@ -255,13 +249,13 @@ try {
       throw new Error(`Pakomo test configuration failed: ${error.message}`, { cause: error });
     }
   }
-  throw error; // ENGINE_ERROR / TIMEOUT 保留为运行时失败
+  throw error; // ENGINE_ERROR / TIMEOUT are kept as runtime failures
 }
 ```
 
-#### Java（JUnit / Appium Java Client）
+#### Java (JUnit / Appium Java Client)
 
-下面使用 Jackson 解析 JSON；可替换为项目已有的 JSON 库。
+The following uses Jackson to parse JSON; you can substitute your project's existing JSON library.
 
 ```java
 import com.fasterxml.jackson.databind.JsonNode;
@@ -277,12 +271,12 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 public final class PakomoExample {
-    // kernel/hev 只需替换包名；组件类名和 action 保持不变。
+    // For kernel/hev only the package name changes; the component class name and action stay the same.
     static final String PACKAGE = "com.alphynia.pakomo.kernel";
     static final String COMPONENT = PACKAGE + "/com.alphynia.pakomo.automation.ControlReceiver";
     static final String DEVICE_FILES = "/sdcard/Android/data/" + PACKAGE + "/files/pakomo";
     static final String TOKEN = Objects.requireNonNull(System.getenv("PAKOMO_TOKEN"));
-    // ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
+    // ANDROID_SERIAL is optional; used to select the target device when several are connected.
     static final String SERIAL = System.getenv("ANDROID_SERIAL");
     static final ObjectMapper JSON = new ObjectMapper();
     static final Pattern DATA = Pattern.compile("data=\\\"(.*)\\\"$", Pattern.MULTILINE);
@@ -299,7 +293,7 @@ public final class PakomoExample {
     }
 
     static String runAdb(List<String> commandArgs) throws Exception {
-        // 使用参数列表启动 adb，不拼接 shell 命令；自动应用可选的 ANDROID_SERIAL。
+        // Start adb with an argument list rather than concatenating a shell command; auto-applies the optional ANDROID_SERIAL.
         var args = new ArrayList<String>();
         args.add("adb");
         if (SERIAL != null && !SERIAL.isBlank()) args.addAll(List.of("-s", SERIAL));
@@ -311,7 +305,7 @@ public final class PakomoExample {
     }
 
     static void prepareDevice(Path profile, Path updateProfile) throws Exception {
-        // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
+        // Run once per device or per suite: authorize, foreground-launch, write the token and two profiles.
         runAdb(List.of("shell", "appops", "set", PACKAGE, "ACTIVATE_VPN", "allow"));
         runAdb(List.of("shell", "am", "start", "-n", PACKAGE + "/com.alphynia.pakomo.MainActivity"));
         runAdb(List.of("shell", "mkdir", "-p", DEVICE_FILES + "/profiles"));
@@ -333,17 +327,17 @@ public final class PakomoExample {
             "-a", "com.pakomo.automation.CONTROL", "-n", COMPONENT,
             "--es", "cmd", cmd
         ));
-        // release 的每条命令都携带与设备端 automation.token 相同的 token。
+        // Every release command carries the same token as the device-side automation.token.
         var extras = new LinkedHashMap<>(fields);
         extras.put("token", TOKEN);
         extras.forEach((key, value) -> args.addAll(List.of("--es", key, value)));
 
-        // ordered broadcast 完成后，从 result data 解析 Pakomo JSON。
+        // After the ordered broadcast finishes, parse the Pakomo JSON from the result data.
         var output = runAdb(args);
         var match = DATA.matcher(output);
         if (!match.find()) throw new IllegalStateException("Missing Pakomo response: " + output);
 
-        // 不同 Android 版本可能对 result data 做一次字符串转义，两种形态都兼容。
+        // Different Android versions may escape the result data once as a string; both forms are handled.
         JsonNode response;
         try {
             response = JSON.readTree(match.group(1));
@@ -356,13 +350,13 @@ public final class PakomoExample {
 
     static void runCase() throws Exception {
         try {
-            // start：建立 VPN，并等待 checkout profile 真正生效。
+            // start: establish the VPN and wait for the checkout profile to actually take effect.
             var started = control("start", Map.of("profile", "checkout", "wait", "true"));
             if (started.path("protocolVersion").asInt() != 1 || !started.path("confirmed").asBoolean()) {
                 throw new IllegalStateException("Pakomo not ready");
             }
 
-            // status(wait=true)：独立等待 forwarding，并查询实时阶段和统计。
+            // status(wait=true): independently wait for forwarding, and query the live stage and stats.
             var status = control("status", Map.of("wait", "true"));
             if (!status.path("active").asBoolean() || !"forwarding".equals(status.path("stage").asText())) {
                 throw new IllegalStateException("Pakomo is not forwarding");
@@ -370,12 +364,12 @@ public final class PakomoExample {
 
             runSystemUnderTest();
 
-            // update：不中断 VPN，直接切换到另一个完整 profile。
+            // update: switch to another complete profile without interrupting the VPN.
             var updated = control("update", Map.of("profile", "checkout_offline", "wait", "true"));
             if (!updated.path("confirmed").asBoolean()) throw new IllegalStateException("Update not confirmed");
             runReconnectAssertions();
         } finally {
-            // 嵌套 finally 保证 reset 失败后仍会尝试 stop。
+            // The nested finally still attempts stop after a failed reset.
             try {
                 control("reset", Map.of("wait", "true"));
             } finally {
@@ -395,24 +389,23 @@ public final class PakomoExample {
             if (List.of("PROFILE_NOT_FOUND", "PROFILE_INVALID", "INVALID_ARGS", "WRONG_STATE").contains(error.code)) {
                 throw new IllegalStateException("Pakomo test configuration failed: " + error.getMessage(), error);
             }
-            throw error; // ENGINE_ERROR / TIMEOUT 保留为运行时失败
+            throw error; // ENGINE_ERROR / TIMEOUT are kept as runtime failures
         }
     }
 
     static void runSystemUnderTest() {
-        // 调用已有的 JUnit / Appium 测试流程。
+        // Invoke your existing JUnit / Appium test flow.
     }
 
     static void runReconnectAssertions() {
-        // 验证切换到 checkout_offline 后的重连行为。
+        // Verify the reconnect behavior after switching to checkout_offline.
     }
 }
 ```
 
-#### C++（主机端测试工具）
+#### C++ (host-side test tool)
 
-下面使用 Boost.Process 安全传递 ADB 参数，使用 nlohmann/json 解析响应；示例要求 C++17、Boost 和
-nlohmann/json。`runSystemUnderTest()` 可替换为现有 C++ 测试程序或其他测试进程入口。
+The following uses Boost.Process to pass ADB arguments safely and nlohmann/json to parse the response; the example requires C++17, Boost, and nlohmann/json. `runSystemUnderTest()` can be replaced by an existing C++ test program or another test-process entry point.
 
 ```cpp
 #include <boost/process.hpp>
@@ -437,7 +430,7 @@ const std::string package = "com.alphynia.pakomo.kernel";
 const std::string component = package + "/com.alphynia.pakomo.automation.ControlReceiver";
 const std::string deviceFiles = "/sdcard/Android/data/" + package + "/files/pakomo";
 
-// 由现有 C++ 自动化项目实现。
+// Implemented by the existing C++ automation project.
 void runSystemUnderTest();
 void runReconnectAssertions();
 
@@ -461,8 +454,8 @@ std::string requireEnv(const char* name) {
 }
 
 std::string runAdb(std::vector<std::string> args) {
-    // ANDROID_SERIAL 可选；连接多台设备时用于选择目标设备。
-    // Boost.Process 直接传参数，不经过 shell 字符串拼接。
+    // ANDROID_SERIAL is optional; used to select the target device when several are connected.
+    // Boost.Process passes arguments directly, without concatenating a shell string.
     if (const char* serial = std::getenv("ANDROID_SERIAL"); serial != nullptr && *serial != '\0') {
         args.insert(args.begin(), {"-s", serial});
     }
@@ -477,7 +470,7 @@ std::string runAdb(std::vector<std::string> args) {
 }
 
 void prepareDevice(const std::filesystem::path& profile, const std::filesystem::path& updateProfile) {
-    // 每台设备或每个 suite 执行一次：授权、前置启动、写入 token 和两个 profile。
+    // Run once per device or per suite: authorize, foreground-launch, write the token and two profiles.
     runAdb({"shell", "appops", "set", package, "ACTIVATE_VPN", "allow"});
     runAdb({"shell", "am", "start", "-n", package + "/com.alphynia.pakomo.MainActivity"});
     runAdb({"shell", "mkdir", "-p", deviceFiles + "/profiles"});
@@ -516,7 +509,7 @@ Json control(
         "--es", "cmd", cmd,
     };
     for (const auto& [key, value] : fields) args.insert(args.end(), {"--es", key, value});
-    // release 的每条请求都携带与设备端 automation.token 相同的 token。
+    // Every release request carries the same token as the device-side automation.token.
     args.insert(args.end(), {"--es", "token", requireEnv("PAKOMO_TOKEN")});
 
     const std::string output = runAdb(std::move(args));
@@ -533,7 +526,7 @@ Json control(
     try {
         response = Json::parse(payload);
     } catch (const Json::parse_error&) {
-        // Android 版本可能把 result data 额外转义为字符串。
+        // Some Android versions additionally escape the result data as a string.
         response = Json::parse(Json::parse("\"" + payload + "\"").get<std::string>());
     }
     if (!response.value("ok", false)) throw PakomoError(std::move(response));
@@ -541,7 +534,7 @@ Json control(
 }
 
 void cleanup() {
-    // 两条清理命令都尝试执行；若有失败，保留第一条异常。
+    // Both cleanup commands are attempted; if either fails, the first exception is preserved.
     std::exception_ptr firstError;
     try { control("reset", {{"wait", "true"}}); } catch (...) { firstError = std::current_exception(); }
     try { control("stop", {{"wait", "true"}}); } catch (...) { if (!firstError) firstError = std::current_exception(); }
@@ -550,13 +543,13 @@ void cleanup() {
 
 void runCase() {
     try {
-        // start 返回前等待 checkout profile 真正应用。
+        // start returns only after the checkout profile is actually applied.
         const Json started = control("start", {{"profile", "checkout"}, {"wait", "true"}});
         if (started.value("protocolVersion", 0) != 1 || !started.value("confirmed", false)) {
             throw std::runtime_error("Pakomo not ready");
         }
 
-        // status(wait=true)：独立等待 forwarding，并查询实时阶段和统计。
+        // status(wait=true): independently wait for forwarding, and query the live stage and stats.
         const Json status = control("status", {{"wait", "true"}});
         if (!status.value("active", false) || status.value<std::string>("stage", "") != "forwarding") {
             throw std::runtime_error("Pakomo is not forwarding");
@@ -564,13 +557,13 @@ void runCase() {
 
         runSystemUnderTest();
 
-        // update：不中断 VPN，直接切换到另一个完整 profile。
+        // update: switch to another complete profile without interrupting the VPN.
         const Json updated = control("update", {{"profile", "checkout_offline"}, {"wait", "true"}});
         if (!updated.value("confirmed", false)) throw std::runtime_error("Pakomo update was not confirmed");
         runReconnectAssertions();
     } catch (...) {
         const auto original = std::current_exception();
-        try { cleanup(); } catch (...) { /* 保留原始测试异常 */ }
+        try { cleanup(); } catch (...) { /* preserve the original test exception */ }
         std::rethrow_exception(original);
     }
     cleanup();
@@ -588,21 +581,18 @@ void runExample() {
             error.code == "INVALID_ARGS" || error.code == "WRONG_STATE") {
             throw std::runtime_error("Pakomo test configuration failed: " + std::string(error.what()));
         }
-        throw; // ENGINE_ERROR / TIMEOUT 保留为运行时失败
+        throw; // ENGINE_ERROR / TIMEOUT are kept as runtime failures
     }
 }
 ```
 
 ---
 
-## 控制协议
+## Control protocol
 
-适配层按以下协议发送请求。传输必须是发往
-`<applicationId>/com.alphynia.pakomo.automation.ControlReceiver` 的显式 ordered broadcast，action 为
-`com.pakomo.automation.CONTROL`；字符串字段如下。kernel 与 hev 的 applicationId 分别是
-`com.alphynia.pakomo.kernel` 和 `com.alphynia.pakomo.hev`。
+The adapter layer sends requests per the following protocol. The transport must be an explicit ordered broadcast to `<applicationId>/com.alphynia.pakomo.automation.ControlReceiver` with action `com.pakomo.automation.CONTROL`; the string fields are below. The applicationIds for kernel and hev are `com.alphynia.pakomo.kernel` and `com.alphynia.pakomo.hev` respectively.
 
-一条 `start` 请求在线上的规范形态为：
+The canonical on-the-wire form of a `start` request is:
 
 ```yaml
 ordered: true
@@ -612,41 +602,38 @@ extras:
   cmd: start
   profile: checkout
   wait: "true"
-  token: "<由运行环境注入>"
+  token: "<injected by the runtime environment>"
 ```
 
-这是协议数据示例，不是特定语言 SDK。适配层使用项目选定的 Android/ADB 驱动生成等价的显式 ordered
-broadcast，并读取 result code 与 result data。
+This is an example of the protocol data, not a specific-language SDK. The adapter layer uses the project's chosen Android/ADB driver to produce an equivalent explicit ordered broadcast and to read the result code and result data.
 
-| `cmd` | 作用 | 关键字段 |
+| `cmd` | Effect | Key fields |
 |---|---|---|
-| `status` | 回读引擎 stage + stats | `wait`(等到 forwarding) |
-| `start` | 建 VPN + 接管(冷启,重建隧道) | `profile` 或 `rule`;`wait` |
-| `update` | 热切规则/域名(不重建隧道,不断连) | 同 start；要求隧道运行中 |
-| `stop` | 停止接管 | `wait` |
-| `reset` | 切回 `normal` 预设 | — |
-| `load_profile` | 仅校验 profile 文件不启动 | `profile` |
+| `status` | Read back the engine stage + stats | `wait` (wait until forwarding) |
+| `start` | Establish the VPN + take over (cold start, rebuilds the tunnel) | `profile` or `rule`; `wait` |
+| `update` | Hot-switch rules/domains (no tunnel rebuild, no dropped connections) | Same as start; requires the tunnel running |
+| `stop` | Stop takeover | `wait` |
+| `reset` | Switch back to the `normal` preset | — |
+| `load_profile` | Only validate the profile file, do not start | `profile` |
 
-**规则来源(start/update)优先级:**
-- `profile` → 加载 `profiles/<名>.json`,**完整指定** scope/apps/domains/rule(推荐自动化用)。
-- `rule` → 保留 App 已持久化的 scope/apps,仅**按预设名或已保存规则名覆盖规则**。
-- 都不给 → 用 App 当前持久化的活动规则。
+**Rule-source (start/update) priority:**
+- `profile` → load `profiles/<name>.json`, **fully specifying** scope/apps/domains/rule (recommended for automation).
+- `rule` → keep the app's persisted scope/apps, only **override the rule by preset name or saved rule name**.
+- Neither → use the app's currently persisted active rule.
 
-内置预设名:`normal` / `light` / `medium` / `severe` / `offline`。
+Built-in preset names: `normal` / `light` / `medium` / `severe` / `offline`.
 
-**wait 语义:** `true` 用默认超时(10s);数字字符串指定毫秒;`false`/`0` 不等。
-start 默认会等到 forwarding;status/update/load_profile 默认不等。
+**wait semantics:** `true` uses the default timeout (10s); a numeric string specifies milliseconds; `false`/`0` does not wait. start waits until forwarding by default; status/update/load_profile do not wait by default.
 
 ---
 
-## 响应与诊断
+## Response and diagnostics
 
-ordered-broadcast 的 result data 是主响应。适配层解析 JSON，并将 `ok=false`、传输超时和非法
-响应映射为测试框架中的失败。同一份 JSON 还写入 Logcat 和状态文件，供诊断：
+The result data of the ordered broadcast is the primary response. The adapter layer parses the JSON and maps `ok=false`, a transport timeout, and an invalid response to a failure in its test framework. The same JSON is also written to Logcat and a status file for diagnostics:
 
-1. **协议响应**：result code = `0`(ok) / `1`(error)，result data 为 JSON。
-2. **诊断日志**：Logcat tag `PAKOMO_AUTO`。
-3. **诊断快照**：`/sdcard/Android/data/<pkg>/files/pakomo/status.json`。
+1. **Protocol response**: result code = `0` (ok) / `1` (error), result data is JSON.
+2. **Diagnostic log**: Logcat tag `PAKOMO_AUTO`.
+3. **Diagnostic snapshot**: `/sdcard/Android/data/<pkg>/files/pakomo/status.json`.
 
 ```json
 {
@@ -659,84 +646,61 @@ ordered-broadcast 的 result data 是主响应。适配层解析 JSON，并将 `
 }
 ```
 
-适配层应先检查 `protocolVersion`。当前版本为 `1`；同一版本内只允许增加可忽略字段，不改变
-既有字段含义、命令语义或错误码。
+The adapter layer should check `protocolVersion` first. The current version is `1`; within the same version only ignorable fields may be added, without changing the meaning of existing fields, the command semantics, or the error codes.
 
-### 错误码(`error` 字段)
+### Error codes (the `error` field)
 
-| 码 | 含义 | 归属 |
+| Code | Meaning | Attribution |
 |---|---|---|
-| `BAD_TOKEN` | release 未配置 token，或请求 token 缺失/不匹配 | 设备准备/请求 |
-| `INVALID_ARGS` | cmd 未知或参数非法 | 请求 |
-| `PROFILE_NOT_FOUND` / `PROFILE_INVALID` | profile 文件缺失/格式错 | 请求 |
-| `NEED_VPN_CONSENT` | 未授予 VPN 权限 | **环境**(见下) |
-| `APP_NOT_INSTALLED` | 目标应用未安装(附包名列表) | 环境 |
-| `ENGINE_ERROR` | 前台服务启动、配置应用或引擎运行失败 | 运行时 |
-| `WRONG_STATE` | update 时隧道未运行 | 请求 |
-| `TIMEOUT` | wait 超时未达 forwarding | 运行时 |
+| `BAD_TOKEN` | No token configured on release, or the request token is missing/mismatched | Device prep / request |
+| `INVALID_ARGS` | Unknown cmd or invalid arguments | Request |
+| `PROFILE_NOT_FOUND` / `PROFILE_INVALID` | Profile file missing / malformed | Request |
+| `NEED_VPN_CONSENT` | VPN permission not granted | **Environment** (see below) |
+| `APP_NOT_INSTALLED` | Target app not installed (includes a package list) | Environment |
+| `ENGINE_ERROR` | Foreground service start, config apply, or engine run failed | Runtime |
+| `WRONG_STATE` | The tunnel is not running at update time | Request |
+| `TIMEOUT` | wait timed out before reaching forwarding | Runtime |
 
 ---
 
-## 等待与并发语义
+## Wait and concurrency semantics
 
-- `wait` 让 `start`/`update`/`reset` 等到**该次配置真正应用**(引擎 `appliedConfigId` 到位)
-  才返回,而非仅看 `stage`。成功响应带 `"confirmed":true`;`wait=false`/未等待时为
-  `"confirmed":false`,表示"已接受但未确认生效",此时 `appliedRule` 只是**请求值**,不保证已生效。
-- 应用失败:冷启动失败 → `ENGINE_ERROR`;热更新(reconfigure)失败 → 也回 `ENGINE_ERROR`
-  (引擎单独上报失败的 config id),不再干等到 `TIMEOUT`。
-- **命令串行**:控制层用锁串行化 `START/UPDATE/STOP/RESET` 的处理;带等待的命令会持锁到确认完成,
-  不会被后一条自动化命令抢跑。`wait=false` 是 fire-and-forget:返回后配置可能被后续命令覆盖,
-  因此必须依据 `"confirmed":false` 将其理解为"已接受"而非"已应用"。
-- **不支持与 UI 并发**:上述串行化**只覆盖自动化命令之间**。若在自动化运行的同时**手动操作 App
-  UI 触发 reconfigure**(改规则/域名),两条路径不互斥,配置确认可能不准确。headless 测试期间
-  请勿同时人工操作 UI。
+- `wait` makes `start`/`update`/`reset` return only when **that config is actually applied** (the engine's `appliedConfigId` is in place), rather than looking only at `stage`. A successful response carries `"confirmed":true`; with `wait=false`/no wait it is `"confirmed":false`, meaning "accepted but not confirmed to have taken effect," in which case `appliedRule` is only the **requested value** and is not guaranteed to be in effect.
+- Apply failure: a cold-start failure → `ENGINE_ERROR`; a hot-update (reconfigure) failure → also returns `ENGINE_ERROR` (the engine separately reports the failed config id), instead of waiting idly until `TIMEOUT`.
+- **Commands are serialized**: the control layer serializes the handling of `START/UPDATE/STOP/RESET` with a lock; a waiting command holds the lock until confirmation completes and will not be jumped by a later automation command. `wait=false` is fire-and-forget: after it returns, the config may be overwritten by a subsequent command, so it must be understood, per `"confirmed":false`, as "accepted" rather than "applied."
+- **Concurrency with the UI is not supported**: the serialization above **covers automation commands only**. If you **manually operate the app UI to trigger a reconfigure** (changing rules/domains) while automation is running, the two paths are not mutually exclusive and config confirmation may be inaccurate. Do not operate the UI manually during a headless test.
 
 ---
 
-## 设备准备与 Android 限制
+## Device preparation and Android restrictions
 
-`VpnService.prepare()` 的系统弹窗属于**设备准备**,不归控制协议。控制层只**断言**该前置条件
-(未授权 → `NEED_VPN_CONSENT` 快速失败),从不尝试点击系统弹窗。设备准备流程需先完成
-VPN 授权；受管设备也可预置 always-on VPN。
+The `VpnService.prepare()` system dialog is part of **device preparation**, not the control protocol. The control layer only **asserts** this precondition (not authorized → `NEED_VPN_CONSENT` fails fast) and never tries to click the system dialog. The device-preparation flow must complete VPN authorization first; a managed device can also preset an always-on VPN.
 
-### 冷启动(应用未开启时)
+### Cold start (when the app is not open)
 
-现代 Android(targetSdk 34/36)**从后台启动前台服务**限制很严:应用在前台(或刚在前台)时才有
-豁免。若应用从未打开 / 被 `force-stop`,`start` 广播能唤醒进程,但 `startForegroundService` 会被拦
-(实测 `SYSTEM_ALERT_WINDOW` 等 appops 豁免在新版本上**不可靠**)。
+Modern Android (targetSdk 34/36) is strict about **starting a foreground service from the background**: an app is exempt only while it is in the foreground (or was just there). If the app has never been opened / was `force-stop`ped, the `start` broadcast can wake the process, but `startForegroundService` is blocked (in practice, appops exemptions such as `SYSTEM_ALERT_WINDOW` are **unreliable** on newer versions).
 
-设备准备流程还需把 Pakomo 前置一次，使紧随其后的 `start` 请求具备启动前台 VPN
-服务所需的豁免。过程可以无人值守，但可能短暂显示 Pakomo Activity。纯后台冷启动在新版 Android
-上通常不可行，属于平台限制。
+The device-preparation flow therefore also needs to bring Pakomo to the foreground once, so the immediately following `start` request has the exemption needed to start the foreground VPN service. The process can be unattended but may briefly show the Pakomo Activity. A pure background cold start is generally not feasible on newer Android, which is a platform restriction.
 
 ---
 
-## 安全
+## Security
 
-控制组件同时存在于 debug 与 release：
+The control component exists in both debug and release:
 
-1. **release 默认拒绝**：`automation.token` 不存在或为空时，所有命令返回 `BAD_TOKEN`。
-2. **凭据由环境注入**：设备准备流程把 token 写入 Pakomo 的 app-specific external files
-   （`getExternalFilesDir()/pakomo/automation.token`），并在每条请求的 `token` 字段中携带同一值。
-   选用外部 files 是为了 **release（non-debuggable）仍可用 adb push 注入**；内部
-   `/data/data/<pkg>/` 对 release 无法 `run-as` 写入。token 不应提交到仓库或打印到测试日志
-   （CI 请用 Masked 变量，勿打印含 `--es token` 的完整命令）。
-3. **debug 面向开发者**：未配置 token 时允许本地诊断；配置后同样强制匹配。debug 包不外发。
-4. **鉴权前不泄露状态**：未知/`cmd` 缺失与 token 校验失败走 `StatusReporter.rejected`——响应只含
-   错误码与必要元数据，**不附带** `stage`/`stats` 等运行时快照。鉴权通过后的成功/失败响应仍可含快照。
-5. manifest `BroadcastReceiver` 无法可靠获得发送者 uid，因此不以伪造的 caller-uid 检查代替认证；
-   **token 即边界**。
+1. **Release rejects by default**: when `automation.token` is absent or empty, all commands return `BAD_TOKEN`.
+2. **Credentials injected by the environment**: the device-preparation flow writes the token into Pakomo's app-specific external files (`getExternalFilesDir()/pakomo/automation.token`) and carries the same value in every request's `token` field. External files are chosen so that **a release (non-debuggable) build can still be injected via adb push**; the internal `/data/data/<pkg>/` cannot be written to a release build via `run-as`. The token must not be committed to the repo or printed to test logs (use a masked variable in CI, and do not print the full command containing `--es token`).
+3. **Debug is for developers**: local diagnostics are allowed when no token is configured; once configured, matching is enforced too. Debug builds are not distributed externally.
+4. **No state disclosure before authorization**: an unknown/missing `cmd` and a token-verification failure go through `StatusReporter.rejected` — the response contains only the error code and necessary metadata, and **does not carry** runtime snapshots such as `stage`/`stats`. Success/failure responses after authorization may still include the snapshot.
+5. A manifest `BroadcastReceiver` cannot reliably obtain the sender uid, so a forged caller-uid check does not replace authentication; **the token is the boundary**.
 
-更完整的攻击面与处置见 [威胁模型](05-security/threat-model.md)。
+For the fuller attack surface and handling, see [Threat Model](05-security/threat-model_EN.md).
 
 ---
 
-## Profile 文件格式
+## Profile file format
 
-适配层将 JSON 写入 Pakomo 的 app-specific `pakomo/profiles/<name>.json` 目录，再在请求的
-`profile` 字段中引用 `<name>`。建议适配层下发前先校验 JSON。字段一一对应内部模型；
-`specialFaults` 复用 App 的持久化格式(键为故障类型名)。以下示例中的 `com.example.sut` 必须替换
-为设备上实际安装的被测包名。
+The adapter layer writes the JSON into Pakomo's app-specific `pakomo/profiles/<name>.json` directory, then references `<name>` in the request's `profile` field. It is recommended that the adapter validate the JSON before delivery. Fields map one-to-one to the internal model; `specialFaults` reuses the app's persistence format (keyed by fault-type name). The `com.example.sut` in the example below must be replaced with the actual package name of the app under test installed on the device.
 
 ```json
 {
@@ -758,20 +722,16 @@ VPN 授权；受管设备也可预置 always-on VPN。
 }
 ```
 
-`rule` 也可以是一个字符串(预设名或已保存规则名),例如 `"rule": "medium"`。
-`scope` 取 `global` | `applications` | `addresses`。
+`rule` may also be a string (a preset name or a saved rule name), e.g. `"rule": "medium"`. `scope` takes `global` | `applications` | `addresses`.
 
 ---
 
-## 双 flavor 对拍
+## Dual-flavor diff
 
-同一 profile 分别在 kernel / hev 安装包上跑,比对 `stats` 与被测表现,把 hev 版当可信基线
-守护 kernel 版。示例脚本见 [`scripts/automation-compare.sh`](../scripts/automation-compare.sh)。
+Run the same profile on the kernel / hev installs respectively, compare `stats` and the behavior under test, and use the hev edition as a trusted baseline to guard the kernel edition. See the example script [`scripts/automation-compare.sh`](../scripts/automation-compare.sh).
 
 ---
 
-## Pakomo 开发自检
+## Pakomo development self-check
 
-[`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh) 与
-[`scripts/automation-smoke.ps1`](../scripts/automation-smoke.ps1) 用于 Pakomo 自身开发时验证底层
-广播、profile、等待与 token 通路；这些脚本不是项目集成 API，也不应被复制到自动化项目中。
+[`scripts/automation-smoke.sh`](../scripts/automation-smoke.sh) and [`scripts/automation-smoke.ps1`](../scripts/automation-smoke.ps1) are for verifying the low-level broadcast, profile, wait, and token path during Pakomo's own development; these scripts are not a project-integration API and should not be copied into an automation project.

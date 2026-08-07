@@ -1,5 +1,7 @@
 # 原则与边界（Principles & Boundaries）
 
+[English](principles-and-boundaries_EN.md) | 简体中文
+
 本文件定义 Pakomo 不可越过的边界，以及 Pakomo 与"可模拟任意网络故障"一类工具的本质区别。
 [能力矩阵](../01-capabilities/capability-matrix.md) 中任何标记为 `Out-of-Scope` 的条目，其最终依据均来自本文件。
 
