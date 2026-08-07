@@ -95,7 +95,10 @@ class UdpSession(
                 }
             } catch (_: CancellationException) {
             } catch (e: Exception) {
-                Log.w(TAG, "UDP session failed $sourcePort", e)
+                // On teardown, close() shuts inputChannel and the actor's receive() throws
+                // "Channel was closed" — expected, not a failure. Only surface errors that
+                // happen while the session is still live, so stopping doesn't spam stack traces.
+                if (!closed) Log.w(TAG, "UDP session failed $sourcePort", e)
             } finally {
                 close()
             }
