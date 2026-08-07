@@ -82,7 +82,8 @@ class TcpConnection(
         connectionScope.launch {
             try { runActor() }
             catch (_: CancellationException) {}
-            catch (e: Exception) { Log.w(TAG, "TCP actor failed $sourcePort->$destinationPort", e) }
+            // Once CLOSED (teardown), a stray actor exception is expected noise — don't log a trace.
+            catch (e: Exception) { if (state != State.CLOSED) Log.w(TAG, "TCP actor failed $sourcePort->$destinationPort", e) }
             finally { cleanup() }
         }
     }
