@@ -217,17 +217,28 @@ build:apk:
         # 需 GitLab CI 变量 GITHUB_ACCESS_TOKEN（fine-grained：Contents R/W，含 gh-pages 推送）。
         # 缺变量则跳过，不阻断本仓发布。
         if [ -n "$GITHUB_ACCESS_TOKEN" ]; then
-          GH_REPO="AlfWorks/Pakomo"
+          GH_REPO="AlfWorks/Pakomo"; GH_API="https://api.github.com/repos/$GH_REPO"
+          GH_AUTH="Authorization: Bearer $GITHUB_ACCESS_TOKEN"; GH_ACC="Accept: application/vnd.github+json"
           echo "Publishing GitHub Release + gh-pages to $GH_REPO"
-          REL_ID=$(curl --fail -sS -X POST "https://api.github.com/repos/$GH_REPO/releases" \
-            -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Accept: application/vnd.github+json" \
-            -d "$(jq -n --arg tag "$CI_COMMIT_TAG" --arg name "Pakomo $PAKOMO_VERSION_NAME" --arg body "$RELEASE_DESCRIPTION" '{tag_name:$tag,name:$name,body:$body}')" \
-            | jq -r '.id')
+          # 幂等：先看该 tag 是否已有 Release，有则复用其 id；没有再建。建失败则打印响应体（如 422 的具体 error）。
+          REL_ID=$(curl -sS -H "$GH_AUTH" -H "$GH_ACC" "$GH_API/releases/tags/$CI_COMMIT_TAG" | jq -r '.id // empty')
+          if [ -z "$REL_ID" ]; then
+            RESP=$(curl -sS -X POST "$GH_API/releases" -H "$GH_AUTH" -H "$GH_ACC" \
+              -d "$(jq -n --arg tag "$CI_COMMIT_TAG" --arg name "Pakomo $PAKOMO_VERSION_NAME" --arg body "$RELEASE_DESCRIPTION" '{tag_name:$tag,name:$name,body:$body}')")
+            REL_ID=$(printf '%s' "$RESP" | jq -r '.id // empty')
+            [ -n "$REL_ID" ] || { echo "GitHub release create failed: $RESP"; exit 1; }
+          fi
           UP="https://uploads.github.com/repos/$GH_REPO/releases/$REL_ID/assets"
-          curl --fail -sS -X POST "$UP?name=$K_ASSET"        -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$K_APK"
-          curl --fail -sS -X POST "$UP?name=$H_ASSET"        -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$H_APK"
-          curl --fail -sS -X POST "$UP?name=$K_ASSET.sha256" -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: text/plain" --data-binary @"$K_APK.sha256"
-          curl --fail -sS -X POST "$UP?name=$H_ASSET.sha256" -H "Authorization: Bearer $GITHUB_ACCESS_TOKEN" -H "Content-Type: text/plain" --data-binary @"$H_APK.sha256"
+          # 资产幂等：先删同名旧资产（重跑不会 422），再上传四个。
+          EXIST=$(curl -sS -H "$GH_AUTH" -H "$GH_ACC" "$GH_API/releases/$REL_ID/assets")
+          for a in "$K_ASSET" "$H_ASSET" "$K_ASSET.sha256" "$H_ASSET.sha256"; do
+            aid=$(printf '%s' "$EXIST" | jq -r --arg n "$a" '.[] | select(.name==$n) | .id')
+            [ -n "$aid" ] && curl -sS -X DELETE -H "$GH_AUTH" "$GH_API/releases/assets/$aid" >/dev/null || true
+          done
+          curl --fail -sS -X POST "$UP?name=$K_ASSET"        -H "$GH_AUTH" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$K_APK"
+          curl --fail -sS -X POST "$UP?name=$H_ASSET"        -H "$GH_AUTH" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$H_APK"
+          curl --fail -sS -X POST "$UP?name=$K_ASSET.sha256" -H "$GH_AUTH" -H "Content-Type: text/plain" --data-binary @"$K_APK.sha256"
+          curl --fail -sS -X POST "$UP?name=$H_ASSET.sha256" -H "$GH_AUTH" -H "Content-Type: text/plain" --data-binary @"$H_APK.sha256"
           echo "GitHub Release $CI_COMMIT_TAG published (id=$REL_ID)"
           # gh-pages：整分支替换为本次 public/（含 kernel/ hev/），作公开更新源镜像（当前 App 未指向它，供备用/冗余）。
           if [ -d public ]; then
