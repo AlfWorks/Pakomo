@@ -9,12 +9,15 @@
 #         （kernel 纯 Kotlin 内核 / hev native）。
 #
 # 需要在 GitLab → Settings → CI/CD → Variables 里配置（建议 Protected + Masked）：
-#   DEPLOY_HOST      —— 172.30.109.1（automation-net 网关；容器源 IP 落在 172.30.109.0/24 才匹配 sshd 密码登录规则）
+#   DEPLOY_HOST      —— 存放签名材料的内网主机（ssh 目标）
 #   DEPLOY_USER      —— ssh 用户名（其家目录/指定目录下存放签名材料）
 #   DEPLOY_PASSWORD  —— 该 ssh 用户密码
 #   DEPLOY_REMOTE_DIR    —— （可选）服务器上签名材料目录，默认 pakomo-signing
+#   PROXY_HOST / PROXY_PORT —— 容器出网代理主机与端口
+#   NO_PROXY_HOSTS       —— NO_PROXY 逗号列表（内网网段 + 直连域名 + 回环）
+#   JAVA_NON_PROXY_HOSTS —— JVM 系统属性用的 `|` 分隔直连列表（如 localhost|127.0.0.1|*.<内网域>）
 #   GITHUB_ACCESS_TOKEN  —— （可选，仅 prod）GitHub fine-grained PAT，限 AlfWorks/Pakomo、Contents R/W；
-#                           用于建 GitHub Release + 推 gh-pages 更新源镜像。缺则跳过 GitHub 发布，不影响 GitLab。
+#                           用于建 GitHub Release + 推 gh-pages 更新源镜像。缺则跳过 GitHub 发布，不影响本仓 CI。
 # 服务器该目录下需放：
 #   pakomo-release.jks        —— release keystore
 #   keystore.properties       —— 内含 storeFile=pakomo-release.jks / storePassword / keyAlias / keyPassword
@@ -22,10 +25,10 @@
 #
 # Novi 自更新：内容部署到 GitLab Pages 的 public/<channel>/ 下（见 pages job）：
 #   test → Pages .../test/kernel(hev)/ ；prod → Pages .../kernel(hev)/。
-#   但 APK 内烘焙的更新源是中性域名 $PUBLIC_UPDATE_BASE（Cloudflare Worker 反代 Pages，
-#   藏住 GitLab，设备只连该中性域名）。信任锚（公钥/签名者）由 CI 现算，无需手填变量。
+#   APK 内烘焙的更新源为 $GITHUB_PAGES_BASE（主）与 $PUBLIC_UPDATE_BASE（回落）两个公开分发域。
+#   信任锚（公钥/签名者）由 CI 现算，无需手填变量。
 #
-# 说明：内网出网需走代理 17890；内网地址（gitlab / 服务器）走 NO_PROXY 直连。
+# 说明：容器出网走代理（见 PROXY_* 变量）；内网地址走 NO_PROXY 直连。
 
 stages:
   - build
@@ -36,22 +39,27 @@ variables:
   GIT_DEPTH: "0"
   GIT_SUBMODULE_STRATEGY: recursive
   GIT_SUBMODULE_FORCE_HTTPS: "true"
-  # 容器内出网代理（拉 GitHub submodule、Gradle 依赖、SDK/NDK）
-  http_proxy: "http://172.17.0.1:17890"
-  https_proxy: "http://172.17.0.1:17890"
-  HTTP_PROXY: "http://172.17.0.1:17890"
-  HTTPS_PROXY: "http://172.17.0.1:17890"
-  NO_PROXY: "172.17.0.1,172.30.0.0/16,127.0.0.1,localhost,.nyukit.com"
-  no_proxy: "172.17.0.1,172.30.0.0/16,127.0.0.1,localhost,.nyukit.com"
+  # 容器内出网代理（拉 GitHub submodule、Gradle 依赖、SDK/NDK）。内网具体值放 CI 变量，不写进公开文件：
+  #   PROXY_HOST / PROXY_PORT       —— 出网代理主机与端口
+  #   NO_PROXY_HOSTS                —— NO_PROXY 逗号列表（含内网网段与直连域名）
+  #   JAVA_NON_PROXY_HOSTS         —— JVM 系统属性用的 `|` 分隔直连列表
+  http_proxy: "http://$PROXY_HOST:$PROXY_PORT"
+  https_proxy: "http://$PROXY_HOST:$PROXY_PORT"
+  HTTP_PROXY: "http://$PROXY_HOST:$PROXY_PORT"
+  HTTPS_PROXY: "http://$PROXY_HOST:$PROXY_PORT"
+  NO_PROXY: "$NO_PROXY_HOSTS"
+  no_proxy: "$NO_PROXY_HOSTS"
   ANDROID_SDK_ROOT: "$CI_PROJECT_DIR/.android-sdk"
   GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
   # JVM 不读 http_proxy，wrapper 下载和 Gradle 客户端只认系统属性
-  GRADLE_OPTS: "-Dhttp.proxyHost=172.17.0.1 -Dhttp.proxyPort=17890 -Dhttps.proxyHost=172.17.0.1 -Dhttps.proxyPort=17890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|*.nyukit.com"
+  GRADLE_OPTS: "-Dhttp.proxyHost=$PROXY_HOST -Dhttp.proxyPort=$PROXY_PORT -Dhttps.proxyHost=$PROXY_HOST -Dhttps.proxyPort=$PROXY_PORT -Dhttp.nonProxyHosts=$JAVA_NON_PROXY_HOSTS"
   DEPLOY_REMOTE_DIR: "pakomo-signing"
   CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-  # 烘焙进 APK 的公开更新源基址：中性域名（Cloudflare Worker 反代 GitLab Pages，藏住 GitLab；
-  # 设备只连它）。会进每个已发布的包，必须永久稳定，勿改。Pages 实际内容仍发到 $CI_PAGES_URL。
+  # 烘焙进 APK 的公开更新源基址（回落分发域）。会进每个已发布的包，必须永久稳定，勿改。
   PUBLIC_UPDATE_BASE: "https://pakomo.resources.alphynia.com"
+  # GitHub Pages 公开镜像（gh-pages 分支，仅 prod 有内容）——prod 自更新的**主源**（扛下载带宽）。
+  # 项目页 URL 规则：<owner 小写>.github.io/<repo>/ → https://alfworks.github.io/Pakomo/
+  GITHUB_PAGES_BASE: "https://alfworks.github.io/Pakomo"
 
 build:apk:
   stage: build
@@ -79,7 +87,8 @@ build:apk:
       else
         export IS_PROD=true PAGES_CHANNEL=""
         export PAKOMO_VERSION_NAME="${CI_COMMIT_TAG#v}"
-        export PAKOMO_UPDATE_SOURCES="$PUBLIC_UPDATE_BASE/"
+        # 主源=GitHub Pages（扛下载带宽）；回落源=独立公开分发域。
+        export PAKOMO_UPDATE_SOURCES="$GITHUB_PAGES_BASE/,$PUBLIC_UPDATE_BASE/"
       fi
       export PAKOMO_VERSION_CODE="$CI_PIPELINE_IID"
       test -n "$CI_PAGES_URL" || echo "WARN: CI_PAGES_URL 为空（Pages 未启用？），本次 APK 自更新源将不可用"
@@ -99,11 +108,11 @@ build:apk:
     - mkdir -p "$GRADLE_USER_HOME"
     - |
       printf '%s\n' \
-        "systemProp.http.proxyHost=172.17.0.1" \
-        "systemProp.http.proxyPort=17890" \
-        "systemProp.https.proxyHost=172.17.0.1" \
-        "systemProp.https.proxyPort=17890" \
-        "systemProp.http.nonProxyHosts=localhost|127.0.0.1|*.nyukit.com" \
+        "systemProp.http.proxyHost=$PROXY_HOST" \
+        "systemProp.http.proxyPort=$PROXY_PORT" \
+        "systemProp.https.proxyHost=$PROXY_HOST" \
+        "systemProp.https.proxyPort=$PROXY_PORT" \
+        "systemProp.http.nonProxyHosts=$JAVA_NON_PROXY_HOSTS" \
         > "$GRADLE_USER_HOME/gradle.properties"
     # vendored 转发核心：Linux 无需还原符号链接，仅打 HEV 归属前导补丁
     - |
@@ -206,7 +215,7 @@ build:apk:
         rm -f release-body.json
         # GitHub 公开发布（AlfWorks/Pakomo）：Release 下载页 + gh-pages 更新源镜像。
         # 需 GitLab CI 变量 GITHUB_ACCESS_TOKEN（fine-grained：Contents R/W，含 gh-pages 推送）。
-        # 缺变量则跳过，不阻断 GitLab 侧发布。自更新主源仍是中性域名（见文件头）。
+        # 缺变量则跳过，不阻断本仓发布。
         if [ -n "$GITHUB_ACCESS_TOKEN" ]; then
           GH_REPO="AlfWorks/Pakomo"
           echo "Publishing GitHub Release + gh-pages to $GH_REPO"
