@@ -22,6 +22,7 @@ import com.alphynia.pakomo.forwarding.FlowLog
 import com.alphynia.pakomo.forwarding.SocketProtector
 import com.alphynia.pakomo.forwarding.DomainRoutingPolicy
 import com.alphynia.pakomo.forwarding.DomainScopedShaping
+import com.alphynia.pakomo.BuildConfig
 import com.alphynia.pakomo.forwarding.FaultHit
 import com.alphynia.pakomo.forwarding.FaultHitReporter
 import com.alphynia.pakomo.forwarding.FaultPolicy
@@ -81,6 +82,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var latestDownloadBytesPerSecond: Long = 0L
     private var startedAtElapsedMs: Long = 0L
     private val faultHitLogger = FaultHitLogger(TAG)
+
+    // Debug-only per-connection fault trace: attribution scope/packages, sniffed host, per-fault
+    // match booleans, and the final decision. Null in release so the fault path stays zero-overhead.
+    // Read from logcat under tag "PakomoFaultDbg" to diagnose why a domain-scoped fault does/doesn't fire.
+    private val faultTracer: ((String) -> Unit)? =
+        if (BuildConfig.DEBUG) { message -> Log.d("PakomoFaultDbg", message) } else null
 
     // Interface language for user-visible service text (notification, scope labels shown in stats).
     // Read from preferences on demand; a mid-session language change applies from the next update.
@@ -515,6 +522,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             addressDomains = targetDomains,
             attributor = connectionAttributor,
             reporter = reporter,
+            tracer = faultTracer,
         )
     }
 

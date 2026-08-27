@@ -37,6 +37,18 @@ class DomainRoutingPolicy(
         return matchesConfigured(normalized)
     }
 
+    /**
+     * Debug-only snapshot of currently learned (unexpired) IP→domain resolutions, formatted as
+     * `domain@ip`. Empty means no plaintext DNS answer for a configured domain has been observed
+     * (e.g. the app resolves over DoH/DoT/QUIC, which this policy cannot see).
+     */
+    fun debugLearnedAddresses(): List<String> {
+        val now = nowSeconds()
+        return resolvedAddresses.entries
+            .filter { it.value.expiresAtSeconds > now }
+            .map { "${it.value.domain}@${it.key}" }
+    }
+
     fun observeDnsResponse(message: ByteArray) {
         val parsed = runCatching { DnsResponseParser.parse(message) }.getOrNull() ?: return
         val now = nowSeconds()

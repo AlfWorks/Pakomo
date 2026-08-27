@@ -146,6 +146,14 @@ class FaultMatcher(
         return addressDomains?.matchesConfiguredDomain(name) == true
     }
 
+    /** Debug-only: currently learned `domain@ip` pairs across the policies relevant to [packages]. */
+    fun debugLearned(packages: List<String>): List<String> {
+        val out = ArrayList<String>()
+        addressDomains?.let { out += it.debugLearnedAddresses() }
+        for (pkg in packages) appDomains[pkg]?.let { out += it.debugLearnedAddresses() }
+        return out
+    }
+
     /** Learns target IPs from an observed plaintext DNS answer. */
     fun observeDnsResponse(packages: List<String>, message: ByteArray) {
         if (addressDomains != null) {
@@ -218,6 +226,9 @@ class FaultRuntime(
     addressDomains: List<String>,
     private val attributor: ConnectionAttributor?,
     private val reporter: FaultHitReporter? = null,
+    // Debug-only per-connection trace. The Android service passes a logger in debug builds; unit
+    // tests and release leave it null so this class stays pure and zero-overhead.
+    private val tracer: ((String) -> Unit)? = null,
 ) : FaultPolicy {
 
     private val blackout = FaultMatcher.build(
@@ -248,6 +259,7 @@ class FaultRuntime(
         } else {
             emptyList()
         }
+        tracer?.invoke("resolve scope=$scope pkgs=$packages")
         return Resolved(packages)
     }
 
@@ -261,6 +273,12 @@ class FaultRuntime(
         private val reported = HashSet<String>()
 
         override fun decideTcp(host: String, port: Int, phase: TcpDecisionPhase): TcpFault {
+            tracer?.invoke(
+                "decideTcp $host:$port phase=$phase pkgs=$packages usesDomain=$usesDomainFilter " +
+                    "blackout=${blackout.matchesConnection(packages, host, port)} " +
+                    "dnsGuard=${dnsCacheGuard && dnsFailure.matchesConnection(packages, host, port)} " +
+                    "reset=${reset.matchesConnection(packages, host, port)}",
+            )
             if (blackout.matchesConnection(packages, host, port)) {
                 val action = when {
                     blackoutMode == BlackoutMode.SILENT -> "silent-park"
@@ -284,6 +302,12 @@ class FaultRuntime(
         }
 
         override fun decideUdp(host: String, port: Int, dnsQueryName: String?): UdpFault {
+            tracer?.invoke(
+                "decideUdp $host:$port dnsName=$dnsQueryName pkgs=$packages " +
+                    "nameMatch=${dnsQueryName != null && dnsFailure.matchesName(packages, dnsQueryName)} " +
+                    "blackout=${blackout.matchesConnection(packages, host, port)} " +
+                    "reset=${reset.matchesConnection(packages, host, port)}",
+            )
             if (port == DNS_PORT && dnsQueryName != null) {
                 // Network blackout deliberately leaves DNS alone. DNS failures own name-resolution
                 // semantics so immediate/silent blackout remains distinguishable at connection time.
@@ -338,6 +362,11 @@ class FaultRuntime(
         dnsFailure.observeDnsResponse(packages, message)
         reset.observeDnsResponse(packages, message)
         hold.observeDnsResponse(packages, message)
+        tracer?.invoke(
+            "observeDns pkgs=$packages learned reset=${reset.debugLearned(packages)} " +
+                "dnsFailure=${dnsFailure.debugLearned(packages)} " +
+                "blackout=${blackout.debugLearned(packages)}",
+        )
     }
 
     private companion object {
