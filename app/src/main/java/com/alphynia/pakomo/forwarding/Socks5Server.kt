@@ -39,6 +39,46 @@ data class SocksCredentials(
     val password: String,
 )
 
+/**
+ * Draws up to [shapingNanos] out of the shared per-connection latency-compensation [credit],
+ * returning the injected delay to actually apply to this chunk (floored at 0). Atomic (CAS) so the
+ * two direction pumps sharing one credit can't over-draw. A null credit or a non-positive delay is
+ * returned unchanged. Top-level + internal so the draw-down math is unit-testable in isolation.
+ */
+internal fun drawDownCompensation(
+    credit: java.util.concurrent.atomic.AtomicLong?,
+    shapingNanos: Long,
+): Long {
+    if (credit == null || shapingNanos <= 0L) return shapingNanos
+    while (true) {
+        val remaining = credit.get()
+        if (remaining <= 0L) return shapingNanos
+        val take = minOf(remaining, shapingNanos)
+        if (credit.compareAndSet(remaining, remaining - take)) return shapingNanos - take
+    }
+}
+
+/**
+ * In-process handoff of a connection's SYN-arrival time from the Kotlin tun2socks engine to the
+ * SOCKS server, keyed by the loopback client port, so latency compensation can include the
+ * tun2socks setup the SOCKS server can't otherwise observe. The engine records BEFORE writing the
+ * preamble; the SOCKS server takes it AFTER reading the preamble, so the socket write→read edge
+ * guarantees the value is visible (no race). The native HEV tunnel records nothing — its lookup
+ * misses and compensation falls back to the SOCKS-visible overhead only.
+ */
+internal object ConnectionSetupRegistry {
+    private const val MAX_ENTRIES = 4096
+    private val synArrivalNanos = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    fun record(loopbackPort: Int, nanos: Long) {
+        // Bound a leak if a connection is torn down before the SOCKS server takes its entry.
+        if (synArrivalNanos.size >= MAX_ENTRIES) synArrivalNanos.clear()
+        synArrivalNanos[loopbackPort] = nanos
+    }
+
+    fun take(loopbackPort: Int): Long? = synArrivalNanos.remove(loopbackPort)
+}
+
 class Socks5Server(
     private val credentials: SocksCredentials,
     private val protector: SocketProtector,
@@ -46,6 +86,7 @@ class Socks5Server(
     shapingPolicy: ShapingPolicy = ShapingPolicy { ShapeEverythingShaping("全局", null) },
     faultPolicy: FaultPolicy = FaultPolicy.NONE,
     private val expectOriginPreamble: Boolean = false,
+    compensateLatency: Boolean = false,
 ) : AutoCloseable {
     // Swappable at runtime so a rule/domain edit takes effect on new connections without tearing
     // down the tunnel. New connections resolve against the current policy; existing flows keep the
@@ -53,11 +94,19 @@ class Socks5Server(
     @Volatile private var shaper: TrafficShaper = shaper
     @Volatile private var shapingPolicy: ShapingPolicy = shapingPolicy
     @Volatile private var faultPolicy: FaultPolicy = faultPolicy
+    // Latency compensation: when on, each connection's own tunnel setup overhead is absorbed into
+    // the injected delay so the configured latency is the observed result. New connections read the
+    // latest value; existing flows keep what they started with.
+    @Volatile private var compensateLatency: Boolean = compensateLatency
 
     fun reconfigure(shaper: TrafficShaper, shapingPolicy: ShapingPolicy, faultPolicy: FaultPolicy) {
         this.shaper = shaper
         this.shapingPolicy = shapingPolicy
         this.faultPolicy = faultPolicy
+    }
+
+    fun setCompensateLatency(enabled: Boolean) {
+        compensateLatency = enabled
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -124,6 +173,8 @@ class Socks5Server(
     }
 
     private suspend fun handleClient(client: Socket) {
+        // Start of this connection's tunnel-side handling; used to size latency compensation.
+        val receivedNanos = System.nanoTime()
         client.soTimeout = SecurityPolicy.SOCKS_HANDSHAKE_TIMEOUT_MS
         val input = client.getInputStream()
         val output = client.getOutputStream()
@@ -144,6 +195,11 @@ class Socks5Server(
         } else {
             null
         }
+        // Base timestamp for latency compensation: the Kotlin tun2socks engine records the SYN
+        // arrival keyed by our client port before writing the preamble, so taking it after the read
+        // above sees it (write→read happens-before). HEV and the in-app probe record nothing → this
+        // falls back to the SOCKS-side start, compensating only the SOCKS-visible overhead.
+        val overheadBaseNanos = ConnectionSetupRegistry.take(client.port) ?: receivedNanos
         val shaping = shapingPolicy.resolve(origin)
         val fault = faultPolicy.resolve(origin)
         if (!negotiateAuthentication(input, output)) {
@@ -160,7 +216,7 @@ class Socks5Server(
             return
         }
         when (request.command) {
-            COMMAND_CONNECT -> handleConnect(client, output, request, shaping, fault)
+            COMMAND_CONNECT -> handleConnect(client, output, request, shaping, fault, overheadBaseNanos)
             COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping, fault)
             else -> writeReply(output, REPLY_COMMAND_NOT_SUPPORTED, null)
         }
@@ -172,6 +228,7 @@ class Socks5Server(
         request: SocksRequest,
         shaping: ConnectionShaping,
         fault: ConnectionFault,
+        overheadBaseNanos: Long,
     ) {
         val clientChannel = client.channel ?: run {
             writeReply(output, REPLY_GENERAL_FAILURE, null)
@@ -196,7 +253,11 @@ class Socks5Server(
             return
         }
 
+        val connectStartNanos = System.nanoTime()
         val outbound = connectOutbound(output, request) ?: return
+        // The real outbound handshake RTT is genuine network latency (a direct connection pays it
+        // too), so it is excluded from the compensated overhead.
+        val connectNanos = System.nanoTime() - connectStartNanos
         try {
             outbound.socket().tcpNoDelay = true
             writeReply(output, REPLY_SUCCEEDED, outbound.socket().localSocketAddress as? InetSocketAddress)
@@ -241,12 +302,32 @@ class Socks5Server(
             // Small responses (heartbeats / reachability pings) can bypass the hold.
             val holdBypassBytes = if (holdDownstreamNanos > 0L) fault.holdBypassBytes else 0
 
+            // Latency compensation credit: the tunnel's own pre-connect setup time (attribution,
+            // SOCKS negotiation, tun2socks) for THIS connection, excluding the real outbound
+            // handshake RTT and the post-connect SNI sniff (both genuine, not tunnel overhead).
+            // The shaped pump draws it down from the first chunks' injected delay so the configured
+            // latency is the observed result. Shared across both directions; consumed once.
+            val compensationCredit = if (compensateLatency && shapeTraffic) {
+                val overheadNanos = (connectStartNanos - overheadBaseNanos)
+                    .coerceIn(0L, MAX_COMPENSATION_NANOS)
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        "PakomoFaultDbg",
+                        "compensation host=${effectiveHost} overheadMs=${overheadNanos / NANOS_PER_MILLISECOND} " +
+                            "connectMs=${connectNanos / NANOS_PER_MILLISECOND}",
+                    )
+                }
+                if (overheadNanos > 0L) java.util.concurrent.atomic.AtomicLong(overheadNanos) else null
+            } else {
+                null
+            }
+
             val flow = FlowLog.open("TCP", effectiveHost, request.port)
             flow.shaped = shapeTraffic
             try {
                 relay(
                     clientChannel, outbound, shapeTraffic,
-                    holdDownstreamNanos, holdBypassBytes, flow, initialUpload,
+                    holdDownstreamNanos, holdBypassBytes, flow, initialUpload, compensationCredit,
                 )
             } catch (error: Exception) { Log.w("PakomoSocks", "SOCKS TCP relay closed: " + error.message); safeLog("SOCKS TCP relay closed", error)
             } finally {
@@ -643,6 +724,7 @@ class Socks5Server(
         holdBypassBytes: Int,
         flow: FlowHandle?,
         initialUpload: ByteArray?,
+        compensationCredit: java.util.concurrent.atomic.AtomicLong?,
     ) = coroutineScope {
         val upload = launch {
             pump(
@@ -654,6 +736,7 @@ class Socks5Server(
                 holdBypassBytes = 0,
                 flow = flow,
                 initial = initialUpload,
+                compensationCredit = compensationCredit,
             )
             runCatching { outbound.shutdownOutput() }
         }
@@ -667,6 +750,7 @@ class Socks5Server(
                 holdBypassBytes = holdBypassBytes,
                 flow = flow,
                 initial = null,
+                compensationCredit = compensationCredit,
             )
             runCatching { client.shutdownOutput() }
         }
@@ -683,6 +767,7 @@ class Socks5Server(
         holdBypassBytes: Int,
         flow: FlowHandle?,
         initial: ByteArray?,
+        compensationCredit: java.util.concurrent.atomic.AtomicLong?,
     ) {
         val counter = if (direction == TrafficDirection.DOWNLOAD) flow?.down else flow?.up
         // A flow can be "in scope" for shaping yet have a no-op shaper (no latency/jitter/loss/
@@ -690,7 +775,10 @@ class Socks5Server(
         // overhead for zero effect and caps throughput — use the straight copy instead.
         val needsShapedPump = (shapeTraffic && !shaper.isNoOp()) || holdNanos > 0L
         if (needsShapedPump) {
-            delayedPump(from, to, direction, shapeTraffic, holdNanos, holdBypassBytes, counter, flow, initial)
+            delayedPump(
+                from, to, direction, shapeTraffic, holdNanos, holdBypassBytes, counter, flow, initial,
+                compensationCredit,
+            )
         } else {
             copyDirect(from, to, counter, initial)
         }
@@ -774,10 +862,15 @@ class Socks5Server(
         counter: java.util.concurrent.atomic.AtomicLong?,
         flow: FlowHandle?,
         initial: ByteArray?,
+        compensationCredit: java.util.concurrent.atomic.AtomicLong?,
     ) = coroutineScope {
         val queue = Channel<DelayedChunk>(
             capacity = if (holdNanos > 0L) Channel.UNLIMITED else SHAPED_QUEUE_CAPACITY,
         )
+        // Latency compensation: draw this connection's setup-overhead credit down from the injected
+        // delay of the earliest chunks (shared across both directions), floored at 0 so a chunk is
+        // never released before it arrives. Once the credit is spent the steady stream is unaffected.
+        fun compensate(shapingNanos: Long): Long = drawDownCompensation(compensationCredit, shapingNanos)
         val writer = launch {
             for (chunk in queue) {
                 val waitNanos = chunk.releaseNanos - System.nanoTime()
@@ -820,7 +913,7 @@ class Socks5Server(
                 }
                 if (shapingNanos >= 0L) {
                     counter?.addAndGet(initial.size.toLong())
-                    queue.send(DelayedChunk(initial, releaseNanosFor(initial.size, shapingNanos)))
+                    queue.send(DelayedChunk(initial, releaseNanosFor(initial.size, compensate(shapingNanos))))
                 }
             }
             while (true) {
@@ -839,7 +932,7 @@ class Socks5Server(
                 val bytes = ByteArray(count)
                 buffer.flip()
                 buffer.get(bytes)
-                queue.send(DelayedChunk(bytes, releaseNanosFor(count, shapingNanos)))
+                queue.send(DelayedChunk(bytes, releaseNanosFor(count, compensate(shapingNanos))))
             }
         } finally {
             queue.close()
@@ -1013,6 +1106,9 @@ class Socks5Server(
         // before falling back to the destination IP; keeps server-speaks-first protocols responsive.
         const val PEEK_TIMEOUT_MS = 1_000L
         const val NANOS_PER_MILLISECOND = 1_000_000L
+        // Sanity cap on the per-connection latency-compensation credit, so an anomalous overhead
+        // measurement can't zero out injection across a whole flow (2s).
+        const val MAX_COMPENSATION_NANOS = 2_000L * NANOS_PER_MILLISECOND
         // Bounds in-flight shaped chunks (~one delay-window of data); provides backpressure so a
         // bandwidth limit slows the reader instead of buffering unboundedly.
         const val SHAPED_QUEUE_CAPACITY = 128

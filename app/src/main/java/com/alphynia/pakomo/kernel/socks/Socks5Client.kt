@@ -1,5 +1,6 @@
 package com.alphynia.pakomo.kernel.socks
 
+import com.alphynia.pakomo.forwarding.ConnectionSetupRegistry
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.readInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt32
@@ -48,6 +49,7 @@ class Socks5Client(
         sourcePort: Int,
         destinationAddress: Int,
         destinationPort: Int,
+        synArrivalNanos: Long = 0L,
     ): TcpConnection? = withContext(KernelDispatchers.connIo) {
         try {
             val sock = Socket()
@@ -63,6 +65,13 @@ class Socks5Client(
             sock.tcpNoDelay = true
             val input = sock.getInputStream()
             val output = sock.getOutputStream()
+
+            // Hand this connection's SYN-arrival time to the SOCKS server (keyed by our loopback
+            // port) BEFORE the preamble, so latency compensation can include the tun2socks setup.
+            // The server takes it after reading the preamble — the write→read edge orders us first.
+            if (synArrivalNanos != 0L) {
+                ConnectionSetupRegistry.record(sock.localPort, synArrivalNanos)
+            }
 
             // 1. Write preamble
             output.write(buildPreamble(

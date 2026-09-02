@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private var vpnPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(false)
     private var quickControlEnabled by mutableStateOf(false)
+    private var latencyCompensationEnabled by mutableStateOf(false)
     private var startAfterVpnPermission = false
     private var enableQuickControlAfterPermission = false
 
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
                     vpnPermissionGranted = vpnPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
                     quickControlEnabled = quickControlEnabled,
+                    latencyCompensationEnabled = latencyCompensationEnabled,
                     themeMode = themeMode,
                     onThemeModeChange = viewModel::setThemeMode,
                     language = language,
@@ -140,6 +142,7 @@ class MainActivity : ComponentActivity() {
                         openAppPermissionSettings()
                     },
                     onQuickControlChanged = ::updateQuickControlEnabled,
+                    onLatencyCompensationChanged = ::updateLatencyCompensationEnabled,
                     onClearData = {
                         viewModel.clearLocalData()
                         updateQuickControlEnabled(false)
@@ -237,6 +240,17 @@ class MainActivity : ComponentActivity() {
             QuickControlService.stop(this)
         }
         quickControlEnabled = storedQuickControl && overlayGranted
+        latencyCompensationEnabled = preferences.readLatencyCompensationEnabled()
+    }
+
+    private fun updateLatencyCompensationEnabled(enabled: Boolean) {
+        preferences.writeLatencyCompensationEnabled(enabled)
+        latencyCompensationEnabled = enabled
+        // Hot-apply to a running tunnel so the toggle takes effect on new connections immediately.
+        // Guarded so toggling while stopped can't spin up the service; it reads prefs on next start.
+        if (VpnServiceController.runtime.value.stage.isActive) {
+            VpnServiceController.refreshCompensation(this)
+        }
     }
 
     private fun updateQuickControlEnabled(enabled: Boolean) {

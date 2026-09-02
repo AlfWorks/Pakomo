@@ -123,6 +123,14 @@ object VpnServiceController {
         context.startService(intent)
     }
 
+    /** Hot-applies the latency-compensation toggle to a running tunnel (read from preferences). */
+    fun refreshCompensation(context: Context) {
+        val intent = Intent(context, WeakNetworkVpnService::class.java)
+            .setAction(WeakNetworkVpnService.ACTION_SET_COMPENSATION)
+        runCatching { context.startService(intent) }
+            .onFailure { Log.w(TAG, "Unable to refresh latency compensation", it) }
+    }
+
     internal fun publish(
         stage: EngineStage,
         message: String? = null,

@@ -3,7 +3,6 @@ package com.alphynia.pakomo.kernel.tcp
 import android.os.SystemClock
 import android.util.Log
 import com.alphynia.pakomo.BuildConfig
-import com.alphynia.pakomo.kernel.ip.Ipv4Packet
 import com.alphynia.pakomo.kernel.socks.Socks5Client
 import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
@@ -55,6 +54,8 @@ class TcpConnection(
     private val sendLock = Mutex()
     val inputChannel = Channel<TcpSegment>(Channel.UNLIMITED)
     private var socksTcp: Socks5Client.TcpConnection? = null
+    // When this connection's SYN arrived; handed to the SOCKS server to size latency compensation.
+    private var synArrivalNanos = 0L
     private val earlyData = ArrayDeque<ByteArray>()
     private var socksReadJob: Job? = null
     private var ourFinSent = false
@@ -65,6 +66,7 @@ class TcpConnection(
         private set
 
     suspend fun accept(synSeq: Long) {
+        synArrivalNanos = System.nanoTime()
         val rng = SecureRandom()
         iss = (rng.nextInt().toLong() and 0xFFFF_FFFFL)
         sndNxt = iss
@@ -189,7 +191,9 @@ class TcpConnection(
     private fun launchSocksRelay() {
         connectionScope.launch {
             val tcp = withContext(KernelDispatchers.connIo) {
-                socksClient.tcpConnect(sourceAddress, sourcePort, destinationAddress, destinationPort)
+                socksClient.tcpConnect(
+                    sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
+                )
             }
             if (tcp == null) { Log.w(TAG, "SOCKS5 connect failed $sourcePort"); resetConnection(); return@launch }
             if (BuildConfig.DEBUG) Log.i(TAG, "SOCKS5 connected $sourcePort->$destinationPort")
@@ -291,19 +295,14 @@ class TcpConnection(
     /** Builds and emits one segment. Caller must hold [sendLock]. */
     private suspend fun sendSegmentLocked(flags: Int, payload: ByteArray, options: ByteArray = ByteArray(0)) {
         lastActivityMs = SystemClock.elapsedRealtime()
-        val segBytes = TcpSegment.build(
+        val packet = TcpSegment.buildIpv4Packet(
             sourcePort = destinationPort, destinationPort = sourcePort,
             sequenceNumber = sndNxt, acknowledgmentNumber = rcvNxt,
             flags = flags, windowSize = windowField(flags and TcpSegment.FLAG_SYN != 0),
             sourceAddress = destinationAddress, destinationAddress = sourceAddress,
             payload = payload, options = options,
         )
-        val header = Ipv4Packet.buildHeader(
-            protocol = Ipv4Packet.PROTOCOL_TCP,
-            sourceAddress = destinationAddress, destinationAddress = sourceAddress,
-            payloadLength = segBytes.size,
-        )
-        onSendPacket(header + segBytes)
+        onSendPacket(packet)
         val len = payload.size + (if ((flags and TcpSegment.FLAG_SYN) != 0) 1 else 0) +
             (if ((flags and TcpSegment.FLAG_FIN) != 0) 1 else 0)
         if (len > 0) {
@@ -370,20 +369,15 @@ class TcpConnection(
             if (retransmitCount > MAX_RETRANSMIT) {
                 true
             } else {
-                val segBytes = TcpSegment.build(
+                val packet = TcpSegment.buildIpv4Packet(
                     sourcePort = destinationPort, destinationPort = sourcePort,
                     sequenceNumber = q.seq, acknowledgmentNumber = rcvNxt,
                     flags = q.flags, windowSize = windowField(q.flags and TcpSegment.FLAG_SYN != 0),
                     sourceAddress = destinationAddress, destinationAddress = sourceAddress,
                     payload = q.payload,
                 )
-                val header = Ipv4Packet.buildHeader(
-                    protocol = Ipv4Packet.PROTOCOL_TCP,
-                    sourceAddress = destinationAddress, destinationAddress = sourceAddress,
-                    payloadLength = segBytes.size,
-                )
                 if (BuildConfig.DEBUG) Log.d(TAG, "RETRANSMIT seq=${q.seq} flags=${q.flags} count=$retransmitCount")
-                onSendPacket(header + segBytes)
+                onSendPacket(packet)
                 rtoMs = (rtoMs * 2).coerceAtMost(MAX_RTO_MS)
                 startRtoTimer()
                 false

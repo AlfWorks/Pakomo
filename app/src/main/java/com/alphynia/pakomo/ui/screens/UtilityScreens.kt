@@ -79,6 +79,7 @@ import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
 import com.alphynia.pakomo.ui.components.ScreenHeader
 import com.alphynia.pakomo.ui.components.SectionLabel
@@ -326,6 +327,8 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     quickControlEnabled: Boolean,
     onQuickControlChanged: (Boolean) -> Unit,
+    latencyCompensationEnabled: Boolean,
+    onLatencyCompensationChanged: (Boolean) -> Unit,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     language: AppLanguage,
@@ -392,6 +395,23 @@ fun SettingsScreen(
                         Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = null,
                         tint = colors.muted,
+                    )
+                },
+            )
+
+            SectionLabel(t("整形", "Shaping"), startPadding = 56.dp)
+            SettingRow(
+                icon = Icons.Rounded.Tune,
+                title = t("延迟补偿", "Latency compensation"),
+                subtitle = t(
+                    "抵消隧道自身开销,让设定延迟成为实际结果",
+                    "Offset the tunnel's own overhead so the set latency is the observed result",
+                ),
+                onClick = { onLatencyCompensationChanged(!latencyCompensationEnabled) },
+                trailing = {
+                    Switch(
+                        checked = latencyCompensationEnabled,
+                        onCheckedChange = onLatencyCompensationChanged,
                     )
                 },
             )

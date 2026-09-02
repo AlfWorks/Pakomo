@@ -71,6 +71,18 @@ class PakomoPreferences(context: Context) {
         preferences.edit { putBoolean(KEY_QUICK_CONTROL_ENABLED, enabled) }
     }
 
+    /**
+     * Whether latency compensation is enabled. When on, the shaper absorbs the tunnel's own
+     * per-connection setup overhead into the injected delay so the configured latency is the
+     * observed result rather than an addition on top of the baseline. Default off — opt-in.
+     */
+    fun readLatencyCompensationEnabled(): Boolean =
+        preferences.getBoolean(KEY_LATENCY_COMPENSATION, false)
+
+    fun writeLatencyCompensationEnabled(enabled: Boolean) {
+        preferences.edit { putBoolean(KEY_LATENCY_COMPENSATION, enabled) }
+    }
+
     /** Stored as the [com.alphynia.pakomo.ui.theme.ThemeMode] name; null when never set (→ default Standard). */
     fun readThemeMode(): String? = preferences.getString(KEY_THEME_MODE, null)
 
@@ -158,6 +170,7 @@ class PakomoPreferences(context: Context) {
         const val KEY_ACTIVE_RULE = "active_rule"
         const val KEY_RULES = "rules"
         const val KEY_QUICK_CONTROL_ENABLED = "quick_control_enabled"
+        const val KEY_LATENCY_COMPENSATION = "latency_compensation_enabled"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_LANGUAGE = "app_language"
     }

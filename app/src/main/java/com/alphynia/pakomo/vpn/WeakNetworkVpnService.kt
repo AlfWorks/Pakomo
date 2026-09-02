@@ -159,6 +159,11 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     reconfigure(config)
                 }
             }
+            ACTION_SET_COMPENSATION -> {
+                // Hot-apply the latency-compensation toggle to the running SOCKS relay without
+                // rebuilding the tunnel; takes effect on new connections, existing flows keep theirs.
+                socksServer?.setCompensateLatency(preferences.readLatencyCompensationEnabled())
+            }
         }
         return START_NOT_STICKY
     }
@@ -187,6 +192,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 // name, policy refs, attribution) after it succeeds, so a reconfigure failure can't
                 // leave the control plane showing the new rule while SOCKS still relays the old one.
                 socks.reconfigure(runtime.shaper, runtime.shapingPolicy, runtime.faultPolicy)
+                socks.setCompensateLatency(preferences.readLatencyCompensationEnabled())
                 applyRuntime(runtime)
                 Log.i(TAG, "Runtime configuration updated: scope=${config.scope.name}")
                 runCatching { updateRuntimeNotification() }
@@ -269,6 +275,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 shapingPolicy = runtime.shapingPolicy,
                 faultPolicy = runtime.faultPolicy,
                 expectOriginPreamble = true,
+                compensateLatency = preferences.readLatencyCompensationEnabled(),
             )
             val socksPort = localSocks.start()
             socksServer = localSocks
@@ -402,6 +409,19 @@ class WeakNetworkVpnService : android.net.VpnService() {
                     },
                 )
                 VpnServiceController.publishStats(stats)
+                if (BuildConfig.DEBUG) {
+                    val a = attributor?.stats()
+                    if (a != null && a.attempts > 0L) {
+                        // Per-app attribution cost probe: a miss pays up to MAX_RETRIES*RETRY_DELAY_MS
+                        // of blocking sleep. High miss rate ⇒ the getConnectionOwnerUid retry loop is a
+                        // real slice of per-connection setup latency in multi-app mode.
+                        Log.d(
+                            "PakomoFaultDbg",
+                            "attribution attempts=${a.attempts} misses=${a.misses} " +
+                                "missRate=${"%.1f".format(a.misses * 100.0 / a.attempts)}%",
+                        )
+                    }
+                }
                 FlowLog.pulse()
                 latestUploadBytesPerSecond = stats.uploadBytesPerSecond
                 latestDownloadBytesPerSecond = stats.downloadBytesPerSecond
@@ -699,6 +719,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         const val ACTION_START = "com.pakomo.action.START"
         const val ACTION_STOP = "com.pakomo.action.STOP"
         const val ACTION_UPDATE = "com.pakomo.action.UPDATE"
+        const val ACTION_SET_COMPENSATION = "com.pakomo.action.SET_COMPENSATION"
         const val EXTRA_CONFIG_ID = "runtime_config_id"
         private const val NO_CONFIG_ID = -1L
         private const val CHANNEL_ID = "pakomo_vpn_status"

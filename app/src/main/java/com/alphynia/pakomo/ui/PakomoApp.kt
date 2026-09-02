@@ -58,6 +58,7 @@ fun PakomoApp(
     vpnPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
     quickControlEnabled: Boolean,
+    latencyCompensationEnabled: Boolean,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     language: AppLanguage,
@@ -67,6 +68,7 @@ fun PakomoApp(
     onNotificationPermissionClick: () -> Unit,
     onAppListPermissionClick: () -> Unit,
     onQuickControlChanged: (Boolean) -> Unit,
+    onLatencyCompensationChanged: (Boolean) -> Unit,
     onClearData: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
@@ -291,6 +293,8 @@ fun PakomoApp(
                 onOpenAbout = { navigate(Screen.About) },
                 quickControlEnabled = quickControlEnabled,
                 onQuickControlChanged = onQuickControlChanged,
+                latencyCompensationEnabled = latencyCompensationEnabled,
+                onLatencyCompensationChanged = onLatencyCompensationChanged,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
                 language = language,
