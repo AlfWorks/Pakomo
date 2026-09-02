@@ -27,10 +27,10 @@ Kernel 内核不实现 IPv6、非 Android 平台后端、通用 SOCKS5 特性，
 | `KernelDispatchers.kt` | 协程调度 |
 | `tun/TunReader.kt`、`tun/TunWriter.kt` | TUN fd 的读与写，写入串行化 |
 | `ip/Ipv4Packet.kt`、`ip/Checksum.kt` | IPv4 解析与校验和 |
-| `tcp/TcpConnection.kt`、`tcp/TcpSegment.kt` | TCP 状态机与段处理 |
+| `tcp/TcpConnection.kt`、`tcp/TcpSegment.kt` | TCP 状态机与段处理；`TcpSegment.buildIpv4Packet` 单次分配构建整个 IPv4+TCP 包 |
 | `udp/UdpSession.kt` | UDP 会话，桥接到 SOCKS5 UDP ASSOCIATE |
 | `icmp/IcmpResponder.kt` | ICMP echo 的本地应答 |
-| `socks/Socks5Client.kt` | 作为 SOCKS5 客户端连接本地 `Socks5Server`，包含归属前导，行为与 HEV 补丁一致 |
+| `socks/Socks5Client.kt` | 作为 SOCKS5 客户端连接本地 `Socks5Server`，包含归属前导，行为与 HEV 补丁一致；写前导前登记 SYN 到达时刻供延迟补偿 |
 
 ## 关键设计
 
@@ -39,6 +39,11 @@ Kernel 内核不实现 IPv6、非 Android 平台后端、通用 SOCKS5 特性，
 - 所有回写 TUN 的包经单一写者串行处理，以保证顺序。
 - `Socks5Client` 透传原始连接五元组，使 Kotlin 侧的 `getConnectionOwnerUid()` 能够按应用与域名归属，
   该行为与 HEV 的归属前导补丁一致。
+- 出站 TCP 段由 `TcpSegment.buildIpv4Packet` **单次分配**写入完整 IPv4+TCP 包（原为 IP 头、TCP 段、拼接三次分配），
+  降低快速下载时的每段 GC 抖动；单元测试保证其与旧拆分路径**逐字节一致**。
+- 延迟补偿的开销测量依赖本引擎：`accept()` 记录 SYN 到达时刻，`Socks5Client` 在写前导前经 `ConnectionSetupRegistry`
+  按 loopback 端口交给 `Socks5Server`（无竞态）。Hev 不提供此时刻，补偿自动降级为仅 SOCKS 侧开销。见
+  [数据流 §4.1](data-flow.md)。
 
 ## 优势
 

@@ -43,6 +43,14 @@ Pakomo does not support application-layer content faults. HTTP 404/500/503, malf
 
 - Runtime statistics (`RuntimeStats`) provide metrics such as rate, active connection count, cumulative drops and holds, and uptime, but do not provide stable derived values like "current loss rate" or "current RTT." There is therefore no condition state such as "high latency," "packet loss," or "disconnected" derived from real-time statistics; the mascot has only the five lifecycle states, see [State Mapping](../03-product/state-mapping_EN.md).
 
+## Latency compensation
+
+- Compensation offsets only the **tunnel's own setup overhead** (tun2socks + SOCKS establishment); it does **not** offset the real network RTT, which a direct connection pays too and is genuine latency.
+- It has a **floor**: injected delay is never negative, so when the configured latency is below the tool overhead it cannot be fully offset and the observed value stays bounded by that overhead.
+- **Full on Kernel, degraded on HEV**: Kernel measures the full setup overhead via a SYN handoff; HEV's native preamble carries no SYN time, so only the small SOCKS-visible part is compensated.
+- The measured tool overhead is already low (about 14 ms on-device, with the ~30 ms real RTT excluded), so compensation only trims the "configured = observed" error and is usually small — the tunnel itself is already efficient.
+- It applies once per connection (to the earliest chunks) and does not affect that connection's later steady-state injection.
+
 ## Measurement methodology
 
 The weak-network parameters Pakomo sets do not necessarily map one-to-one to the numbers shown by third-party speed tests, for reasons including the difference between per-direction and combined measurement, the difference in how timeouts and late packets versus truly dropped packets are classified, and the effect of application-layer retries. See [Measurement Methodology](../06-testing/measurement-methodology_EN.md).

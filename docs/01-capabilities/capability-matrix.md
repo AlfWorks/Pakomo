@@ -32,13 +32,14 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 
 ## 能力表
 
-图例：✔ 支持  · ✘ 不支持 · — 不适用
+图例：✔ 支持  · ◐ 部分/降级 · ✘ 不支持 · — 不适用
 
 ### 连接层能力（无需解密即可实现）
 
 | 能力 | Kernel | Hev | 状态 | UI 开放 | 边界 / 口径 |
 |---|:--:|:--:|---|:--:|---|
 | 固定延迟 | ✔ | ✔ | `Implemented` | 是 | 简单模式为整体值均分上下行；高级模式分方向独立。见 [测量口径](../06-testing/measurement-methodology.md) |
+| 延迟补偿（可选） | ✔ | ◐ | `Implemented` | 是 | 默认关、可热切换；把每连接建连开销吸收进注入延迟，令设定延迟成为观察结果。Kernel 经 SYN 旁路测全量开销，Hev 仅补 SOCKS 侧（降级）。不补真实 RTT、有下限。见 [数据流 §4.1](../02-architecture/data-flow.md) 与 [限制](limitations.md) |
 | 抖动（jitter） | ✔ | ✔ | `Implemented` | 是 | 分布模型见测量口径 |
 | 丢包 | ✔ | ✔ | `Implemented` | 是 | 与第三方测速工具统计口径不同（上下行独立 vs 合并），见测量口径 |
 | 带宽限速（上下行） | ✔ | ✔ | `Implemented` | 是 | 每方向独立 |
@@ -96,7 +97,7 @@ HTTP 响应，因此这类能力不属于 Pakomo 的支持范围。此类能力�
 | **共同能力** | 上表所有 `Implemented` 行：中继、整形、四种特殊故障、归属、FlowLog、自动化、UI 全部两版一致 |
 | **Kernel 独有** | 无第三方原生依赖、构建不需 NDK；隧道层为自研纯 Kotlin，覆盖 Pakomo 当前所需子集 |
 | **Hev 独有** | 原生 `hev-socks5-tunnel`，底层能力范围更完整、更成熟 |
-| **当前功能差异** | 对 Pakomo 现有业务功能**无可见差异**（中继/故障逻辑共享） |
+| **当前功能差异** | 业务功能无可见差异（中继/故障逻辑共享）。唯一例外：**延迟补偿**机制共享，但 Kernel 经 SYN 旁路测全量建连开销、Hev 仅补 SOCKS 侧（降级），补偿力度不同 |
 | **一致性要求** | 业务行为要求一致；两条路径通过同一套自动化冒烟 + 双 flavor 对拍校验 |
 | **无法保证一致的底层差异** | 隧道层实现细节（如原生栈的成熟度、边角协议处理）不要求逐一对齐 |
 
@@ -105,6 +106,7 @@ HTTP 响应，因此这类能力不属于 Pakomo 的支持范围。此类能力�
 ## 实现位置
 
 - 弱网整形：`shaping/TrafficShaper.kt`、`forwarding/ShapingPolicy.kt`
+- 延迟补偿：`forwarding/Socks5Server.kt`（`drawDownCompensation`、`ConnectionSetupRegistry`）、`kernel/tcp/TcpConnection.kt`（SYN 时刻）、`data/PakomoPreferences.kt`（开关）
 - 特殊故障：`forwarding/FaultPolicy.kt`、`forwarding/Socks5Server.kt`、`data/SpecialFaultCodec.kt`、`core/model/PakomoModels.kt`
 - 归属：`vpn/AndroidConnectionAttributor.kt`、`forwarding/DomainRoutingPolicy.kt`
 - FlowLog：`forwarding/FlowLog.kt`、`core/model/FlowRecord.kt`

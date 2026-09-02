@@ -25,16 +25,18 @@ The Kernel does not implement IPv6, non-Android platform backends, general SOCKS
 | `KernelDispatchers.kt` | Coroutine dispatchers |
 | `tun/TunReader.kt`, `tun/TunWriter.kt` | Reading and writing the TUN fd, with serialized writes |
 | `ip/Ipv4Packet.kt`, `ip/Checksum.kt` | IPv4 parsing and checksums |
-| `tcp/TcpConnection.kt`, `tcp/TcpSegment.kt` | TCP state machine and segment handling |
+| `tcp/TcpConnection.kt`, `tcp/TcpSegment.kt` | TCP state machine and segment handling; `TcpSegment.buildIpv4Packet` writes the whole IPv4+TCP packet in one allocation |
 | `udp/UdpSession.kt` | UDP sessions, bridging to SOCKS5 UDP ASSOCIATE |
 | `icmp/IcmpResponder.kt` | Local replies for ICMP echo |
-| `socks/Socks5Client.kt` | Connects to the local `Socks5Server` as a SOCKS5 client, including the attribution preamble, behaving consistently with the HEV patch |
+| `socks/Socks5Client.kt` | Connects to the local `Socks5Server` as a SOCKS5 client, including the attribution preamble, behaving consistently with the HEV patch; records the SYN-arrival time before the preamble for latency compensation |
 
 ## Key design
 
 - The TUN side is a lossless in-memory link. There is no real packet loss or reordering among the app, kernel, and user-space stack; weak-network and faults are injected by the downstream `Socks5Server`. The hard part of the TCP stack is therefore backpressure — making the app pause naturally by shrinking the advertised window — rather than resisting loss.
 - All packets written back to the TUN are serialized through a single writer to preserve ordering.
 - `Socks5Client` passes through the original connection five-tuple so that Kotlin-side `getConnectionOwnerUid()` can attribute by app and domain; this behavior matches HEV's attribution-preamble patch.
+- Outbound TCP segments are written by `TcpSegment.buildIpv4Packet` in a **single allocation** (previously three: IP header, TCP segment, concatenation), cutting per-segment GC churn on fast downloads; unit tests assert it is **byte-identical** to the old split path.
+- Latency-compensation overhead measurement relies on this engine: `accept()` records the SYN-arrival time and `Socks5Client` hands it to `Socks5Server` via `ConnectionSetupRegistry` (keyed by the loopback port, race-free). HEV provides no such time, so compensation degrades to the SOCKS-visible overhead. See [Data flow §4.1](data-flow_EN.md).
 
 ## Advantages
 

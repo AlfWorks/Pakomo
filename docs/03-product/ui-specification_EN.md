@@ -21,7 +21,7 @@ This document explains how Pakomo's implemented UI presents its capabilities. Fo
 | Rule editor | `RuleEditorScreen.kt` | Latency, jitter, packet loss, and up/down rate limiting, distinguishing simple and advanced modes; the special-fault entry is at the bottom |
 | Special-fault targets | `SpecialFaultScreens.kt` | Enabling and parameters for the four faults (DNS result, outage behavior, slow-response duration and release threshold), plus selecting app and domain targets |
 | Traffic & diagnostics | `UtilityScreens.kt` (`DiagnosticsScreen`) | Default "Traffic" tab: per-connection records with a top-bar search and a filter panel; tapping a row opens a connection detail sheet. The "Diagnostics" tab shows live status, attribution hits, and Logcat |
-| Settings | `UtilityScreens.kt` (`SettingsScreen`) | Theme mode and language (Chinese and English, instant switching) |
+| Settings | `UtilityScreens.kt` (`SettingsScreen`) | Theme mode and language (Chinese and English, instant switching); a "Shaping" section holds the latency-compensation toggle (off by default, hot-toggleable) |
 | Latency test | `LatencyTestScreen.kt` | Measures the target connection latency via the local SOCKS or a direct connection |
 | Floating quick control | `overlay/QuickControlService.kt` | Instantly toggles takeover via a floating ball; requires the `SYSTEM_ALERT_WINDOW` permission |
 

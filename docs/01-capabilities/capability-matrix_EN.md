@@ -28,13 +28,14 @@ The two are different implementation paths, not a full-vs-lite relationship. The
 
 ## Capability table
 
-Legend: ✔ supported · ✘ not supported · — not applicable
+Legend: ✔ supported · ◐ partial/degraded · ✘ not supported · — not applicable
 
 ### Connection-layer capabilities (achievable without decryption)
 
 | Capability | Kernel | Hev | Status | UI-exposed | Boundary / measurement |
 |---|:--:|:--:|---|:--:|---|
 | Fixed latency | ✔ | ✔ | `Implemented` | Yes | Simple mode splits one overall value across up/down; advanced mode sets each direction independently. See [Measurement Methodology](../06-testing/measurement-methodology_EN.md) |
+| Latency compensation (optional) | ✔ | ◐ | `Implemented` | Yes | Off by default, hot-toggleable; absorbs each connection's setup overhead into the injected delay so the configured latency is the observed result. Kernel measures the full overhead via a SYN handoff; HEV compensates only the SOCKS-visible part (degraded). Does not offset real RTT and has a floor. See [Data flow §4.1](../02-architecture/data-flow_EN.md) and [Limitations](limitations_EN.md) |
 | Jitter | ✔ | ✔ | `Implemented` | Yes | Distribution model in the measurement methodology |
 | Packet loss | ✔ | ✔ | `Implemented` | Yes | Measured differently from third-party speed tests (per-direction vs. combined); see the measurement methodology |
 | Bandwidth limit (up/down) | ✔ | ✔ | `Implemented` | Yes | Independent per direction |
@@ -88,7 +89,7 @@ Pakomo does not decrypt TLS, does not perform man-in-the-middle (MITM) decryptio
 | **Shared capabilities** | Every `Implemented` row above: relay, shaping, the four special faults, attribution, FlowLog, automation, and UI are all identical across editions |
 | **Kernel-only** | No third-party native dependency, no NDK required to build; the tunnel layer is a self-developed pure-Kotlin one covering the subset Pakomo currently needs |
 | **Hev-only** | The native `hev-socks5-tunnel`, with a more complete and mature low-level capability range |
-| **Current functional difference** | **No visible difference** for Pakomo's existing business features (the relay/fault logic is shared) |
+| **Current functional difference** | No visible difference for existing business features (relay/fault logic is shared). The one exception is **latency compensation**: the mechanism is shared, but Kernel measures the full setup overhead via a SYN handoff while HEV compensates only the SOCKS-visible part (degraded) |
 | **Consistency requirement** | Business behavior must be consistent; the two paths are validated by the same automation smoke test + a dual-flavor diff |
 | **Low-level differences not guaranteed consistent** | Tunnel-layer implementation details (e.g. the maturity of the native stack, handling of edge-case protocols) are not required to match one for one |
 
@@ -97,6 +98,7 @@ If Pakomo adds low-level networking capability in the future, the Kernel needs t
 ## Where it is implemented
 
 - Weak-network shaping: `shaping/TrafficShaper.kt`, `forwarding/ShapingPolicy.kt`
+- Latency compensation: `forwarding/Socks5Server.kt` (`drawDownCompensation`, `ConnectionSetupRegistry`), `kernel/tcp/TcpConnection.kt` (SYN time), `data/PakomoPreferences.kt` (toggle)
 - Special faults: `forwarding/FaultPolicy.kt`, `forwarding/Socks5Server.kt`, `data/SpecialFaultCodec.kt`, `core/model/PakomoModels.kt`
 - Attribution: `vpn/AndroidConnectionAttributor.kt`, `forwarding/DomainRoutingPolicy.kt`
 - FlowLog: `forwarding/FlowLog.kt`, `core/model/FlowRecord.kt`

@@ -51,10 +51,30 @@ App initiates a connection
 | Weak-network shaping | On the relay pump, apply latency, jitter, packet loss, and rate limiting |
 | Slow response | Gate hold on the downstream `delayedPump` |
 
+## 4.1 Latency compensation (optional)
+
+Off by default; enabled in Settings. When on, each connection takes its own **tunnel setup overhead**
+(tun2socks + SOCKS establishment, **excluding** the real outbound RTT and the SNI sniff) as a credit
+and draws it down from the injected delay of the connection's **earliest chunks** (floored at 0, shared
+across both directions, consumed once), so the configured latency becomes the *observed result* rather
+than an addition on top of the baseline; once spent, the steady stream is unaffected.
+
+- **Measuring the overhead**: the Kernel engine records the SYN-arrival time in `TcpConnection.accept()`;
+  `Socks5Client` records it (keyed by the loopback port) in `ConnectionSetupRegistry` **before** writing
+  the preamble, and `Socks5Server` takes it **after** reading the preamble — the write→read edge makes it
+  visible with no race. Overhead = pre-connect time − SYN time.
+- **Draw-down**: `drawDownCompensation` (atomic CAS, floored at 0, capped at 2 s) applies in `delayedPump`.
+- **HEV**: the native preamble carries no SYN time, so the lookup misses and compensation degrades to the
+  SOCKS-visible overhead only.
+- Compensates only the tool's own overhead, **not the real network RTT**; when the configured latency is
+  below the tool overhead it cannot be fully offset (injection is never negative). See
+  [Limitations](../01-capabilities/limitations_EN.md).
+
 ## 5. Hot update
 
 - Rule and domain changes trigger `reconfigure()` via `ACTION_UPDATE`, building a new runtime in the background, switching the data plane first (`socks.reconfigure`) and, on success, publishing the metadata and calling `publishAppliedConfig(configId)`; on failure it calls `publishFailedConfig`. The whole process does not rebuild the tunnel or drop connections.
 - Changes to the takeover scope or selected apps rebuild the TUN interface via `ACTION_START`, because the allowed-app set can only be set at establish time.
+- The latency-compensation toggle hot-refreshes the running `Socks5Server` via `ACTION_SET_COMPENSATION`, taking effect on new connections without rebuilding the tunnel; while the tunnel is stopped it only writes the preference, which is read on the next start.
 
 ## 6. Stopping
 

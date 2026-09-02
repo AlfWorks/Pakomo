@@ -59,12 +59,27 @@ App 发起连接
 | 弱网整形 | 中继 pump，施加延迟、抖动、丢包与限速 |
 | 慢响应 | 下行 `delayedPump` 的闸门暂扣 |
 
+## 4.1 延迟补偿（可选）
+
+默认关闭，可在设置中开启。开启后，每条连接把隧道自身的**建连开销**（tun2socks + SOCKS 建立，**排除**真实
+outbound RTT 与 SNI 嗅探）作为一份"信用额度"，从该连接**最早若干 chunk 的注入延迟里扣减**（封底 0，两方向共享，
+一次性用完），使设定的固定延迟成为**观察结果**而非叠加在底噪之上；额度用尽后稳态流量不受影响。
+
+- **开销测量**：Kernel 引擎在 `TcpConnection.accept()` 记录 SYN 到达时刻，`Socks5Client` 在**写前导报文之前**按
+  loopback 端口记入 `ConnectionSetupRegistry`；`Socks5Server` 在**读完前导之后**取出，开销 = 连出前时刻 − SYN 时刻。
+  写→读次序天然保证可见，无竞态。
+- **扣减**：`drawDownCompensation`（CAS 原子、封底 0、夹顶 2 秒）在 `delayedPump` 对早期 chunk 生效。
+- **Hev**：原生前导不带 SYN 时刻 → 取不到 → 回退为仅补偿 SOCKS 侧可见开销（部分补偿）。
+- 只补偿工具自身开销，**不补偿真实网络 RTT**；设定延迟低于工具开销时无法补满（注入不为负）。详见 [限制](../01-capabilities/limitations.md)。
+
 ## 5. 热更新
 
 - 规则与域名变更通过 `ACTION_UPDATE` 触发 `reconfigure()`，在后台构建新的 runtime，先切换数据面（`socks.reconfigure`），
   成功后再发布元数据，并调用 `publishAppliedConfig(configId)`；失败时调用 `publishFailedConfig`。整个过程不重建隧道、
   不断开连接。
 - 接管范围或选中应用的变更通过 `ACTION_START` 重建 TUN 接口，因为允许的应用集只能在 establish 时设定。
+- 延迟补偿开关通过 `ACTION_SET_COMPENSATION` 热刷新运行中的 `Socks5Server`，对新连接即时生效，不重建隧道；
+  隧道未运行时仅写入偏好，下次启动读入。
 
 ## 6. 停止
 

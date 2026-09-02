@@ -22,7 +22,7 @@
 | 规则编辑 | `RuleEditorScreen.kt` | 延迟、抖动、丢包与上下行限速，区分简单与高级模式；底部为特殊故障入口 |
 | 特殊故障目标 | `SpecialFaultScreens.kt` | 四种故障的启用与参数（DNS 结果、中断表现、慢响应时长与放行阈值），以及应用与域名目标选择 |
 | 流量与诊断 | `UtilityScreens.kt`（`DiagnosticsScreen`） | 默认「流量」标签：逐连接记录，顶栏搜索加筛选面板，点条目从底部弹出连接详情；「诊断」标签展示实时状态、归属命中与 Logcat |
-| 设置 | `UtilityScreens.kt`（`SettingsScreen`） | 主题模式与语言（中文与英文，即时切换） |
+| 设置 | `UtilityScreens.kt`（`SettingsScreen`） | 主题模式与语言（中文与英文，即时切换）；「整形」分区含延迟补偿开关（默认关，热切换） |
 | 延迟测试 | `LatencyTestScreen.kt` | 经本地 SOCKS 或直连测量目标连接延迟 |
 | 快捷悬浮控制 | `overlay/QuickControlService.kt` | 通过悬浮球即时开关接管，需 `SYSTEM_ALERT_WINDOW` 权限 |
 
