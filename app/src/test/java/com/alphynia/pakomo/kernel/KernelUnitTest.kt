@@ -159,6 +159,59 @@ class KernelUnitTest {
         assertNull(IcmpResponder.respond(packet))
     }
 
+    /** The combined builder must be byte-identical to the split (buildHeader + build + concat) path. */
+    private fun assertCombinedMatchesSplit(
+        flags: Int, payload: ByteArray, options: ByteArray,
+    ) {
+        val seg = TcpSegment.build(
+            sourcePort = 40000, destinationPort = 443,
+            sequenceNumber = 0x11223344L, acknowledgmentNumber = 0x55667788L,
+            flags = flags, windowSize = 512,
+            sourceAddress = 0x0A000001, destinationAddress = 0x0A000002,
+            payload = payload, options = options,
+        )
+        val expected = Ipv4Packet.buildHeader(
+            protocol = Ipv4Packet.PROTOCOL_TCP,
+            sourceAddress = 0x0A000001, destinationAddress = 0x0A000002,
+            payloadLength = seg.size,
+        ) + seg
+        val actual = TcpSegment.buildIpv4Packet(
+            sourcePort = 40000, destinationPort = 443,
+            sequenceNumber = 0x11223344L, acknowledgmentNumber = 0x55667788L,
+            flags = flags, windowSize = 512,
+            sourceAddress = 0x0A000001, destinationAddress = 0x0A000002,
+            payload = payload, options = options,
+        )
+        assertArrayEquals(expected, actual)
+        // And it must still parse as a valid IPv4 packet carrying the exact payload.
+        val ip = Ipv4Packet.parse(actual)
+        assertNotNull(ip)
+        val tcp = TcpSegment.parse(ip!!.payload)
+        assertNotNull(tcp)
+        assertArrayEquals(payload, tcp!!.payload)
+    }
+
+    @Test
+    fun buildIpv4PacketMatchesSplitBareAck() =
+        assertCombinedMatchesSplit(TcpSegment.FLAG_ACK, ByteArray(0), ByteArray(0))
+
+    @Test
+    fun buildIpv4PacketMatchesSplitWithPayload() =
+        assertCombinedMatchesSplit(
+            TcpSegment.FLAG_ACK or TcpSegment.FLAG_PSH,
+            ByteArray(1300) { (it % 256).toByte() },
+            ByteArray(0),
+        )
+
+    @Test
+    fun buildIpv4PacketMatchesSplitSynWithOptions() =
+        assertCombinedMatchesSplit(
+            TcpSegment.FLAG_SYN or TcpSegment.FLAG_ACK,
+            ByteArray(0),
+            // MSS + NOP + Window Scale, as the SYN-ACK path emits.
+            byteArrayOf(2, 4, 0x05, 0xB4.toByte(), 1, 3, 3, 7),
+        )
+
     @Test
     fun connectionKeys() {
         val key1 = TunReader.tcpKey(0x0A000001, 1234, 0x0A000002, 80)
