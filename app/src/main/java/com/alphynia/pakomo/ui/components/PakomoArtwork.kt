@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,11 +27,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import com.alphynia.pakomo.R
@@ -38,6 +39,8 @@ import com.alphynia.pakomo.core.model.EngineStage
 import com.alphynia.pakomo.ui.theme.LocalPakomoColors
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 状态卡装饰的状态。对齐真实引擎的 4+1 态(执行文档 §5),不引入引擎里不存在的状态。
@@ -286,27 +289,30 @@ fun EmptyStateArt(kind: EmptyArtKind, modifier: Modifier = Modifier, refreshKey:
             animationSpec = tween(360),
             label = "mascotHome",
         ) { res ->
-            val painter = painterResource(res)
+            // 位图后台降采样解码 + 缓存(见 rememberMascotBitmap):就绪前不画,避免首帧被多兆位图解码卡住。
+            val bitmap = rememberMascotBitmap(res)
             // 两层合成:底层用页面底色按角色轮廓填成**不透明**遮罩,挡住背后 backdrop,
             // 使碎片/六边形不会透过角色;上层再压低不透明度画真图 → 角色只淡淡浮现,却不漏底。
-            Box(Modifier.fillMaxSize()) {
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = ContentScale.FillWidth,   // 满宽、保持比例、不拉伸
-                    alignment = Alignment.BottomCenter,       // 贴底;区域更高时上方留空
-                    colorFilter = ColorFilter.tint(pageBg),   // 轮廓填成页面底色 → 遮住背后装饰
-                    modifier = Modifier.matchParentSize(),
-                )
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = ContentScale.FillWidth,
-                    alignment = Alignment.BottomCenter,
-                    colorFilter = desaturate,                 // 拉一点灰度
-                    alpha = 0.18f,                            // 薄薄的水印,略回正一点
-                    modifier = Modifier.matchParentSize(),
-                )
+            if (bitmap != null) {
+                Box(Modifier.fillMaxSize()) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillWidth,   // 满宽、保持比例、不拉伸
+                        alignment = Alignment.BottomCenter,       // 贴底;区域更高时上方留空
+                        colorFilter = ColorFilter.tint(pageBg),   // 轮廓填成页面底色 → 遮住背后装饰
+                        modifier = Modifier.matchParentSize(),
+                    )
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillWidth,
+                        alignment = Alignment.BottomCenter,
+                        colorFilter = desaturate,                 // 拉一点灰度
+                        alpha = 0.18f,                            // 薄薄的水印,略回正一点
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
             }
         }
         return
@@ -316,14 +322,55 @@ fun EmptyStateArt(kind: EmptyArtKind, modifier: Modifier = Modifier, refreshKey:
     // small centered box. Softened (slight desaturation + alpha) so it reads as a gentle decoration
     // rather than a sharp attention-grabbing focal point.
     val softenB = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.8f) }) }
-    Image(
-        painter = painterResource(R.drawable.mascot_empty),
-        contentDescription = null,
-        contentScale = ContentScale.Fit,
-        alpha = 0.85f,
-        colorFilter = softenB,
-        modifier = modifier.clearAndSetSemantics {},
-    )
+    val emptyBitmap = rememberMascotBitmap(R.drawable.mascot_empty)
+    if (emptyBitmap != null) {
+        Image(
+            bitmap = emptyBitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            alpha = 0.85f,
+            colorFilter = softenB,
+            modifier = modifier.clearAndSetSemantics {},
+        )
+    }
+}
+
+private val mascotBitmapCache =
+    java.util.concurrent.ConcurrentHashMap<Int, androidx.compose.ui.graphics.ImageBitmap>()
+
+/**
+ * Mascot art decoded off the main thread and downsampled to a watermark-appropriate width, cached by
+ * resource id. Returns null until ready, so the first frame is never blocked on a multi-megabyte
+ * bitmap decode — which is what made Home startup and start/stop drop frames.
+ */
+@Composable
+private fun rememberMascotBitmap(resId: Int): androidx.compose.ui.graphics.ImageBitmap? {
+    val context = LocalContext.current
+    val produced by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = mascotBitmapCache[resId],
+        key1 = resId,
+    ) {
+        if (value == null) {
+            value = withContext(Dispatchers.Default) {
+                mascotBitmapCache.getOrPut(resId) { decodeSampledMascot(context, resId, 800) }
+            }
+        }
+    }
+    return produced
+}
+
+/** Decode [resId] at the largest power-of-two subsample whose width still covers [reqWidth]. */
+private fun decodeSampledMascot(
+    context: android.content.Context,
+    resId: Int,
+    reqWidth: Int,
+): androidx.compose.ui.graphics.ImageBitmap {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeResource(context.resources, resId, bounds)
+    var sample = 1
+    while (bounds.outWidth > 0 && bounds.outWidth / (sample * 2) >= reqWidth) sample *= 2
+    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    return android.graphics.BitmapFactory.decodeResource(context.resources, resId, opts).asImageBitmap()
 }
 
 /** 系统"减少动画"是否开启(ANIMATOR_DURATION_SCALE == 0)。故障效果据此降级为静态。 */

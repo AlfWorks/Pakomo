@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,9 +35,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,9 +57,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,12 +85,17 @@ import com.alphynia.pakomo.forwarding.FlowLog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -89,39 +107,130 @@ import com.alphynia.pakomo.ui.theme.ThemeMode
 import com.alphynia.pakomo.ui.theme.t
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+
+private val BYTE_THRESHOLDS = listOf(0L, 1_024L, 10_240L, 102_400L, 1_048_576L, 10_485_760L)
+private val BYTE_LABELS = listOf("0 B", "1 KB", "10 KB", "100 KB", "1 MB", "10 MB")
 
 @Composable
 fun DiagnosticsScreen(
     state: PakomoUiState,
     onBack: () -> Unit,
 ) {
+    val colors = LocalPakomoColors.current
     var tab by rememberSaveable { mutableStateOf(0) }
+    // Traffic-tab filter, lifted so search/filter live in the top bar (PCAPdroid-style).
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var showFilter by rememberSaveable { mutableStateOf(false) }
+    var showActive by rememberSaveable { mutableStateOf(true) }
+    var showClosed by rememberSaveable { mutableStateOf(true) }
+    var shapedOnly by rememberSaveable { mutableStateOf(false) }
+    var heldOnly by rememberSaveable { mutableStateOf(false) }
+    var minBytesIdx by rememberSaveable { mutableStateOf(0) }
+    val onTraffic = tab == 0
+    val filterActive = !showActive || !showClosed || shapedOnly || heldOnly || minBytesIdx > 0
+    // Auto-focus the search field (and pop the IME) the moment search opens.
+    val searchFocus = remember { FocusRequester() }
+    LaunchedEffect(searching) {
+        if (searching) runCatching { searchFocus.requestFocus() }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding(),
     ) {
-        ScreenHeader(title = t("日志与诊断", "Logs & Diagnostics"), onBack = onBack)
+        ScreenHeader(
+            title = if (onTraffic) t("流量", "Traffic") else t("诊断", "Diagnostics"),
+            onBack = if (searching) ({ searching = false; query = "" }) else onBack,
+            titleContent = if (searching && onTraffic) {
+                {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = colors.textPrimary,
+                            fontSize = 16.sp,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
+                        decorationBox = { inner ->
+                            if (query.isEmpty()) {
+                                Text(
+                                    t("搜索主机 / 端口 / 协议", "Search host / port / proto"),
+                                    color = colors.muted,
+                                    fontSize = 16.sp,
+                                )
+                            }
+                            inner()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(searchFocus),
+                    )
+                }
+            } else {
+                null
+            },
+            action = {
+                if (onTraffic) {
+                    if (searching) {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Rounded.Close, t("清除", "Clear"), tint = colors.textSecondary)
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = { searching = true }) {
+                            Icon(Icons.Rounded.Search, t("搜索", "Search"), tint = colors.textPrimary)
+                        }
+                    }
+                    IconButton(onClick = { showFilter = true }) {
+                        Icon(
+                            Icons.Rounded.FilterList,
+                            t("过滤", "Filter"),
+                            tint = if (filterActive) colors.accent else colors.textPrimary,
+                        )
+                    }
+                }
+            },
+        )
         DiagTabRow(
-            tabs = listOf(t("诊断", "Diagnostics"), t("流量", "Traffic")),
+            tabs = listOf(t("流量", "Traffic"), t("诊断", "Diagnostics")),
             selected = tab,
             onSelect = { tab = it },
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
-                0 -> DiagnosticsContent(state)
-                else -> FlowsContent()
+                0 -> FlowsContent(query, showActive, showClosed, shapedOnly, heldOnly, BYTE_THRESHOLDS[minBytesIdx])
+                else -> DiagnosticsContent(state)
             }
         }
+    }
+
+    if (showFilter) {
+        TrafficFilterDialog(
+            showActive = showActive, showClosed = showClosed,
+            shapedOnly = shapedOnly, heldOnly = heldOnly, minBytesIdx = minBytesIdx,
+            onChange = { a, c, s, h, b ->
+                showActive = a; showClosed = c; shapedOnly = s; heldOnly = h; minBytesIdx = b
+            },
+            onReset = {
+                showActive = true; showClosed = true; shapedOnly = false; heldOnly = false; minBytesIdx = 0
+            },
+            onDismiss = { showFilter = false },
+        )
     }
 }
 
@@ -179,126 +288,354 @@ private fun DiagTabRow(tabs: List<String>, selected: Int, onSelect: (Int) -> Uni
 }
 
 @Composable
-private fun FlowsContent() {
+private fun FlowsContent(
+    query: String,
+    showActive: Boolean,
+    showClosed: Boolean,
+    shapedOnly: Boolean,
+    heldOnly: Boolean,
+    minBytes: Long,
+) {
     val colors = LocalPakomoColors.current
     val flows by FlowLog.flows.collectAsState()
-    var query by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(flows, query) {
+    // Tapping a row opens its detail sheet. Keep the id (not the snapshot) so the sheet tracks the
+    // live record as pulses update it, and closes on its own if the flow is evicted from the ring.
+    var selectedId by remember { mutableStateOf<Long?>(null) }
+    val selectedFlow = selectedId?.let { id -> flows.firstOrNull { it.id == id } }
+    val filtered = remember(flows, query, showActive, showClosed, shapedOnly, heldOnly, minBytes) {
         val q = query.trim()
-        if (q.isEmpty()) flows
-        else flows.filter {
-            it.host.contains(q, ignoreCase = true) ||
-                it.port.toString().contains(q) ||
-                it.protocol.contains(q, ignoreCase = true)
+        flows.filter { f ->
+            (q.isEmpty() ||
+                f.host.contains(q, ignoreCase = true) ||
+                f.port.toString().contains(q) ||
+                f.protocol.contains(q, ignoreCase = true)) &&
+                (if (f.status == FlowStatus.ACTIVE) showActive else showClosed) &&
+                (!shapedOnly || f.shaped) &&
+                (!heldOnly || f.held) &&
+                (f.uploadBytes + f.downloadBytes >= minBytes)
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 18.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                label = {
-                    Text(
-                        text = t("按主机 / 端口 / 协议筛选", "Filter host / port / proto"),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
+            Text(
+                text = t("共 ${filtered.size} / ${flows.size} 条", "${filtered.size} / ${flows.size} flows"),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.muted,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
             )
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = { FlowLog.clear() }) { Text(t("清空", "Clear")) }
-        }
-        Text(
-            text = t("共 ${filtered.size} / ${flows.size} 条", "${filtered.size} / ${flows.size} flows"),
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.muted,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-        )
-        if (flows.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = t("开启接管后,经过 Pakomo 的连接会显示在这里。", "Connections through Pakomo appear here once capture is on."),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.muted,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(32.dp),
+            if (flows.isNotEmpty()) {
+                Icon(
+                    Icons.Rounded.DeleteSweep,
+                    contentDescription = t("清空", "Clear all"),
+                    tint = colors.muted,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable { FlowLog.clear() },
                 )
             }
-        } else {
-            LazyColumn(
+        }
+        when {
+            flows.isEmpty() -> EmptyFlowHint(
+                t("开启接管后,经过 Pakomo 的连接会显示在这里。", "Connections through Pakomo appear here once capture is on."),
+            )
+            filtered.isEmpty() -> EmptyFlowHint(t("没有符合筛选条件的连接。", "No flows match the current filter."))
+            else -> LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = 16.dp, end = 16.dp, bottom = 16.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(filtered, key = { it.id }) { flow -> FlowRow(flow) }
+                items(filtered, key = { it.id }) { flow ->
+                    FlowRow(flow, onClick = { selectedId = flow.id })
+                }
             }
         }
+    }
+    if (selectedFlow != null) {
+        FlowDetailSheet(flow = selectedFlow, onDismiss = { selectedId = null })
+    }
+}
+
+@Composable
+private fun ColumnScope.EmptyFlowHint(text: String) {
+    val colors = LocalPakomoColors.current
+    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.muted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(32.dp),
+        )
+    }
+}
+
+@Composable
+private fun TrafficFilterDialog(
+    showActive: Boolean,
+    showClosed: Boolean,
+    shapedOnly: Boolean,
+    heldOnly: Boolean,
+    minBytesIdx: Int,
+    onChange: (Boolean, Boolean, Boolean, Boolean, Int) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = LocalPakomoColors.current
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(colors.surface)
+                .border(1.dp, colors.border, RoundedCornerShape(20.dp))
+                .padding(20.dp),
+        ) {
+            Text(
+                t("过滤流量", "Filter flows"),
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(18.dp))
+
+            Text(t("状态", "Status"), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterPill(t("活跃", "Active"), showActive) {
+                    onChange(!showActive, showClosed, shapedOnly, heldOnly, minBytesIdx)
+                }
+                FilterPill(t("已关闭", "Closed"), showClosed) {
+                    onChange(showActive, !showClosed, shapedOnly, heldOnly, minBytesIdx)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            Text(t("标记", "Flags"), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterPill(t("已整形", "Shaped"), shapedOnly) {
+                    onChange(showActive, showClosed, !shapedOnly, heldOnly, minBytesIdx)
+                }
+                FilterPill(t("已暂扣", "Held"), heldOnly) {
+                    onChange(showActive, showClosed, shapedOnly, !heldOnly, minBytesIdx)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                t("字节阈值 ≥ ", "Min bytes ≥ ") + BYTE_LABELS[minBytesIdx],
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textSecondary,
+            )
+            Slider(
+                value = minBytesIdx.toFloat(),
+                onValueChange = {
+                    onChange(
+                        showActive, showClosed, shapedOnly, heldOnly,
+                        it.roundToInt().coerceIn(0, BYTE_THRESHOLDS.size - 1),
+                    )
+                },
+                valueRange = 0f..(BYTE_THRESHOLDS.size - 1).toFloat(),
+                steps = BYTE_THRESHOLDS.size - 2,
+                colors = androidx.compose.material3.SliderDefaults.colors(
+                    thumbColor = colors.accent,
+                    activeTrackColor = colors.accent,
+                    inactiveTrackColor = colors.scopeTrack,
+                ),
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    t("重置", "Reset"),
+                    color = colors.textSecondary,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onReset)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    t("完成", "Done"),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.accent)
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = LocalPakomoColors.current
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) colors.accentTint else colors.scopeTrack)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (selected) colors.accent else colors.textSecondary,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
     }
 }
 
 private val FLOW_TIME_FORMAT = java.text.SimpleDateFormat("HH:mm:ss", Locale.US)
 
 @Composable
-private fun FlowRow(flow: FlowRecord) {
+private fun FlowRow(flow: FlowRecord, onClick: () -> Unit) {
     val colors = LocalPakomoColors.current
+    val context = LocalContext.current
+    // Owning-app icon shown as a small tag on the stats row (below) — not the host row — so the source
+    // is identifiable without crowding the host and without overlap. Loaded off the main thread: a
+    // cache hit shows instantly, a miss (getApplicationIcon + rasterize) resolves in the background so
+    // it never blocks a scroll frame.
+    var iconState by remember(flow.pkg) { mutableStateOf(flowIconCache[flow.pkg]) }
+    if (iconState == null && flow.pkg.isNotEmpty()) {
+        // Cache miss only: decode off the main thread. A cache hit needs no coroutine at all, so a
+        // fast fling doesn't launch (and dispatch) one per row.
+        LaunchedEffect(flow.pkg) {
+            iconState = withContext(Dispatchers.Default) { appIconBitmap(context, flow.pkg) }
+        }
+    }
+    val icon = iconState
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(colors.surface, RoundedCornerShape(10.dp))
+            // Clip so the tap ripple is bounded to the rounded card; the row is tappable to open its
+            // detail sheet.
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.surface)
             .border(1.dp, colors.border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 9.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            FlowTag(flow.protocol, colors.accent)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "${flow.host}:${flow.port}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.textPrimary,
-                fontFamily = FontFamily.Monospace,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = FLOW_TIME_FORMAT.format(java.util.Date(flow.startedAtMs)),
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.muted,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
-        Spacer(Modifier.height(5.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "↑ ${formatFlowBytes(flow.uploadBytes)}   ↓ ${formatFlowBytes(flow.downloadBytes)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.textSecondary,
-                fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.weight(1f))
-            if (flow.held) FlowTag(t("已暂扣", "held"), colors.warningStrong)
-            if (flow.shaped) {
-                Spacer(Modifier.width(6.dp))
-                FlowTag(t("整形", "shaped"), colors.muted)
+            Row(verticalAlignment = Alignment.Top) {
+                FlowTag(flow.protocol, colors.accent)
+                Spacer(Modifier.width(8.dp))
+                // Address fixed to two lines: the subdomain prefix on top (dimmed), the registrable
+                // domain + port below (emphasized). A long host never overflows — its prefix line
+                // ellipsizes — and the important "where it went" keeps its own bold line.
+                val hostParts = remember(flow.host) { splitHost(flow.host) }
+                val coreText = remember(flow.host, flow.port, colors) {
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = colors.textPrimary, fontWeight = FontWeight.Medium)) {
+                            append(hostParts.core)
+                        }
+                        withStyle(SpanStyle(color = colors.muted)) { append(":${flow.port}") }
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    if (hostParts.prefix.isNotEmpty()) {
+                        Text(
+                            text = hostParts.prefix,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.muted,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Text(
+                        text = coreText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = if (flow.status == FlowStatus.ACTIVE) t("进行中", "active") else t("已结束", "closed"),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (flow.status == FlowStatus.ACTIVE) colors.accent else colors.muted,
-            )
+            Spacer(Modifier.height(5.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val iconBitmap = icon
+                if (iconBitmap != null) {
+                    Image(
+                        bitmap = iconBitmap,
+                        contentDescription = flow.pkg,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(5.dp)),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    text = "↑ ${formatFlowBytes(flow.uploadBytes)}   ↓ ${formatFlowBytes(flow.downloadBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+                Spacer(Modifier.weight(1f))
+                if (flow.held) FlowTag(t("已暂扣", "held"), colors.warningStrong)
+                if (flow.shaped) {
+                    Spacer(Modifier.width(6.dp))
+                    FlowTag(t("整形", "shaped"), colors.muted)
+                }
+                Spacer(Modifier.width(8.dp))
+                // Status as a small colour dot (accent = active, muted = closed) rather than a text
+                // label — saves the width that was squeezing bytes and the timestamp.
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(
+                            if (flow.status == FlowStatus.ACTIVE) colors.accent else colors.muted,
+                            RoundedCornerShape(50),
+                        ),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = FLOW_TIME_FORMAT.format(java.util.Date(flow.startedAtMs)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.muted,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
         }
     }
+
+private val flowIconCache = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+
+/** The owning app's launcher icon as an [ImageBitmap], cached by package; null when unavailable. */
+private fun appIconBitmap(context: android.content.Context, pkg: String): androidx.compose.ui.graphics.ImageBitmap? {
+    if (pkg.isEmpty()) return null
+    flowIconCache[pkg]?.let { return it }
+    val bitmap = runCatching {
+        val drawable = context.packageManager.getApplicationIcon(pkg)
+        val px = 72
+        val bmp = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, px, px)
+        drawable.draw(android.graphics.Canvas(bmp))
+        bmp.asImageBitmap()
+    }.getOrNull() ?: return null
+    if (flowIconCache.size >= 128) flowIconCache.clear()
+    flowIconCache[pkg] = bitmap
+    return bitmap
 }
 
 @Composable
@@ -311,6 +648,296 @@ private fun FlowTag(text: String, color: Color) {
             .background(color.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
+}
+
+private val FLOW_DETAIL_TIME_FORMAT =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+private val appLabelCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+/** The owning app's user-visible label, cached by package; falls back to the package name. */
+private fun appLabelFor(context: android.content.Context, pkg: String): String {
+    if (pkg.isEmpty()) return ""
+    appLabelCache[pkg]?.let { return it }
+    val label = runCatching {
+        val pm = context.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    }.getOrNull() ?: pkg
+    appLabelCache[pkg] = label
+    return label
+}
+
+/** A coarse layer-7 guess from the destination port, for the detail view's protocol line. */
+private fun l7ForPort(port: Int): String? = when (port) {
+    443 -> "HTTPS"
+    80, 8080 -> "HTTP"
+    53 -> "DNS"
+    22 -> "SSH"
+    21 -> "FTP"
+    25, 465, 587 -> "SMTP"
+    993 -> "IMAPS"
+    995 -> "POP3S"
+    else -> null
+}
+
+private fun flowProtocolLabel(flow: FlowRecord): String {
+    val l7 = l7ForPort(flow.port)
+    return if (l7 != null && l7 != flow.protocol) "$l7 (${flow.protocol})" else flow.protocol
+}
+
+private fun flowDurationText(flow: FlowRecord): String {
+    val end = if (flow.closedAtMs > 0) flow.closedAtMs else System.currentTimeMillis()
+    val ms = (end - flow.startedAtMs).coerceAtLeast(0)
+    return if (ms < 1000) "$ms ms" else String.format(java.util.Locale.US, "%.1f s", ms / 1000.0)
+}
+
+/** Tap-to-open connection details, shown as a bottom sheet over the list (no page switch). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FlowDetailSheet(flow: FlowRecord, onDismiss: () -> Unit) {
+    val colors = LocalPakomoColors.current
+    val context = LocalContext.current
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = colors.surface) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            // Header = the owning app (icon + name), identical for IP and domain flows. All of the
+            // destination info lives in labelled rows below, so the two look consistent.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val appIcon = remember(flow.pkg) { appIconBitmap(context, flow.pkg) }
+                if (appIcon != null) {
+                    Image(
+                        bitmap = appIcon,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                Text(
+                    text = appLabelFor(context, flow.pkg).ifEmpty { t("未知", "Unknown") },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+
+            DetailRow(t("协议", "Protocol"), flowProtocolLabel(flow))
+            if (flow.sourceIp.isNotEmpty()) {
+                DetailRow(t("源", "Source"), "${flow.sourceIp}:${flow.sourcePort}", copyable = true)
+            }
+            // Only present when a name is known (host differs from the raw IP): the requested domain,
+            // from TLS SNI / HTTP Host sniffing or observed DNS. Split into two lines like the list.
+            if (flow.destIp.isNotEmpty() && flow.destIp != flow.host) {
+                DetailHostRow(t("SNI / 域名", "SNI / Host"), flow.host)
+            }
+            // Always shown so IP flows have a destination too: the real endpoint IP:port.
+            DetailRow(
+                t("目的地", "Destination"),
+                "${flow.destIp.ifEmpty { flow.host }}:${flow.port}",
+                copyable = true,
+            )
+            DetailRow(
+                t("状态", "Status"),
+                if (flow.status == FlowStatus.ACTIVE) t("进行中", "Active") else t("已结束", "Closed"),
+                mono = false,
+            )
+
+            // DNS flows carry many lookups over one association; list each queried domain and the
+            // IPs it resolved to here.
+            if (flow.dnsQueries.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = colors.border)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = t("查询域名 (${flow.dnsQueries.size})", "Queried (${flow.dnsQueries.size})"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.textSecondary,
+                )
+                Spacer(Modifier.height(6.dp))
+                val copyQuery = rememberCopyAction()
+                flow.dnsQueries.forEach { query ->
+                    // Tap a queried domain to copy it — e.g. to paste into a Pakomo rule.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { copyQuery(query.name) }
+                            .padding(top = 4.dp, bottom = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = query.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.textPrimary,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.weight(1f),
+                        )
+                        CopyHint()
+                    }
+                    if (query.ips.isNotEmpty()) {
+                        Text(
+                            text = "→ ${query.ips.joinToString("   ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.accent,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = colors.border)
+            Spacer(Modifier.height(10.dp))
+
+            DetailRow(
+                t("流量", "Traffic"),
+                "↑ ${formatFlowBytes(flow.uploadBytes)}   ↓ ${formatFlowBytes(flow.downloadBytes)}",
+            )
+            DetailRow(t("载荷", "Payload"), formatFlowBytes(flow.uploadBytes + flow.downloadBytes))
+            DetailRow(t("持续时间", "Duration"), flowDurationText(flow))
+            DetailRow(t("第一次见", "First seen"), FLOW_DETAIL_TIME_FORMAT.format(java.util.Date(flow.startedAtMs)))
+
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = colors.border)
+            Spacer(Modifier.height(10.dp))
+
+            Text(
+                text = t("Pakomo 处理", "Pakomo effects"),
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textSecondary,
+            )
+            Spacer(Modifier.height(6.dp))
+            DetailRow(t("整形", "Shaped"), if (flow.shaped) t("是", "Yes") else t("否", "No"), mono = false)
+            DetailRow(t("暂扣", "Held"), if (flow.held) t("是", "Yes") else t("否", "No"), mono = false)
+        }
+    }
+}
+
+/** Returns a copy action: writes [text] to the clipboard and confirms with a toast. */
+@Composable
+private fun rememberCopyAction(): (String) -> Unit {
+    val context = LocalContext.current
+    val copiedLabel = t("已复制", "Copied")
+    return remember(context, copiedLabel) {
+        { text: String ->
+            val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            clip?.setPrimaryClip(android.content.ClipData.newPlainText("Pakomo", text))
+            // Android 13+ shows its own copy confirmation; don't stack a second toast on top.
+            if (Build.VERSION.SDK_INT < 33) {
+                Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+/** A small trailing copy affordance for copyable detail rows. */
+@Composable
+private fun CopyHint() {
+    Icon(
+        imageVector = Icons.Rounded.ContentCopy,
+        contentDescription = t("复制", "Copy"),
+        tint = LocalPakomoColors.current.muted,
+        modifier = Modifier
+            .padding(start = 8.dp)
+            .size(14.dp),
+    )
+}
+
+@Composable
+private fun DetailRow(label: String, value: String, mono: Boolean = true, copyable: Boolean = false) {
+    val colors = LocalPakomoColors.current
+    val copy = rememberCopyAction()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (copyable) Modifier.clickable { copy(value) } else Modifier)
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.muted,
+            modifier = Modifier.width(88.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.textPrimary,
+            fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+            modifier = Modifier.weight(1f),
+        )
+        if (copyable) CopyHint()
+    }
+}
+
+/** A detail row whose value is a host, split into two lines (subdomain / registrable) like the list. */
+@Composable
+private fun DetailHostRow(label: String, host: String) {
+    val colors = LocalPakomoColors.current
+    val parts = remember(host) { splitHost(host) }
+    val copy = rememberCopyAction()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { copy(host) }
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.muted,
+            modifier = Modifier.width(88.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            if (parts.prefix.isNotEmpty()) {
+                Text(
+                    text = parts.prefix,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.muted,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+            Text(
+                text = parts.core,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textPrimary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        CopyHint()
+    }
+}
+
+private data class HostParts(val prefix: String, val core: String)
+
+/**
+ * Splits a host into a de-emphasizable subdomain prefix and the recognizable registrable domain
+ * (kept whole so "where it went" stays legible). IPs and single-label hosts are all "core".
+ * Heuristic eTLD+1: keep 3 labels when the last is a short ccTLD over a common second level
+ * (e.g. vivo.com.cn), otherwise 2 (e.g. google.com).
+ */
+private fun splitHost(host: String): HostParts {
+    if (host.isEmpty() || !host.contains('.') || host.all { it.isDigit() || it == '.' }) {
+        return HostParts("", host)
+    }
+    val labels = host.split('.')
+    val commonSld = setOf("com", "net", "org", "gov", "edu", "co", "ac")
+    val coreCount = (
+        if (labels.size >= 3 && labels.last().length <= 2 && labels[labels.size - 2] in commonSld) 3 else 2
+        ).coerceAtMost(labels.size)
+    val core = labels.takeLast(coreCount).joinToString(".")
+    val prefix = labels.dropLast(coreCount).joinToString(".").let { if (it.isEmpty()) "" else "$it." }
+    return HostParts(prefix, core)
 }
 
 private fun formatFlowBytes(bytes: Long): String = when {

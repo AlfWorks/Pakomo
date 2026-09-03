@@ -12,6 +12,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -83,7 +85,6 @@ import com.alphynia.pakomo.ui.theme.LocalThemeMode
 import com.alphynia.pakomo.ui.theme.PakomoColors
 import com.alphynia.pakomo.ui.theme.ThemeMode
 import com.alphynia.pakomo.ui.theme.t
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import kotlin.math.cos
@@ -187,23 +188,27 @@ internal fun HomeScreen(
     val colors = LocalPakomoColors.current
     val decorated = LocalThemeMode.current == ThemeMode.Companion
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .then(
-                if (decorated) {
-                    Modifier.drawBehind { drawCompanionBackdrop(colors) }
-                } else {
-                    Modifier
-                },
-            )
-            .statusBarsPadding(),
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Companion backdrop on its own cached graphics layer: it's static, so isolating it means a
+        // content animation (e.g. the start/stop traffic-card expand) invalidates only the content
+        // layer, not the backdrop — it no longer re-runs its ~12 hex-path allocations every frame.
+        if (decorated) {
+            Canvas(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer(),
+            ) { drawCompanionBackdrop(colors) }
+        }
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .fillMaxSize()
+                .statusBarsPadding(),
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            ) {
             Spacer(Modifier.height(14.dp))
             Text(
                 text = "Pakomo",
@@ -220,14 +225,18 @@ internal fun HomeScreen(
             )
             AnimatedVisibility(
                 visible = state.engineStage == EngineStage.FORWARDING,
+                // Longer, eased reveal: the engine spins up on its own threads at this instant and can
+                // steal a few frames from the UI, so a short 180ms expand reads as a snap. A ~320ms
+                // eased expand has enough frames to absorb those drops and settle smoothly once the
+                // start burst clears.
                 enter = expandVertically(
-                    animationSpec = tween(180),
+                    animationSpec = tween(320, easing = FastOutSlowInEasing),
                     expandFrom = Alignment.Top,
-                ) + fadeIn(animationSpec = tween(100)),
+                ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)),
                 exit = shrinkVertically(
-                    animationSpec = tween(160),
+                    animationSpec = tween(260, easing = FastOutSlowInEasing),
                     shrinkTowards = Alignment.Top,
-                ) + fadeOut(animationSpec = tween(90)),
+                ) + fadeOut(animationSpec = tween(150)),
             ) {
                 Column {
                     Spacer(Modifier.height(12.dp))
@@ -281,7 +290,7 @@ internal fun HomeScreen(
                 )
                 NavigationRow(
                     icon = Icons.Rounded.BugReport,
-                    title = t("日志", "Logs"),
+                    title = t("流量", "Traffic"),
                     onClick = onOpenDiagnostics,
                     showArrow = false,
                 )
@@ -293,6 +302,7 @@ internal fun HomeScreen(
                 )
             }
         }
+    }
     }
 
 }

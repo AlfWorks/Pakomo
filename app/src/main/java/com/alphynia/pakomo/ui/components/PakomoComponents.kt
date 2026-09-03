@@ -83,6 +83,8 @@ fun ScreenHeader(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
