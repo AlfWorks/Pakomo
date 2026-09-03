@@ -23,7 +23,9 @@ App initiates a connection
        on a shaping or slow-response hit: apply it on the relay pump
   → the protect()-ed outbound socket connects to the target server
   → downstream data returns to the app through the relay (possibly shaped or held)
-  → FlowLog records the connection (protocol, host, port, up/down bytes, whether held, whether shaped, status)
+  → FlowLog records the connection (protocol, display host, port, up/down bytes, whether held/shaped,
+    status, owning app, source/destination IP:port, close time; DNS flows also record the domains
+    queried and the IPs they resolved to)
 ```
 
 ## 3. Attribution and domain learning
@@ -32,6 +34,10 @@ App initiates a connection
 - **Domain matching**: `DomainRoutingPolicy` uses the TLS SNI suffix, plus IP matching against target IPs learned from plaintext DNS, to cover QUIC and no-SNI connections.
 - **DNS learning**: the relay reads plaintext DNS on the UDP response path via `observeDnsResponse`, learning domain-to-IP mappings across SOCKS sessions; DoH and DoT cannot be learned.
 - Shaping and faults reuse the same attributor to keep attribution consistent for one connection and avoid duplicate lookups (`AndroidConnectionAttributor` has an origin-to-packages cache).
+- **Display-side reverse lookup**: `DnsNameCache` learns IP→domain on the DNS response path (globally, independent of the shaping/fault domain learning) and, at flow open, maps the destination IP back to a domain for the traffic list — no sniffing, no blocking; when DoH/DoT or pre-capture cached resolution leaves it unknown, it falls back to the IP.
+- **Display-side attribution**: `AndroidConnectionAttributor.displayPackageFor` resolves the owning package of any app (not just the selected set) with a single, no-retry lookup for the traffic list's source label, avoiding the retry cost of the shaping/fault path and adding no setup latency.
+- **DNS query records**: a DNS flow is aggregated per resolver (`IP:53`); the request path records the queried names and the response path parses A records to record their results, so the connection detail lists each "domain → resolved IPs". IPv4 (A records) only.
+- **Snapshot reuse**: a closed connection's `FlowRecord` snapshot is built once and reused (reference-equal), so the once-per-second list refresh only rebuilds the few still-active connections — cutting GC churn as closed connections pile up.
 
 ## 4. Injection points for faults and shaping
 

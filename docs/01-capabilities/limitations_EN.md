@@ -18,13 +18,15 @@ Pakomo does not support application-layer content faults. HTTP 404/500/503, malf
 - Pakomo only handles the plaintext UDP 53 queries visible in the tunnel; TCP-53 DNS, DoH, DoT, and an app's own encrypted resolution are not guaranteed for now.
 - If an app bypasses system plaintext DNS entirely, a domain-level DNS fault may not be hit.
 - The content of DoH and DoT cannot be modified by query domain, and their target IPs cannot be learned from plaintext DNS, so a domain-level connection fault may not hit them.
+- The DNS query results in the connection details parse A records only (IPv4); AAAA (IPv6) is not parsed, so a domain resolved solely via AAAA shows its name with no result IPs.
+- The capture-scope domain/address input accepts a raw IPv4, but a TLS connection carrying an SNI is still matched by its SNI domain; a raw IP only matches connections with no observable domain (QUIC, no-SNI TCP, direct IP) by destination IP, and IPv6 entry is not accepted.
 - When a DNS cache already exists the app may not issue a query, and a DNS failure cannot change the cached result; the "block connections after caching" switch is needed.
 - DNS timeouts are governed by the resolver's retry policy and can be noticeably slower than the TCP silent timeout.
 
 ## QUIC and UDP
 
 - QUIC has no TCP RST; dropping UDP 443 does not guarantee the app falls back to TCP.
-- The per-connection traffic log (FlowLog) records TCP only, and does not show UDP, QUIC, or ICMP.
+- The per-connection traffic log (FlowLog) records TCP and UDP/QUIC/DNS, but not ICMP.
 
 ## Application error codes
 

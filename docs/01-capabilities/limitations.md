@@ -22,13 +22,16 @@ Pakomo 不支持应用层内容故障。HTTP 404/500/503、非法 JSON、空响�
 - Pakomo 只处理隧道中可见的明文 UDP 53 查询；TCP 53 DNS、DoH、DoT 以及应用自带的加密解析暂不保证。
 - 如果应用完全绕过系统明文 DNS，域名级 DNS 故障可能无法命中。
 - DoH 与 DoT 的内容无法按查询域名修改，其目标 IP 也无法从明文 DNS 学习到，域名级连接故障对其可能不命中。
+- 连接详情里的 DNS 查询结果只解析 A 记录（IPv4）；AAAA（IPv6）不解析，仅经 AAAA 解析的域名会只显名字、无结果 IP。
+- 接管范围的域名/地址输入接受 IPv4 直填，但带 SNI 的 TLS 连接仍按 SNI 域名匹配；直填的 IP 只对拿不到域名的连接
+  （QUIC、无 SNI 的 TCP、纯 IP 直连）按目的 IP 命中，IPv6 直填不被接受。
 - 已有 DNS 缓存时应用可能不再发起查询，DNS 失败无法改变缓存结果，需开启"阻止缓存后的连接"开关。
 - DNS 超时由解析器的重试策略决定，可能明显慢于 TCP 静默超时。
 
 ## QUIC 与 UDP
 
 - QUIC 没有 TCP RST；丢弃 UDP 443 不保证应用回落到 TCP。
-- 逐连接流量记录（FlowLog）只记录 TCP，不显示 UDP、QUIC 与 ICMP。
+- 逐连接流量记录（FlowLog）记录 TCP 与 UDP/QUIC/DNS，但不含 ICMP。
 
 ## 应用错误码
 

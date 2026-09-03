@@ -20,10 +20,19 @@ This document explains how Pakomo's implemented UI presents its capabilities. Fo
 | Rule list | `RulesScreen.kt` | Rule cards use single choice, with quantified parameters (e.g. `300ms · jitter 100ms · loss 5% · 512/128 Kbps`); a three-dot menu offers edit, duplicate, and delete; built-in rules are read-only |
 | Rule editor | `RuleEditorScreen.kt` | Latency, jitter, packet loss, and up/down rate limiting, distinguishing simple and advanced modes; the special-fault entry is at the bottom |
 | Special-fault targets | `SpecialFaultScreens.kt` | Enabling and parameters for the four faults (DNS result, outage behavior, slow-response duration and release threshold), plus selecting app and domain targets |
-| Diagnostics & traffic | `UtilityScreens.kt` (`DiagnosticsScreen`) | The diagnostics tab shows live status, attribution hits, and Logcat; the traffic tab shows per-connection records, filterable by host, port, and protocol |
+| Traffic & diagnostics | `UtilityScreens.kt` (`DiagnosticsScreen`) | Default "Traffic" tab: per-connection records with a top-bar search and a filter panel; tapping a row opens a connection detail sheet. The "Diagnostics" tab shows live status, attribution hits, and Logcat |
 | Settings | `UtilityScreens.kt` (`SettingsScreen`) | Theme mode and language (Chinese and English, instant switching) |
 | Latency test | `LatencyTestScreen.kt` | Measures the target connection latency via the local SOCKS or a direct connection |
 | Floating quick control | `overlay/QuickControlService.kt` | Instantly toggles takeover via a floating ball; requires the `SYSTEM_ALERT_WINDOW` permission |
+
+## Traffic page and connection details
+
+"Traffic" is this screen's default tab (diagnostics is secondary).
+
+- **List row**: the destination domain is shown on two lines (a dimmed subdomain prefix on top, the emphasized registrable domain plus port below); a long domain stays on those two lines and never overflows the card. The name comes from TLS SNI / HTTP Host sniffing or observed plaintext DNS; when neither is available it falls back to the destination IP. The second line is metadata: the source app's icon (a small full-colour badge), up/down bytes, a status dot (active/closed), and the start time.
+- **Filtering**: a top-bar search box filters by host, port, and protocol; a filter panel offers active/closed, shaped-only, held-only, and a minimum-bytes threshold.
+- **Connection details**: tapping a row opens a bottom sheet (no page switch, `ModalBottomSheet`) with the app (icon and name), protocol (with a port-based L7 guess, e.g. `HTTPS (TCP)`), source `IP:port`, SNI / host (split into two lines), destination `IP:port`, status, traffic, payload, duration, first-seen time, and **Pakomo effects** (shaped, held). DNS flows additionally list the **domains queried and the IPs they resolved to**.
+- **Tap to copy**: the host, source, destination, and DNS-queried domains copy to the clipboard on tap, to paste into a capture scope or rule.
 
 ## Main control and status
 
