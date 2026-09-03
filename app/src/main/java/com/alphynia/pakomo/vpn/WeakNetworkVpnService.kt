@@ -500,7 +500,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
         return builder
     }
 
-    /** The address-scope targets when they are *all* literal IPv4 addresses, else null (a domain is present). */
+    /**
+     * The address-scope targets when they are *all* literal IPv4 addresses, else null. In practice a
+     * non-IPv4 target is always a domain: `DomainInputValidator` rejects IPv6 / v4-mapped literals at
+     * input (its `substringBefore(':')` truncates them into an invalid single-label host), so the
+     * broad-capture fallback below only ever applies to domains — never a silently-dropped IPv6 target.
+     */
     private fun literalIpv4Targets(targets: List<String>): List<String>? {
         val ips = ArrayList<String>(targets.size)
         for (target in targets) {
