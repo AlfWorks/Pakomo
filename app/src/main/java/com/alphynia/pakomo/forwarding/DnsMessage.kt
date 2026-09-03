@@ -147,12 +147,16 @@ object DnsMessage {
  * requested domain instead of a bare destination IP — without ever sniffing payloads or blocking the
  * relay. Populated on the DNS response path and read at flow open; bounded. Traffic the tunnel can't
  * see the DNS for (DoH / DoT) simply falls back to the IP.
+ *
+ * Display-only and best-effort, **last-write-wins**: the map is a single global IP→name with no
+ * per-flow, per-app or time binding. When one IP is resolved by several names — common for CDNs and
+ * shared hosting — whichever DNS answer arrived most recently wins, so any flow to that IP (even from
+ * a different app) can be labelled with a domain it did not request. This is an accepted cosmetic
+ * limitation of the label; the real destination IP is always kept on the flow (`destIp`).
  */
 object DnsNameCache {
     private const val MAX_ENTRIES = 4096
     private val ipToName = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    fun observe(payload: ByteArray) = record(DnsMessage.answers(payload))
 
     /** Populate the reverse cache from already-parsed (name → IP) answers, to avoid re-parsing. */
     fun record(answers: List<Pair<String, String>>) {

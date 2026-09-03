@@ -339,7 +339,10 @@ class Socks5Server(
                 pkg = sourcePkg,
                 sourceIp = origin?.sourceAddress?.hostAddress.orEmpty(),
                 sourcePort = origin?.sourcePort ?: 0,
-                destIp = origin?.destinationAddress?.hostAddress ?: request.host,
+                // Only a real destination IP: SOCKS5 request.host may be a DOMAIN, and destIp must not
+                // hold a name (the detail view shows it as an IP). Empty when the origin is unknown;
+                // the UI then falls back to the display host for the destination row.
+                destIp = origin?.destinationAddress?.hostAddress.orEmpty(),
             )
             flow.shaped = shapeTraffic
             try {

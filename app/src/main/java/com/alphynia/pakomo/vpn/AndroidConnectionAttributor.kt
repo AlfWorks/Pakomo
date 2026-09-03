@@ -79,8 +79,11 @@ class AndroidConnectionAttributor(
 
     /**
      * The owning package of a connection for the traffic list's source label — resolved for ANY
-     * app, not just the selected set. Best-effort: a single lookup with no retry, cached, so it
-     * never adds the setup latency the shaping/fault path guards against. Returns null when unknown.
+     * app, not just the selected set. Best-effort: a single `getConnectionOwnerUid` lookup with no
+     * retry (unlike the shaping/fault path), cached per origin. That one lookup does sit on the
+     * connection-setup path; it is an accepted ~sub-millisecond cost for the source label —
+     * negligible against the measured setup overhead, and constant overhead the latency
+     * compensation already absorbs. Returns null when unknown.
      */
     fun displayPackageFor(origin: ConnectionOrigin): String? {
         soleKnownPackage?.let { return it.first() }
