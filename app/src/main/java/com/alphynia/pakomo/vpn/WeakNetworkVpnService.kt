@@ -92,6 +92,17 @@ class WeakNetworkVpnService : android.net.VpnService() {
     // Interface language for user-visible service text (notification, scope labels shown in stats).
     // Read from preferences on demand; a mid-session language change applies from the next update.
     private val preferences by lazy { PakomoPreferences(this) }
+
+    // Display-only attribution for the traffic list's source label: resolves the owning app of ANY
+    // connection (empty known set), decoupled from the shaping/fault attributor so it never adds
+    // attribution cost to global / address scope. Constant across configs; best-effort.
+    private val displayAttributor by lazy {
+        AndroidConnectionAttributor(
+            connectivity = getSystemService(ConnectivityManager::class.java),
+            packageManager = packageManager,
+            knownPackages = emptyList(),
+        )
+    }
     private val appLanguage: AppLanguage
         get() = AppLanguage.fromName(preferences.readLanguage())
 
@@ -276,6 +287,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 faultPolicy = runtime.faultPolicy,
                 expectOriginPreamble = true,
                 compensateLatency = preferences.readLatencyCompensationEnabled(),
+                resolveSourcePackage = { origin -> origin?.let { displayAttributor.displayPackageFor(it) } },
             )
             val socksPort = localSocks.start()
             socksServer = localSocks

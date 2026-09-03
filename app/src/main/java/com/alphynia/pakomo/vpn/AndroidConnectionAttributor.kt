@@ -32,6 +32,11 @@ class AndroidConnectionAttributor(
     // makes the second lookup free and guarantees both layers see the same app(s). Bounded so a
     // long session's ever-changing ephemeral ports can't grow it without limit.
     private val originToPackages = ConcurrentHashMap<ConnectionOrigin, List<String>>()
+    // Display attribution for the traffic list: the owning package of ANY app (not filtered to the
+    // selected set), so a flow's source is shown even in global scope. Separate from the shaping/fault
+    // attribution above, and best-effort (single lookup, no retry) so it never adds setup latency.
+    private val originToDisplay = ConcurrentHashMap<ConnectionOrigin, String>()
+    private val uidToDisplay = ConcurrentHashMap<Int, String>()
     private val attempts = AtomicLong(0)
     private val misses = AtomicLong(0)
 
@@ -70,6 +75,38 @@ class AndroidConnectionAttributor(
         val selected = packages.filter { it in knownPackages }
         if (selected.isNotEmpty()) uidToPackages[uid] = selected
         return cacheOrigin(origin, selected)
+    }
+
+    /**
+     * The owning package of a connection for the traffic list's source label — resolved for ANY
+     * app, not just the selected set. Best-effort: a single lookup with no retry, cached, so it
+     * never adds the setup latency the shaping/fault path guards against. Returns null when unknown.
+     */
+    fun displayPackageFor(origin: ConnectionOrigin): String? {
+        soleKnownPackage?.let { return it.first() }
+        originToDisplay[origin]?.let { return it.ifBlank { null } }
+        val protocol = when (origin.protocol) {
+            ConnectionOrigin.PROTOCOL_TCP -> OsConstants.IPPROTO_TCP
+            ConnectionOrigin.PROTOCOL_UDP -> OsConstants.IPPROTO_UDP
+            else -> return null
+        }
+        val uid = runCatching {
+            connectivity.getConnectionOwnerUid(
+                protocol,
+                InetSocketAddress(origin.sourceAddress, origin.sourcePort),
+                InetSocketAddress(origin.destinationAddress, origin.destinationPort),
+            )
+        }.getOrDefault(INVALID_UID)
+        val pkg = if (uid == INVALID_UID) {
+            ""
+        } else {
+            uidToDisplay.getOrPut(uid) {
+                runCatching { packageManager.getPackagesForUid(uid)?.firstOrNull() }.getOrNull().orEmpty()
+            }
+        }
+        if (originToDisplay.size >= ORIGIN_CACHE_LIMIT) originToDisplay.clear()
+        originToDisplay[origin] = pkg
+        return pkg.ifBlank { null }
     }
 
     private fun cacheOrigin(origin: ConnectionOrigin, packages: List<String>): List<String> {

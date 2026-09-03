@@ -87,6 +87,9 @@ class Socks5Server(
     faultPolicy: FaultPolicy = FaultPolicy.NONE,
     private val expectOriginPreamble: Boolean = false,
     compensateLatency: Boolean = false,
+    // Resolves a connection's owning app package for the traffic list's source label (any app, not
+    // just the selected set). Best-effort; returns null when unknown. Default no-op for tests.
+    private val resolveSourcePackage: (ConnectionOrigin?) -> String? = { null },
 ) : AutoCloseable {
     // Swappable at runtime so a rule/domain edit takes effect on new connections without tearing
     // down the tunnel. New connections resolve against the current policy; existing flows keep the
@@ -200,6 +203,7 @@ class Socks5Server(
         // above sees it (write→read happens-before). HEV and the in-app probe record nothing → this
         // falls back to the SOCKS-side start, compensating only the SOCKS-visible overhead.
         val overheadBaseNanos = ConnectionSetupRegistry.take(client.port) ?: receivedNanos
+        val sourcePkg = resolveSourcePackage(origin) ?: ""
         val shaping = shapingPolicy.resolve(origin)
         val fault = faultPolicy.resolve(origin)
         if (!negotiateAuthentication(input, output)) {
@@ -216,8 +220,9 @@ class Socks5Server(
             return
         }
         when (request.command) {
-            COMMAND_CONNECT -> handleConnect(client, output, request, shaping, fault, overheadBaseNanos)
-            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping, fault)
+            COMMAND_CONNECT ->
+                handleConnect(client, output, request, shaping, fault, overheadBaseNanos, sourcePkg, origin)
+            COMMAND_UDP_ASSOCIATE -> handleUdpAssociate(client, output, shaping, fault, sourcePkg, origin)
             else -> writeReply(output, REPLY_COMMAND_NOT_SUPPORTED, null)
         }
     }
@@ -229,6 +234,8 @@ class Socks5Server(
         shaping: ConnectionShaping,
         fault: ConnectionFault,
         overheadBaseNanos: Long,
+        sourcePkg: String,
+        origin: ConnectionOrigin?,
     ) {
         val clientChannel = client.channel ?: run {
             writeReply(output, REPLY_GENERAL_FAILURE, null)
@@ -322,7 +329,18 @@ class Socks5Server(
                 null
             }
 
-            val flow = FlowLog.open("TCP", effectiveHost, request.port)
+            // Prefer the app's requested domain: the sniffed host, else the DNS-learned name for the
+            // destination IP, else the raw IP.
+            val displayHost = DnsNameCache.lookup(effectiveHost) ?: effectiveHost
+            val flow = FlowLog.open(
+                protocol = "TCP",
+                host = displayHost,
+                port = request.port,
+                pkg = sourcePkg,
+                sourceIp = origin?.sourceAddress?.hostAddress.orEmpty(),
+                sourcePort = origin?.sourcePort ?: 0,
+                destIp = origin?.destinationAddress?.hostAddress ?: request.host,
+            )
             flow.shaped = shapeTraffic
             try {
                 relay(
@@ -476,6 +494,8 @@ class Socks5Server(
         controlOutput: OutputStream,
         shaping: ConnectionShaping,
         fault: ConnectionFault,
+        sourcePkg: String,
+        origin: ConnectionOrigin?,
     ) {
         val controlChannel = checkNotNull(client.channel) {
             "UDP association requires a channel-backed control socket"
@@ -518,7 +538,15 @@ class Socks5Server(
                 DNS_PORT -> "DNS"
                 else -> "UDP"
             }
-            FlowLog.open(proto, host, port)
+            FlowLog.open(
+                protocol = proto,
+                host = DnsNameCache.lookup(host) ?: host,
+                port = port,
+                pkg = sourcePkg,
+                sourceIp = origin?.sourceAddress?.hostAddress.orEmpty(),
+                sourcePort = origin?.sourcePort ?: 0,
+                destIp = host,
+            )
         }
 
         try {
@@ -555,6 +583,7 @@ class Socks5Server(
                                     val shape = shaping.shouldShape(request.host, request.port)
                                     val flow = udpFlow(request.host, request.port)
                                     flow.up.addAndGet(request.payload.size.toLong())
+                                    if (dnsName != null) flow.addQueriedName(dnsName)
                                     if (shape) flow.shaped = true
                                     if (shape) {
                                         val decision = shaper.decide(
@@ -581,12 +610,19 @@ class Socks5Server(
                     handledPacket = true
                     val payload = responseBuffer.array().copyOf(responseBuffer.position())
                     val sourceHost = source.address.hostAddress.orEmpty()
-                    udpFlow(sourceHost, source.port).down.addAndGet(payload.size.toLong())
+                    val downFlow = udpFlow(sourceHost, source.port)
+                    downFlow.down.addAndGet(payload.size.toLong())
                     if (source.port == DNS_PORT) {
                         shaping.observeDnsResponse(payload)
                         // Let domain-scoped faults learn the target's IPs so they can match QUIC /
                         // no-SNI flows by destination IP, the same way domain shaping does.
                         fault.observeDnsResponse(payload)
+                        // Learn IP→domain so the traffic list can show the requested domain instead
+                        // of a bare IP (no sniffing, no blocking).
+                        val answers = DnsMessage.answers(payload)
+                        DnsNameCache.record(answers)
+                        // Attach the resolved answers to this DNS flow for its detail view.
+                        downFlow.addResolvedAnswers(answers)
                     }
                     val datagram = buildUdpPacket(source, payload)
                     if (shaping.shouldShape(sourceHost, source.port)) {
