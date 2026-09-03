@@ -165,7 +165,15 @@ class Tun2SocksEngine {
             existing.enqueue(seg)
             return
         }
-        if (!seg.isSyn || seg.isAck) return // non-SYN to unknown connection: drop
+        if (!seg.isSyn || seg.isAck) {
+            // Non-SYN (or SYN-ACK) to a connection we have no state for — typically a flow that was
+            // already established when the tunnel came up and got captured mid-stream. Reply with a
+            // RST (unless it is already a RST, to avoid a reset ping-pong) so the app's stale
+            // connection fails fast and re-establishes through the tunnel, instead of silently
+            // stalling until its own TCP timeout.
+            if (!seg.isRst) sendReset(packet, seg)
+            return
+        }
 
         // Limit total connections
         if (tcpConnections.size >= (config?.maxSessionCount ?: 1024)) return
@@ -190,6 +198,43 @@ class Tun2SocksEngine {
         tcpConnections[key] = conn
         conn.accept(seg.sequenceNumber)
         conn.startActor()
+    }
+
+    /**
+     * Sends a stateless RST back to the app for a segment on a connection we do not track (RFC 793
+     * §3.4): swap the 4-tuple and set seq/ack from the incoming segment. Used to fail mid-stream
+     * flows fast when the tunnel captures them, rather than dropping and letting them hang.
+     */
+    private suspend fun sendReset(packet: Ipv4Packet, seg: TcpSegment) {
+        val w = writer ?: return
+        val seq: Long
+        val ack: Long
+        val flags: Int
+        if (seg.isAck) {
+            // Peer acked something: RST at its ack point, no ACK flag.
+            seq = seg.acknowledgmentNumber
+            ack = 0L
+            flags = TcpSegment.FLAG_RST
+        } else {
+            // No ack to anchor on: RST|ACK acking the incoming sequence span.
+            val segLen = seg.payload.size + (if (seg.isSyn) 1 else 0) + (if (seg.isFin) 1 else 0)
+            seq = 0L
+            ack = (seg.sequenceNumber + segLen) and 0xFFFF_FFFFL
+            flags = TcpSegment.FLAG_RST or TcpSegment.FLAG_ACK
+        }
+        val rst = TcpSegment.buildIpv4Packet(
+            sourcePort = seg.destinationPort,
+            destinationPort = seg.sourcePort,
+            sequenceNumber = seq,
+            acknowledgmentNumber = ack,
+            flags = flags,
+            windowSize = 0,
+            sourceAddress = packet.destinationAddress,
+            destinationAddress = packet.sourceAddress,
+        )
+        w.send(rst)
+        rxPackets.incrementAndGet()
+        rxBytes.addAndGet(rst.size.toLong())
     }
 
     private suspend fun handleUdp(packet: Ipv4Packet) {
