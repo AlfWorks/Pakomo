@@ -11,7 +11,7 @@ English | [简体中文](current-status.md)
 - **Weak-network shaping**: latency / jitter / packet loss / up- and down-link rate limiting, in a simple and an advanced (per-direction) mode.
 - **Four special faults**: connection reset; DNS failure (NXDOMAIN/SERVFAIL/REFUSED/timeout, plus cache resistance); network outage (silent / immediate); slow response (late response, with a gate that holds traffic and a small-response release threshold). Saved with the rule; can be enabled simultaneously.
 - **Takeover scope**: global / selected apps / selected addresses, with domain subdomain matching.
-- **Attribution and observability**: attribution by UID + SNI/learned IP; per-connection FlowLog; runtime statistics; real-time diagnostics + Logcat.
+- **Attribution and observability**: attribution by UID + SNI/learned IP; per-connection FlowLog on the traffic page (owning app, source/dest IP, duration, shaped/held; tap a row for a detail sheet; DNS records queried domains and resolved IPs; key fields are copyable); runtime statistics; real-time diagnostics + Logcat.
 - **Automation control protocol**: driven by adb broadcasts (start/update/stop/status/reset/load_profile), three-way read-back, config-applied confirmation, mandatory token on release. The control component is included in debug builds only. See [automation-control](../automation-control_EN.md).
 - **Product**: theme switching + Pako artwork, five mascot visual states (bound to `EngineStage`), instant CN/EN switching, and a floating-ball quick control.
 

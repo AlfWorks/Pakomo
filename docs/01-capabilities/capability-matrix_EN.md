@@ -49,7 +49,7 @@ Legend: ✔ supported · ✘ not supported · — not applicable
 |---|:--:|:--:|---|:--:|---|
 | Per-app attribution (UID) | ✔ | ✔ | `Implemented` | Yes | `getConnectionOwnerUid()`; the attribution preamble is identical across both editions |
 | Per-domain attribution (SNI + learned IP) | ✔ | ✔ | `Implemented` | Yes | Best-effort for QUIC / no-SNI; IPs cannot be learned for DoH |
-| Per-connection traffic log (FlowLog) | ✔ | ✔ | `Implemented` | Yes | TCP only; UDP/QUIC/ICMP not shown |
+| Per-connection traffic log (FlowLog) | ✔ | ✔ | `Implemented` | Yes | TCP and UDP/QUIC/DNS, not ICMP; tap a row for details (owning app, source/dest IP, duration, shaped/held, DNS queried domains + resolved IPs) |
 | Runtime statistics (rate / active connections / cumulative drops / holds / uptime) | ✔ | ✔ | `Implemented` | Yes | `RuntimeStats`; **no** stable derived "current loss rate / current RTT" |
 | Automation control protocol (adb-broadcast driven) | ✔ | ✔ | `Implemented` | adb | Included in debug/release; mandatory token on release. See [Automation Control Interface](../automation-control_EN.md) |
 

@@ -53,7 +53,7 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 |---|:--:|:--:|---|:--:|---|
 | 按应用归属（UID） | ✔ | ✔ | `Implemented` | 是 | `getConnectionOwnerUid()`；归属前导两版一致 |
 | 按域名归属（SNI + 学习 IP） | ✔ | ✔ | `Implemented` | 是 | QUIC / 无 SNI 尽力；DoH 学不到 IP |
-| 逐连接流量记录（FlowLog） | ✔ | ✔ | `Implemented` | 是 | 仅 TCP；UDP/QUIC/ICMP 不显示 |
+| 逐连接流量记录（FlowLog） | ✔ | ✔ | `Implemented` | 是 | TCP 与 UDP/QUIC/DNS，不含 ICMP；点条目查看详情（来源应用、源/目的 IP、时长、整形/暂扣、DNS 查询域名+解析结果） |
 | 运行时统计（速率/活动连接/累计丢弃/暂扣/uptime） | ✔ | ✔ | `Implemented` | 是 | `RuntimeStats`；**无**"当前丢包率/当前 RTT"稳定派生量 |
 | 自动化控制协议（adb 广播驱动） | ✔ | ✔ | `Implemented` | adb | debug/release 均含；release 强制 token。见 [自动化控制接口](../automation-control.md) |
 

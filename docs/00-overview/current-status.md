@@ -13,7 +13,7 @@
 - **四种特殊故障**：连接重置、DNS 失败（NXDOMAIN/SERVFAIL/REFUSED/超时 + 抗缓存）、网络中断（静默/立即）、
   慢响应（Late Response，闸门暂扣 + 放行小响应阈值）。随规则保存，可同时启用。
 - **接管范围**：全局 / 指定应用 / 指定地址，域名子域匹配。
-- **归属与可观测**：按 UID + SNI/学习 IP 归属；逐连接 FlowLog；运行时统计；实时诊断 + Logcat。
+- **归属与可观测**：按 UID + SNI/学习 IP 归属；流量页逐连接 FlowLog（来源应用、源/目的 IP、时长、整形/暂扣；点条目从底部弹出详情；DNS 记录查询域名与解析结果；关键字段可复制）；运行时统计；实时诊断 + Logcat。
 - **自动化控制协议**：adb 广播驱动（start/update/stop/status/reset/load_profile），三路回读，配置生效确认，
   release 强制 token。控制组件仅 debug 构建含。见 [automation-control](../automation-control.md)。
 - **产品**：主题切换 + Pako 美术、Mascot 5 视觉状态（绑 `EngineStage`）、中/英即时切换、悬浮球快捷控制。
