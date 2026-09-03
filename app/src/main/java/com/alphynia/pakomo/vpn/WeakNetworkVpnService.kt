@@ -303,8 +303,18 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 applyAllowedApps = scope == TargetScope.APPLICATIONS,
                 underlyingNetwork = underlyingNetwork,
             )
-                .addRoute("0.0.0.0", 0)
-                .setBlocking(false)
+            // Address scope whose targets are all literal IPv4s: capture only those destinations
+            // (/32 routes) so every other connection stays on the direct path and is not torn down
+            // when the tunnel comes up. Any domain target (or none) still needs a default route —
+            // a domain resolves to changing IPs the VPN cannot pre-route.
+            val ipTargets = if (scope == TargetScope.ADDRESSES) literalIpv4Targets(targetDomains) else null
+            if (ipTargets != null && ipTargets.isNotEmpty()) {
+                ipTargets.forEach { builder.addRoute(it, 32) }
+                Log.i(TAG, "Address scope: routing ${ipTargets.size} literal IP target(s) only")
+            } else {
+                builder.addRoute("0.0.0.0", 0)
+            }
+            builder.setBlocking(false)
             tunnelInterface = builder.establish()
                 ?: error("Android rejected the VPN interface")
             Log.i(TAG, "VPN interface established")
@@ -488,6 +498,23 @@ class WeakNetworkVpnService : android.net.VpnService() {
             builder.addDisallowedApplication(packageName)
         }
         return builder
+    }
+
+    /** The address-scope targets when they are *all* literal IPv4 addresses, else null (a domain is present). */
+    private fun literalIpv4Targets(targets: List<String>): List<String>? {
+        val ips = ArrayList<String>(targets.size)
+        for (target in targets) {
+            val value = target.trim()
+            if (!isLiteralIpv4(value)) return null
+            ips.add(value)
+        }
+        return ips
+    }
+
+    private fun isLiteralIpv4(value: String): Boolean {
+        val parts = value.split('.')
+        if (parts.size != 4) return false
+        return parts.all { part -> part.toIntOrNull()?.let { it in 0..255 } == true }
     }
 
     /** Builds the shaper + shaping policy + fault policy for a config and refreshes diagnostics. */
