@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.alphynia.pakomo.core.model.AppListAccess
 import com.alphynia.pakomo.core.model.DomainTarget
+import com.alphynia.pakomo.core.model.enabledDomainsByPackage
+import com.alphynia.pakomo.core.model.enabledValues
 import com.alphynia.pakomo.core.model.EngineRuntime
 import com.alphynia.pakomo.core.model.EngineStage
 import com.alphynia.pakomo.core.model.InstalledApp
@@ -142,15 +144,11 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         if (snapshot.engineStage != EngineStage.FORWARDING) return
         configPushJob?.cancel()
         configPushJob = viewModelScope.launch(Dispatchers.Default) {
-            val selectedApps = snapshot.apps.filter(InstalledApp::isSelected)
-            val packages = selectedApps.map(InstalledApp::packageName)
-            // Only enabled domains reach the runtime; an app with domains but none enabled drops out
-            // of the map, so it falls through to whole-app capture (same as having no domains).
-            val domainsByPackage = selectedApps.asSequence()
-                .map { app -> app.packageName to app.domains.filter { it.enabled }.map { it.value } }
-                .filter { it.second.isNotEmpty() }
-                .toMap()
-            val addressDomains = snapshot.addressDomains.filter { it.enabled }.map { it.value }
+            val packages = snapshot.apps.filter(InstalledApp::isSelected).map(InstalledApp::packageName)
+            // Shared enabled-only projections (see enabledDomainsByPackage / enabledValues) so this
+            // path and MainActivity.startVpn can never disagree on the disabled semantics.
+            val domainsByPackage = snapshot.apps.enabledDomainsByPackage()
+            val addressDomains = snapshot.addressDomains.enabledValues()
             ensureActive()
             if (_state.value.engineStage != EngineStage.FORWARDING) return@launch
             val context = getApplication<Application>()

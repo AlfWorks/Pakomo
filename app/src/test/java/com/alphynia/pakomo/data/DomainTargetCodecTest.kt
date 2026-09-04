@@ -76,4 +76,17 @@ class DomainTargetCodecTest {
         assertEquals(emptyMap<String, List<DomainTarget>>(), DomainTargetCodec.decodeMap(null))
         assertEquals(emptyMap<String, List<DomainTarget>>(), DomainTargetCodec.decodeMap("nonsense"))
     }
+
+    @Test
+    fun isMalformedFlagsOnlyCorruptNonEmptyInput() {
+        // Absent or validly-empty containers are not malformed (so a normal empty list never warns).
+        assertEquals(false, DomainTargetCodec.isMalformed(null, expectMap = false))
+        assertEquals(false, DomainTargetCodec.isMalformed("", expectMap = false))
+        assertEquals(false, DomainTargetCodec.isMalformed("[]", expectMap = false))
+        assertEquals(false, DomainTargetCodec.isMalformed("{}", expectMap = true))
+        assertEquals(false, DomainTargetCodec.isMalformed(DomainTargetCodec.encodeList(emptyList()), expectMap = false))
+        // Genuinely corrupt content is flagged.
+        assertEquals(true, DomainTargetCodec.isMalformed("}{ not json", expectMap = false))
+        assertEquals(true, DomainTargetCodec.isMalformed("nonsense", expectMap = true))
+    }
 }

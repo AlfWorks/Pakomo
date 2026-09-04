@@ -48,6 +48,22 @@ data class InstalledApp(
     val icon: Bitmap? = null,
     val isExpanded: Boolean = false,
 )
+
+/** The enabled targets projected to their plain values — exactly what reaches the runtime. */
+fun List<DomainTarget>.enabledValues(): List<String> = filter { it.enabled }.map { it.value }
+
+/**
+ * Per-package enabled domains for the selected apps — the single projection every start/reconfigure
+ * path shares (so the enable/disable semantics can never drift between them). An app whose domains are
+ * all disabled drops out of the map, so it falls through to whole-app capture — the same as having no
+ * domains at all.
+ */
+fun List<InstalledApp>.enabledDomainsByPackage(): Map<String, List<String>> =
+    asSequence()
+        .filter { it.isSelected }
+        .map { app -> app.packageName to app.domains.enabledValues() }
+        .filter { it.second.isNotEmpty() }
+        .toMap()
 /**
  * Weak-network parameters. In simple mode the [latencyMs] / [jitterMs] / [packetLossPercent]
  * values describe the whole (round-trip) effect and are split evenly across upload and download by

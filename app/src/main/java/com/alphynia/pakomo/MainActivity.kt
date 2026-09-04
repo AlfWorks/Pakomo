@@ -24,6 +24,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.alphynia.pakomo.core.model.AppListAccess
 import com.alphynia.pakomo.core.model.TargetScope
+import com.alphynia.pakomo.core.model.enabledDomainsByPackage
+import com.alphynia.pakomo.core.model.enabledValues
 import com.alphynia.pakomo.data.PakomoPreferences
 import com.alphynia.pakomo.overlay.QuickControlService
 import com.alphynia.pakomo.ui.PakomoApp
@@ -311,11 +313,8 @@ class MainActivity : ComponentActivity() {
             context = this,
             scope = state.scope,
             selectedPackages = selectedApps.map { it.packageName },
-            targetDomains = state.addressDomains.filter { it.enabled }.map { it.value },
-            domainsByPackage = selectedApps
-                .map { app -> app.packageName to app.domains.filter { it.enabled }.map { it.value } }
-                .filter { it.second.isNotEmpty() }
-                .toMap(),
+            targetDomains = state.addressDomains.enabledValues(),
+            domainsByPackage = state.apps.enabledDomainsByPackage(),
             rule = state.activeRule,
         )
     }

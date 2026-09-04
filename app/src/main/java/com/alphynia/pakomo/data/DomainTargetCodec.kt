@@ -37,6 +37,17 @@ object DomainTargetCodec {
         return root.toString()
     }
 
+    /**
+     * True when [raw] is a non-empty string that does not parse as the expected JSON container. The
+     * decoders still return empty for this case (so callers never crash), but a caller can use this to
+     * warn before a later write silently overwrites the corrupt value. A validly empty container
+     * (`"[]"` / `"{}"`) is **not** malformed.
+     */
+    fun isMalformed(raw: String?, expectMap: Boolean): Boolean {
+        if (raw.isNullOrEmpty()) return false
+        return runCatching { if (expectMap) JSONObject(raw) else JSONArray(raw) }.isFailure
+    }
+
     private fun JSONArray.toDomainTargets(): List<DomainTarget> =
         (0 until length()).mapNotNull { index ->
             when (val element = get(index)) {

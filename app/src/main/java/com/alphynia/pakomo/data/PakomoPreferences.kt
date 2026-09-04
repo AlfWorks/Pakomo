@@ -1,6 +1,7 @@
 package com.alphynia.pakomo.data
 
 import android.content.Context
+import android.util.Log
 import androidx.core.content.edit
 import com.alphynia.pakomo.core.model.DomainTarget
 import com.alphynia.pakomo.core.model.NetworkRule
@@ -32,8 +33,11 @@ class PakomoPreferences(context: Context) {
     }
 
     /** Full per-app domain targets including disabled ones — for the UI/state. */
-    fun readDomainTargetsByPackage(): Map<String, List<DomainTarget>> =
-        DomainTargetCodec.decodeMap(preferences.getString(KEY_APP_DOMAINS, null))
+    fun readDomainTargetsByPackage(): Map<String, List<DomainTarget>> {
+        val raw = preferences.getString(KEY_APP_DOMAINS, null)
+        warnIfMalformed(raw, KEY_APP_DOMAINS, expectMap = true)
+        return DomainTargetCodec.decodeMap(raw)
+    }
 
     /**
      * Only the **enabled** domains per package, projected to plain strings for the runtime and the
@@ -50,8 +54,22 @@ class PakomoPreferences(context: Context) {
     }
 
     /** Full address-scope targets including disabled ones — for the UI/state. */
-    fun readAddressTargets(): List<DomainTarget> =
-        DomainTargetCodec.decodeList(preferences.getString(KEY_ADDRESS_DOMAINS, null))
+    fun readAddressTargets(): List<DomainTarget> {
+        val raw = preferences.getString(KEY_ADDRESS_DOMAINS, null)
+        warnIfMalformed(raw, KEY_ADDRESS_DOMAINS, expectMap = false)
+        return DomainTargetCodec.decodeList(raw)
+    }
+
+    /**
+     * Surface corrupt stored domain data instead of letting the next write overwrite it silently: the
+     * decoders treat malformed input as empty, so without this a parse failure would look identical to
+     * "no domains" and be clobbered on the next edit.
+     */
+    private fun warnIfMalformed(raw: String?, key: String, expectMap: Boolean) {
+        if (DomainTargetCodec.isMalformed(raw, expectMap)) {
+            Log.w(TAG, "Stored '$key' is unparseable; treating as empty (next write overwrites it)")
+        }
+    }
 
     /** Only the **enabled** address targets, projected to strings for the runtime and automation. */
     fun readAddressDomains(): List<String> =
@@ -163,6 +181,7 @@ class PakomoPreferences(context: Context) {
         if (isNull(key)) null else getInt(key)
 
     private companion object {
+        const val TAG = "PakomoPrefs"
         const val FILE_NAME = "pakomo_private_state"
         const val KEY_SCOPE = "scope"
         const val KEY_SELECTED_PACKAGES = "selected_packages"
