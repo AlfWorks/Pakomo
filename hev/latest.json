@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "keyId": "manifest-2026",
+  "applicationId": "com.alphynia.pakomo.hev",
+  "versionCode": 22,
+  "versionName": "0.2.0",
+  "artifact": {
+    "path": "artifacts/22/app.apk",
+    "sizeBytes": 4443346,
+    "sha256": "b175ab2ccdd8f6108dc3d0e96d5219973bce21980052b9e70dc00bf533c5f282"
+  },
+  "mandatory": false,
+  "changelog": "- 流量页重做：每条连接显示来源应用、端点 IP 与 DNS 查询记录，列表项可点开详情面板。\n- 接管范围：单条域名/地址可启用/停用（停用即暂停、不删除、随时恢复），行内 ⋮ 菜单支持编辑与删除；仅启用中的条目下行到运行时。\n- 地址接管：区域内目标全为字面 IPv4 时按 /32 精确路由，不再全量接管；接管瞬间对存量连接发送 RST 快速失败重连（RFC 793）。\n- 弱网整形：新增可选的延迟补偿。\n- 修复：诊断页流量 / 诊断切换与首页分段控件视觉不一致，改用一致的滑动指示器。\n- 修复：地址域输入面拒绝 IPv6 / v4-mapped 字面量，避免静默回退为全接管。\n- 内部：内核 IPv4+TCP 报文构建合并为单次分配；发版流水线优先读取 CHANGELOG 版本段作为 Release / 更新弹窗文案（git log 兜底）。"
+}
