@@ -625,7 +625,7 @@ private fun AppFaultCard(
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                     )
                 } else {
-                    val noneSelected = app.domains.none { it in selectedDomainSet }
+                    val noneSelected = app.domains.none { it.value in selectedDomainSet }
                     if (noneSelected) {
                         Text(
                             text = t("至少选择一个域名，否则该故障对这个应用不生效。", "Select at least one domain, or this fault won't apply to this app."),
@@ -636,10 +636,10 @@ private fun AppFaultCard(
                     }
                     app.domains.forEach { domain ->
                         CheckRow(
-                            title = domain,
+                            title = domain.value,
                             mono = true,
-                            checked = domain in selectedDomainSet,
-                            onCheckedChange = { onToggleDomain(domain, it) },
+                            checked = domain.value in selectedDomainSet,
+                            onCheckedChange = { onToggleDomain(domain.value, it) },
                             compact = true,
                         )
                     }

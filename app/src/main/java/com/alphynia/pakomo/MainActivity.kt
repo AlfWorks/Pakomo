@@ -311,10 +311,11 @@ class MainActivity : ComponentActivity() {
             context = this,
             scope = state.scope,
             selectedPackages = selectedApps.map { it.packageName },
-            targetDomains = state.addressDomains,
+            targetDomains = state.addressDomains.filter { it.enabled }.map { it.value },
             domainsByPackage = selectedApps
-                .filter { it.domains.isNotEmpty() }
-                .associate { it.packageName to it.domains },
+                .map { app -> app.packageName to app.domains.filter { it.enabled }.map { it.value } }
+                .filter { it.second.isNotEmpty() }
+                .toMap(),
             rule = state.activeRule,
         )
     }

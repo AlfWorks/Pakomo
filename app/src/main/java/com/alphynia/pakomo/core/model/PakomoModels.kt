@@ -29,11 +29,22 @@ enum class TargetScope {
     }
 }
 
+/**
+ * A domain/address target the user has entered for scope routing, with an [enabled] flag so a rule can
+ * be temporarily paused without deleting it. Only enabled targets are projected to the runtime; the
+ * disabled ones are still persisted and shown in the UI (dimmed). Used for both per-app domains and the
+ * address-scope list.
+ */
+data class DomainTarget(
+    val value: String,
+    val enabled: Boolean = true,
+)
+
 data class InstalledApp(
     val label: String,
     val packageName: String,
     val isSelected: Boolean,
-    val domains: List<String>,
+    val domains: List<DomainTarget>,
     val icon: Bitmap? = null,
     val isExpanded: Boolean = false,
 )
@@ -249,7 +260,7 @@ data class PakomoUiState(
     val isLoadingApps: Boolean = true,
     val appListAccess: AppListAccess = AppListAccess.CHECKING,
     val appQuery: String = "",
-    val addressDomains: List<String> = emptyList(),
+    val addressDomains: List<DomainTarget> = emptyList(),
     val rules: List<NetworkRule> = defaultRules,
     val activeRuleId: String = defaultRules[1].id,
     val stats: RuntimeStats = RuntimeStats(),

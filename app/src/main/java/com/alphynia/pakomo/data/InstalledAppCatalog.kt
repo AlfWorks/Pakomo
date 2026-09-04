@@ -3,6 +3,7 @@ package com.alphynia.pakomo.data
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.graphics.drawable.toBitmap
+import com.alphynia.pakomo.core.model.DomainTarget
 import com.alphynia.pakomo.core.model.InstalledApp
 import java.text.Collator
 import java.util.Locale
@@ -18,7 +19,7 @@ class InstalledAppCatalog(private val context: Context) {
     @Suppress("DEPRECATION")
     fun load(
         selectedPackages: Set<String>,
-        domainsByPackage: Map<String, List<String>>,
+        domainsByPackage: Map<String, List<DomainTarget>>,
     ): InstalledAppCatalogResult {
         val applications = runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 33) {

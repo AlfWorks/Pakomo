@@ -2,6 +2,7 @@ package com.alphynia.pakomo.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.alphynia.pakomo.core.model.DomainTarget
 import com.alphynia.pakomo.core.model.NetworkRule
 import com.alphynia.pakomo.core.model.TargetScope
 import com.alphynia.pakomo.core.model.defaultRules
@@ -30,31 +31,34 @@ class PakomoPreferences(context: Context) {
         preferences.edit { putStringSet(KEY_SELECTED_PACKAGES, packages) }
     }
 
-    fun readDomainsByPackage(): Map<String, List<String>> {
-        val raw = preferences.getString(KEY_APP_DOMAINS, null) ?: return emptyMap()
-        return runCatching {
-            val root = JSONObject(raw)
-            root.keys().asSequence().associateWith { packageName ->
-                root.getJSONArray(packageName).toStringList()
-            }
-        }.getOrDefault(emptyMap())
+    /** Full per-app domain targets including disabled ones — for the UI/state. */
+    fun readDomainTargetsByPackage(): Map<String, List<DomainTarget>> =
+        DomainTargetCodec.decodeMap(preferences.getString(KEY_APP_DOMAINS, null))
+
+    /**
+     * Only the **enabled** domains per package, projected to plain strings for the runtime and the
+     * automation path. A package whose domains are all disabled drops out of the map entirely, so
+     * downstream "no domains = whole app" applies — consistent with having no domains at all.
+     */
+    fun readDomainsByPackage(): Map<String, List<String>> =
+        readDomainTargetsByPackage()
+            .mapValues { (_, targets) -> targets.filter { it.enabled }.map { it.value } }
+            .filterValues { it.isNotEmpty() }
+
+    fun writeDomainsByPackage(domains: Map<String, List<DomainTarget>>) {
+        preferences.edit { putString(KEY_APP_DOMAINS, DomainTargetCodec.encodeMap(domains)) }
     }
 
-    fun writeDomainsByPackage(domains: Map<String, List<String>>) {
-        val root = JSONObject()
-        domains.forEach { (packageName, values) ->
-            root.put(packageName, JSONArray(values))
-        }
-        preferences.edit { putString(KEY_APP_DOMAINS, root.toString()) }
-    }
+    /** Full address-scope targets including disabled ones — for the UI/state. */
+    fun readAddressTargets(): List<DomainTarget> =
+        DomainTargetCodec.decodeList(preferences.getString(KEY_ADDRESS_DOMAINS, null))
 
-    fun readAddressDomains(): List<String> {
-        val raw = preferences.getString(KEY_ADDRESS_DOMAINS, null) ?: return emptyList()
-        return runCatching { JSONArray(raw).toStringList() }.getOrDefault(emptyList())
-    }
+    /** Only the **enabled** address targets, projected to strings for the runtime and automation. */
+    fun readAddressDomains(): List<String> =
+        readAddressTargets().filter { it.enabled }.map { it.value }
 
-    fun writeAddressDomains(domains: List<String>) {
-        preferences.edit { putString(KEY_ADDRESS_DOMAINS, JSONArray(domains).toString()) }
+    fun writeAddressTargets(targets: List<DomainTarget>) {
+        preferences.edit { putString(KEY_ADDRESS_DOMAINS, DomainTargetCodec.encodeList(targets)) }
     }
 
     fun readActiveRuleId(): String =
@@ -154,9 +158,6 @@ class PakomoPreferences(context: Context) {
     fun clear() {
         preferences.edit { clear() }
     }
-
-    private fun JSONArray.toStringList(): List<String> =
-        List(length()) { index -> getString(index) }
 
     private fun JSONObject.optIntOrNull(key: String): Int? =
         if (isNull(key)) null else getInt(key)

@@ -179,7 +179,7 @@ internal fun HomeScreen(
     val activeTargetCount = remember(state.scope, state.apps, state.addressDomains) {
         when (state.scope) {
             TargetScope.APPLICATIONS -> state.apps.count { it.isSelected }
-            TargetScope.ADDRESSES -> state.addressDomains.size
+            TargetScope.ADDRESSES -> state.addressDomains.count { it.enabled }
             TargetScope.GLOBAL -> null
         }
     }

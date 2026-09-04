@@ -5,6 +5,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +26,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
@@ -34,6 +42,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,8 +59,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.alphynia.pakomo.core.model.DomainTarget
 import com.alphynia.pakomo.core.model.InstalledApp
 import com.alphynia.pakomo.core.model.PakomoUiState
 import com.alphynia.pakomo.core.model.TargetScope
@@ -64,6 +77,8 @@ import com.alphynia.pakomo.ui.theme.LocalPakomoColors
 import com.alphynia.pakomo.ui.theme.LocalThemeMode
 import com.alphynia.pakomo.ui.theme.ThemeMode
 import com.alphynia.pakomo.ui.theme.t
+import java.text.Collator
+import java.util.Locale
 
 @Immutable
 private data class ApplicationScopeUiState(
@@ -83,10 +98,17 @@ fun ScopeScreen(
     onToggleExpanded: (String) -> Unit,
     onAddDomain: (String, String) -> String?,
     onRemoveDomain: (String, String) -> Unit,
+    onToggleDomain: (String, String) -> Unit,
+    onEditDomain: (String, String, String) -> String?,
     onAddAddress: (String) -> String?,
     onRemoveAddress: (String) -> Unit,
+    onToggleAddress: (String) -> Unit,
+    onEditAddress: (String, String) -> String?,
 ) {
-    var domainTarget by remember { mutableStateOf<String?>(null) }
+    // The domain add/edit dialog request: [context] is a package name or [ADDRESS_TARGET]; [editing]
+    // is null for a new entry, or the existing value being edited.
+    var dialog by remember { mutableStateOf<DomainDialogRequest?>(null) }
+    val focusManager = LocalFocusManager.current
     val applicationState = remember(state.apps, state.appQuery, state.isLoadingApps) {
         ApplicationScopeUiState(
             apps = state.apps,
@@ -98,7 +120,13 @@ fun ScopeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            // Tap anywhere outside the search field (empty list space, headers) to drop focus and hide
+            // the keyboard; no ripple so the whole screen doesn't read as a button.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { focusManager.clearFocus() },
     ) {
         ScreenHeader(
             title = when (state.scope) {
@@ -124,28 +152,36 @@ fun ScopeScreen(
                 onQueryChange = onQueryChange,
                 onToggleApp = onToggleApp,
                 onToggleExpanded = onToggleExpanded,
-                onRequestAddDomain = { domainTarget = it },
+                onRequestAddDomain = { pkg -> dialog = DomainDialogRequest(pkg, editing = null) },
                 onRemoveDomain = onRemoveDomain,
+                onToggleDomain = onToggleDomain,
+                onRequestEditDomain = { pkg, value -> dialog = DomainDialogRequest(pkg, editing = value) },
             )
 
             TargetScope.ADDRESSES -> AddressScopeContent(
                 domains = state.addressDomains,
-                onRequestAdd = { domainTarget = ADDRESS_TARGET },
+                onRequestAdd = { dialog = DomainDialogRequest(ADDRESS_TARGET, editing = null) },
                 onRemove = onRemoveAddress,
+                onToggle = onToggleAddress,
+                onRequestEdit = { value -> dialog = DomainDialogRequest(ADDRESS_TARGET, editing = value) },
             )
         }
     }
 
-    domainTarget?.let { target ->
+    dialog?.let { request ->
+        val editing = request.editing
         DomainInputDialog(
-            onDismiss = { domainTarget = null },
+            initial = editing.orEmpty(),
+            isEdit = editing != null,
+            onDismiss = { dialog = null },
             onSubmit = { input ->
-                val error = if (target == ADDRESS_TARGET) {
-                    onAddAddress(input)
-                } else {
-                    onAddDomain(target, input)
+                val error = when {
+                    editing != null && request.context == ADDRESS_TARGET -> onEditAddress(editing, input)
+                    editing != null -> onEditDomain(request.context, editing, input)
+                    request.context == ADDRESS_TARGET -> onAddAddress(input)
+                    else -> onAddDomain(request.context, input)
                 }
-                if (error == null) domainTarget = null
+                if (error == null) dialog = null
                 error
             },
         )
@@ -161,16 +197,31 @@ private fun ApplicationScopeContent(
     onToggleExpanded: (String) -> Unit,
     onRequestAddDomain: (String) -> Unit,
     onRemoveDomain: (String, String) -> Unit,
+    onToggleDomain: (String, String) -> Unit,
+    onRequestEditDomain: (String, String) -> Unit,
 ) {
     val cacheWindow = remember {
         LazyLayoutCacheWindow(aheadFraction = 2f, behindFraction = 2f)
     }
     val listState = rememberLazyListState(cacheWindow = cacheWindow)
-    val visibleApps = remember(
-        state.apps,
-        state.query,
-    ) {
-        state.apps.filter { app ->
+    val focusManager = LocalFocusManager.current
+    val collator = remember { Collator.getInstance(Locale.getDefault()) }
+    // Display order: selected apps first, then alphabetical — a full re-sort so deselecting an app
+    // drops it back to its alphabetical spot. It is recomputed only when the query changes or the app
+    // set is (re)loaded — NOT on a bare selection toggle (the key is the package-name list, which a
+    // toggle leaves unchanged) — so (de)selecting moves an app on the next refresh rather than yanking
+    // it under the user's finger.
+    val orderedPackages = remember(state.query, state.apps.map { it.packageName }) {
+        state.apps
+            .sortedWith(
+                compareByDescending<InstalledApp> { it.isSelected }
+                    .thenComparator { a, b -> collator.compare(a.label, b.label) },
+            )
+            .map { it.packageName }
+    }
+    val visibleApps = remember(orderedPackages, state.apps, state.query) {
+        val byPackage = state.apps.associateBy { it.packageName }
+        orderedPackages.mapNotNull(byPackage::get).filter { app ->
             state.query.isBlank() ||
                 app.label.contains(state.query, ignoreCase = true) ||
                 app.packageName.contains(state.query, ignoreCase = true)
@@ -196,6 +247,15 @@ private fun ApplicationScopeContent(
                 shape = RoundedCornerShape(10.dp),
                 placeholder = { Text(t("搜索应用或包名", "Search apps or package names")) },
                 leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (state.query.isNotEmpty()) {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Rounded.Close, contentDescription = t("清除", "Clear"))
+                        }
+                    }
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
             )
         }
         if (state.isLoading) {
@@ -225,6 +285,8 @@ private fun ApplicationScopeContent(
                     onToggleExpanded = { onToggleExpanded(app.packageName) },
                     onRequestAddDomain = { onRequestAddDomain(app.packageName) },
                     onRemoveDomain = { domain -> onRemoveDomain(app.packageName, domain) },
+                    onToggleDomain = { domain -> onToggleDomain(app.packageName, domain) },
+                    onRequestEditDomain = { domain -> onRequestEditDomain(app.packageName, domain) },
                 )
             }
         }
@@ -238,6 +300,8 @@ private fun ApplicationCard(
     onToggleExpanded: () -> Unit,
     onRequestAddDomain: () -> Unit,
     onRemoveDomain: (String) -> Unit,
+    onToggleDomain: (String) -> Unit,
+    onRequestEditDomain: (String) -> Unit,
 ) {
     val colors = LocalPakomoColors.current
     Column(
@@ -303,8 +367,10 @@ private fun ApplicationCard(
                 }
                 app.domains.forEachIndexed { index, domain ->
                     DomainRow(
-                        domain = domain,
-                        onRemove = { onRemoveDomain(domain) },
+                        target = domain,
+                        onToggle = { onToggleDomain(domain.value) },
+                        onEdit = { onRequestEditDomain(domain.value) },
+                        onRemove = { onRemoveDomain(domain.value) },
                     )
                     if (index < app.domains.lastIndex) {
                         androidx.compose.material3.HorizontalDivider(
@@ -329,13 +395,16 @@ private fun ApplicationCard(
                     ),
                     elevation = ButtonDefaults.buttonElevation(0.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.size(4.dp))
-                    Text(t("添加域名", "Add domain"))
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(t("添加域名", "Add domain"))
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .size(18.dp),
+                        )
+                    }
                 }
             }
         }
@@ -343,40 +412,96 @@ private fun ApplicationCard(
 }
 
 @Composable
-private fun DomainRow(domain: String, onRemove: () -> Unit) {
+private fun DomainRow(
+    target: DomainTarget,
+    onToggle: () -> Unit,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+) {
     val colors = LocalPakomoColors.current
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp),
+            .height(44.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Enable / disable on the left: a filled check when active (accent), a hollow circle when
+        // paused (muted).
+        RowIcon(
+            icon = if (target.enabled) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+            tint = if (target.enabled) colors.accent else colors.muted,
+            description = if (target.enabled) {
+                t("停用 ${target.value}", "Disable ${target.value}")
+            } else {
+                t("启用 ${target.value}", "Enable ${target.value}")
+            },
+            onClick = onToggle,
+        )
         MonoText(
-            text = domain,
-            color = colors.textPrimary,
+            text = target.value,
+            // Dim a paused entry so an enabled/disabled row is legible at a glance; tapping the value
+            // also toggles it.
+            color = if (target.enabled) colors.textPrimary else colors.muted,
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 4.dp),
+                // Toggle on tap, but with no ripple/press feedback so the value doesn't read as a button.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggle,
+                )
+                .padding(vertical = 12.dp, horizontal = 2.dp),
         )
-        IconButton(
-            onClick = onRemove,
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Close,
-                contentDescription = t("删除 $domain", "Delete $domain"),
+        // Edit + delete folded into one overflow menu on the right.
+        Box {
+            RowIcon(
+                icon = Icons.Rounded.MoreVert,
                 tint = colors.muted,
-                modifier = Modifier.size(18.dp),
+                description = t("更多操作", "More actions"),
+                onClick = { menuOpen = true },
             )
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(t("编辑", "Edit")) },
+                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        menuOpen = false
+                        onEdit()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(t("删除", "Delete")) },
+                    leadingIcon = { Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        menuOpen = false
+                        onRemove()
+                    },
+                )
+            }
         }
     }
 }
 
 @Composable
+private fun RowIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    description: String,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+        Icon(imageVector = icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
 private fun AddressScopeContent(
-    domains: List<String>,
+    domains: List<DomainTarget>,
     onRequestAdd: () -> Unit,
     onRemove: (String) -> Unit,
+    onToggle: (String) -> Unit,
+    onRequestEdit: (String) -> Unit,
 ) {
     val colors = LocalPakomoColors.current
     LazyColumn(
@@ -391,14 +516,19 @@ private fun AddressScopeContent(
         if (domains.isEmpty()) {
             item { EmptyMessage(t("还没有指定地址", "No addresses yet")) }
         } else {
-            items(domains, key = { it }) { domain ->
+            items(domains, key = { it.value }) { target ->
                 Card(
                     shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(containerColor = colors.surface),
                     border = BorderStroke(1.dp, colors.border),
                     elevation = CardDefaults.cardElevation(0.dp),
                 ) {
-                    DomainRow(domain = domain, onRemove = { onRemove(domain) })
+                    DomainRow(
+                        target = target,
+                        onToggle = { onToggle(target.value) },
+                        onEdit = { onRequestEdit(target.value) },
+                        onRemove = { onRemove(target.value) },
+                    )
                 }
             }
         }
@@ -415,9 +545,18 @@ private fun AddressScopeContent(
                 ),
                 elevation = ButtonDefaults.buttonElevation(0.dp),
             ) {
-                Icon(Icons.Rounded.Add, contentDescription = null)
-                Spacer(Modifier.size(6.dp))
-                Text(t("添加域名", "Add domain"))
+                // Centre the label across the full width, with the + pinned at the start, so the text
+                // reads as centred instead of shoved right by a leading icon+label group.
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(t("添加域名", "Add domain"))
+                    Icon(
+                        Icons.Rounded.Add,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -444,14 +583,16 @@ private fun EmptyMessage(text: String) {
 
 @Composable
 private fun DomainInputDialog(
+    initial: String,
+    isEdit: Boolean,
     onDismiss: () -> Unit,
     onSubmit: (String) -> String?,
 ) {
-    var value by remember { mutableStateOf("") }
+    var value by remember { mutableStateOf(initial) }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(t("添加域名", "Add domain")) },
+        title = { Text(if (isEdit) t("编辑域名", "Edit domain") else t("添加域名", "Add domain")) },
         text = {
             Column {
                 OutlinedTextField(
@@ -471,7 +612,7 @@ private fun DomainInputDialog(
         confirmButton = {
             TextButton(
                 onClick = { error = onSubmit(value) },
-            ) { Text(t("添加", "Add")) }
+            ) { Text(if (isEdit) t("保存", "Save") else t("添加", "Add")) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(t("取消", "Cancel")) }
@@ -480,3 +621,6 @@ private fun DomainInputDialog(
 }
 
 private const val ADDRESS_TARGET = "__address_scope__"
+
+/** An open add/edit request for the domain dialog: [context] is a package name or [ADDRESS_TARGET]. */
+private data class DomainDialogRequest(val context: String, val editing: String?)

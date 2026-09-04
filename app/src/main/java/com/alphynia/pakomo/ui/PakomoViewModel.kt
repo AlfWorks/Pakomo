@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.alphynia.pakomo.core.model.AppListAccess
+import com.alphynia.pakomo.core.model.DomainTarget
 import com.alphynia.pakomo.core.model.EngineRuntime
 import com.alphynia.pakomo.core.model.EngineStage
 import com.alphynia.pakomo.core.model.InstalledApp
@@ -38,7 +39,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow(
         PakomoUiState(
             scope = preferences.readScope(),
-            addressDomains = preferences.readAddressDomains(),
+            addressDomains = preferences.readAddressTargets(),
             rules = storedRules,
             activeRuleId = storedActiveRuleId,
         ),
@@ -81,7 +82,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             val result = withContext(Dispatchers.IO) {
                 appCatalog.load(
                     selectedPackages = preferences.readSelectedPackages(),
-                    domainsByPackage = preferences.readDomainsByPackage(),
+                    domainsByPackage = preferences.readDomainTargetsByPackage(),
                 )
             }
             val shouldFallbackToAddresses =
@@ -143,9 +144,13 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         configPushJob = viewModelScope.launch(Dispatchers.Default) {
             val selectedApps = snapshot.apps.filter(InstalledApp::isSelected)
             val packages = selectedApps.map(InstalledApp::packageName)
+            // Only enabled domains reach the runtime; an app with domains but none enabled drops out
+            // of the map, so it falls through to whole-app capture (same as having no domains).
             val domainsByPackage = selectedApps.asSequence()
-                .filter { it.domains.isNotEmpty() }
-                .associate { it.packageName to it.domains }
+                .map { app -> app.packageName to app.domains.filter { it.enabled }.map { it.value } }
+                .filter { it.second.isNotEmpty() }
+                .toMap()
+            val addressDomains = snapshot.addressDomains.filter { it.enabled }.map { it.value }
             ensureActive()
             if (_state.value.engineStage != EngineStage.FORWARDING) return@launch
             val context = getApplication<Application>()
@@ -154,7 +159,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
                     context,
                     snapshot.scope,
                     packages,
-                    snapshot.addressDomains,
+                    addressDomains,
                     domainsByPackage,
                     snapshot.activeRule,
                 )
@@ -162,7 +167,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
                     context,
                     snapshot.scope,
                     packages,
-                    snapshot.addressDomains,
+                    addressDomains,
                     domainsByPackage,
                     snapshot.activeRule,
                 )
@@ -192,10 +197,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
         val target = _state.value.apps.firstOrNull { it.packageName == packageName }
             ?: return _language.value.tr("应用已不存在", "This app no longer exists")
-        if (target.domains.any { it.equals(domain, ignoreCase = true) }) {
+        if (target.domains.any { it.value.equals(domain, ignoreCase = true) }) {
             return _language.value.tr("这个域名已经添加", "This domain is already added")
         }
-        updateApp(packageName) { app -> app.copy(domains = app.domains + domain) }
+        updateApp(packageName) { app -> app.copy(domains = app.domains + DomainTarget(domain)) }
         persistApps()
         val count = _state.value.apps.firstOrNull { it.packageName == packageName }?.domains?.size ?: 0
         Log.i(TAG, "Application domain added: count=$count")
@@ -205,7 +210,7 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
 
     fun removeDomain(packageName: String, domain: String) {
         updateApp(packageName) { app ->
-            app.copy(domains = app.domains.filterNot { it == domain })
+            app.copy(domains = app.domains.filterNot { it.value == domain })
         }
         persistApps()
         val count = _state.value.apps.firstOrNull { it.packageName == packageName }?.domains?.size ?: 0
@@ -213,13 +218,47 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         updateIfRunning()
     }
 
+    /** Toggle one per-app domain's enabled flag without deleting it; hot-applies to the runtime. */
+    fun toggleDomain(packageName: String, domain: String) {
+        updateApp(packageName) { app ->
+            app.copy(
+                domains = app.domains.map {
+                    if (it.value == domain) it.copy(enabled = !it.enabled) else it
+                },
+            )
+        }
+        persistApps()
+        val enabled = _state.value.apps.firstOrNull { it.packageName == packageName }
+            ?.domains?.firstOrNull { it.value == domain }?.enabled
+        Log.i(TAG, "Application domain toggled: enabled=$enabled")
+        updateIfRunning()
+    }
+
+    /** Rename one per-app domain in place, keeping its enabled flag. Returns an error message or null. */
+    fun editDomain(packageName: String, oldValue: String, input: String): String? {
+        val domain = DomainInputValidator.normalizeOrNull(input)
+            ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
+        val target = _state.value.apps.firstOrNull { it.packageName == packageName }
+            ?: return _language.value.tr("应用已不存在", "This app no longer exists")
+        if (target.domains.any { it.value != oldValue && it.value.equals(domain, ignoreCase = true) }) {
+            return _language.value.tr("这个域名已经添加", "This domain is already added")
+        }
+        updateApp(packageName) { app ->
+            app.copy(domains = app.domains.map { if (it.value == oldValue) it.copy(value = domain) else it })
+        }
+        persistApps()
+        Log.i(TAG, "Application domain edited")
+        updateIfRunning()
+        return null
+    }
+
     fun addAddressDomain(input: String): String? {
         val domain = DomainInputValidator.normalizeOrNull(input)
             ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
-        if (_state.value.addressDomains.any { it.equals(domain, ignoreCase = true) }) {
+        if (_state.value.addressDomains.any { it.value.equals(domain, ignoreCase = true) }) {
             return _language.value.tr("这个域名已经添加", "This domain is already added")
         }
-        val updated = _state.value.addressDomains + domain
+        val updated = _state.value.addressDomains + DomainTarget(domain)
         _state.update { it.copy(addressDomains = updated) }
         persistAddressDomains(updated)
         Log.i(TAG, "Address domain added: count=${updated.size}")
@@ -228,11 +267,39 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun removeAddressDomain(domain: String) {
-        val updated = _state.value.addressDomains.filterNot { it == domain }
+        val updated = _state.value.addressDomains.filterNot { it.value == domain }
         _state.update { it.copy(addressDomains = updated) }
         persistAddressDomains(updated)
         Log.i(TAG, "Address domain removed: count=${updated.size}")
         updateIfRunning()
+    }
+
+    /** Toggle one address target's enabled flag without deleting it; hot-applies to the runtime. */
+    fun toggleAddressDomain(domain: String) {
+        val updated = _state.value.addressDomains.map {
+            if (it.value == domain) it.copy(enabled = !it.enabled) else it
+        }
+        _state.update { it.copy(addressDomains = updated) }
+        persistAddressDomains(updated)
+        Log.i(TAG, "Address domain toggled: enabledCount=${updated.count { it.enabled }}")
+        updateIfRunning()
+    }
+
+    /** Rename one address target in place, keeping its enabled flag. Returns an error message or null. */
+    fun editAddressDomain(oldValue: String, input: String): String? {
+        val domain = DomainInputValidator.normalizeOrNull(input)
+            ?: return _language.value.tr("请输入有效域名，例如 api.example.com", "Enter a valid domain, e.g. api.example.com")
+        if (_state.value.addressDomains.any { it.value != oldValue && it.value.equals(domain, ignoreCase = true) }) {
+            return _language.value.tr("这个域名已经添加", "This domain is already added")
+        }
+        val updated = _state.value.addressDomains.map {
+            if (it.value == oldValue) it.copy(value = domain) else it
+        }
+        _state.update { it.copy(addressDomains = updated) }
+        persistAddressDomains(updated)
+        Log.i(TAG, "Address domain edited")
+        updateIfRunning()
+        return null
     }
 
     fun selectRule(ruleId: String) {
@@ -358,10 +425,10 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun persistAddressDomains(domains: List<String>) {
+    private fun persistAddressDomains(domains: List<DomainTarget>) {
         addressPersistJob?.cancel()
         addressPersistJob = viewModelScope.launch(Dispatchers.IO) {
-            preferences.writeAddressDomains(domains)
+            preferences.writeAddressTargets(domains)
         }
     }
 

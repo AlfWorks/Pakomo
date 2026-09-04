@@ -154,8 +154,12 @@ fun PakomoApp(
                 onToggleExpanded = viewModel::toggleAppExpanded,
                 onAddDomain = viewModel::addDomain,
                 onRemoveDomain = viewModel::removeDomain,
+                onToggleDomain = viewModel::toggleDomain,
+                onEditDomain = viewModel::editDomain,
                 onAddAddress = viewModel::addAddressDomain,
                 onRemoveAddress = viewModel::removeAddressDomain,
+                onToggleAddress = viewModel::toggleAddressDomain,
+                onEditAddress = viewModel::editAddressDomain,
             )
 
             Screen.Rules -> RulesScreen(
@@ -186,7 +190,7 @@ fun PakomoApp(
                 val selectedAppDomains = remember(state.apps) {
                     state.apps.asSequence()
                         .filter(InstalledApp::isSelected)
-                        .associate { it.packageName to it.domains }
+                        .associate { it.packageName to it.domains.map { d -> d.value } }
                 }
                 editorStateHolder.SaveableStateProvider("rule-editor-${editing.id}") {
                     RuleEditorScreen(
@@ -199,7 +203,7 @@ fun PakomoApp(
                         },
                         scope = state.scope,
                         selectedAppDomains = selectedAppDomains,
-                        addressDomains = state.addressDomains,
+                        addressDomains = state.addressDomains.map { it.value },
                         onToggleFault = { type, enabled ->
                             mutateDraftFault(type) { it.copy(enabled = enabled) }
                         },
@@ -231,7 +235,7 @@ fun PakomoApp(
                         type = faultNav.type,
                         scope = state.scope,
                         apps = state.apps,
-                        addressDomains = state.addressDomains,
+                        addressDomains = state.addressDomains.map { it.value },
                         onBack = goBack,
                         onSetAppEnabled = { pkg, enabled ->
                             mutateDraftFault(faultNav.type) { fault ->

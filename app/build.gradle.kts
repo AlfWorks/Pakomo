@@ -197,4 +197,7 @@ dependencies {
     implementation("com.alphynia.novi:novi-compose:0.1.1")
 
     testImplementation(libs.junit)
+    // Real org.json on the unit-test classpath (the android.jar stub throws "not mocked"), so codecs
+    // that use org.json — e.g. DomainTargetCodec — can be tested as plain JVM tests.
+    testImplementation("org.json:json:20240303")
 }
