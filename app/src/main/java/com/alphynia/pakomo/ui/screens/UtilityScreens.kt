@@ -7,11 +7,16 @@ import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -22,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -257,31 +263,58 @@ private fun DiagnosticsContent(state: PakomoUiState) {
 @Composable
 private fun DiagTabRow(tabs: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     val colors = LocalPakomoColors.current
-    Row(
+    // Same sliding-indicator segmented control as the home ScopeSelector, so switching Traffic ↔
+    // Diagnostics reads identically instead of hard-cutting the pill.
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .background(colors.scopeTrack, RoundedCornerShape(10.dp))
             .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        tabs.forEachIndexed { index, label ->
-            val active = index == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (active) colors.surface else Color.Transparent)
-                    .clickable { onSelect(index) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    color = if (active) colors.accent else colors.textSecondary,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 13.sp,
+        val gap = 3.dp
+        val segmentWidth = (maxWidth - gap * (tabs.size - 1).toFloat()) / tabs.size.toFloat()
+        val indicatorOffset by animateDpAsState(
+            targetValue = (segmentWidth + gap) * selected.toFloat(),
+            animationSpec = tween(180),
+            label = "diagIndicator",
+        )
+        Box(
+            modifier = Modifier
+                .offset(x = indicatorOffset)
+                .width(segmentWidth)
+                .height(34.dp)
+                .background(colors.surface, RoundedCornerShape(8.dp)),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            tabs.forEachIndexed { index, label ->
+                val active = index == selected
+                val textColor by animateColorAsState(
+                    targetValue = if (active) colors.accent else colors.textSecondary,
+                    animationSpec = tween(120),
+                    label = "diagTabText",
                 )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { onSelect(index) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = textColor,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 13.sp,
+                    )
+                }
             }
         }
     }
