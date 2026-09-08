@@ -8,6 +8,7 @@ import com.alphynia.pakomo.kernel.ip.Ipv4Packet
 import com.alphynia.pakomo.kernel.socks.Socks5Client
 import com.alphynia.pakomo.kernel.tcp.TcpConnection
 import com.alphynia.pakomo.kernel.tcp.TcpSegment
+import com.alphynia.pakomo.kernel.tun.FlowKey
 import com.alphynia.pakomo.kernel.tun.TunReader
 import com.alphynia.pakomo.kernel.tun.TunWriter
 import com.alphynia.pakomo.kernel.udp.UdpSession
@@ -34,9 +35,9 @@ class Tun2SocksEngine {
     private var readJob: Job? = null
     private var reaperJob: Job? = null
 
-    // Connection tables
-    private val tcpConnections = ConcurrentHashMap<Long, TcpConnection>()
-    private val udpSessions = ConcurrentHashMap<Long, UdpSession>()
+    // Connection tables, keyed by the full 4-tuple (see FlowKey — a packed Long collided distinct flows).
+    private val tcpConnections = ConcurrentHashMap<FlowKey, TcpConnection>()
+    private val udpSessions = ConcurrentHashMap<FlowKey, UdpSession>()
 
     // Stats counters (tunnel-perspective: tx=read from TUN, rx=write to TUN)
     private val txPackets = AtomicLong(0)

@@ -220,6 +220,16 @@ class KernelUnitTest {
         assertEquals(key1, key2)
         assertTrue(key1 != key3)
 
+        // Audit #1 regression: same source, destinations 1.1.1.1:443 vs 129.1.1.1:443 differ only in
+        // the destination IP's high byte — the old packed-Long key collided them onto one value.
+        val a = TunReader.tcpKey(0x0A4D0001, 40000, 0x01010101, 443)
+        val b = TunReader.tcpKey(0x0A4D0001, 40000, 0x81010101.toInt(), 443)
+        assertTrue(a != b)
+        // Source IP must not be truncated: two sources differing only in the high 16 bits differ.
+        val c = TunReader.tcpKey(0x0A4D0001, 40000, 0x01010101, 443)
+        val d = TunReader.tcpKey(0x0B4D0001, 40000, 0x01010101, 443)
+        assertTrue(c != d)
+
         val ukey1 = TunReader.udpKey(0x7F000001, 53, 0x7F000002, 12345)
         assertTrue(ukey1 != key1)
     }
