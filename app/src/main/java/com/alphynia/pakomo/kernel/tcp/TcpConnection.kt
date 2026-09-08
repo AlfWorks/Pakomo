@@ -228,7 +228,7 @@ class TcpConnection(
             // two (read 16 KB, then send it, then read again) added both latencies per batch and
             // capped a single connection; overlapping them lets throughput track the faster side.
             val downstream = Channel<ByteArray>(DOWNSTREAM_CAP)
-            launch {
+            val senderJob = launch {
                 try { for (data in downstream) sendDataToApp(data) } catch (_: Exception) {}
             }
             socksReadJob = launch {
@@ -250,6 +250,10 @@ class TcpConnection(
                 } catch (_: Exception) {
                 } finally {
                     downstream.close()
+                    // Wait for the sender to flush every queued segment to the app before the FIN, so a
+                    // slow / small-window receiver still gets the tail of the response instead of a FIN
+                    // jumping ahead of undelivered data (audit #4).
+                    senderJob.join()
                     // Translate a real upstream EOF into a FIN only from a sending state; in SYN_RCVD or
                     // after teardown there is nothing to close and sendFin would just latch ourFinSent.
                     if (!ourFinSent && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) sendFin()
