@@ -128,9 +128,12 @@ class TcpConnection(
         if (seg.isRst) { closeConnection(); return }
         sndNxt = ((iss + 1) and 0xFFFF_FFFFL)
         sndUna = sndNxt
-        rcvNxt = (seg.sequenceNumber + seg.payload.size + (if (seg.isSyn) 1 else 0) +
-            (if (seg.isFin) 1 else 0)) and 0xFFFF_FFFFL
-        state = State.ESTABLISHED; if (seg.payload.isNotEmpty() || seg.isFin) ingestSegment(seg); if (BuildConfig.DEBUG) Log.i(TAG, "ESTABLISHED $sourcePort->$destinationPort")
+        // rcvNxt was set to synSeq+1 in accept(). Do NOT pre-advance it past this ACK's payload:
+        // ingestSegment only delivers a segment whose seq == rcvNxt, so pre-advancing made the data a
+        // piggybacked third-ACK carries get skipped while still being acknowledged (audit #5).
+        state = State.ESTABLISHED
+        if (seg.payload.isNotEmpty() || seg.isFin) ingestSegment(seg)
+        if (BuildConfig.DEBUG) Log.i(TAG, "ESTABLISHED $sourcePort->$destinationPort")
     }
 
     private suspend fun ingestSegment(seg: TcpSegment) {
@@ -215,18 +218,26 @@ class TcpConnection(
             }
             socksReadJob = launch {
                 try {
-                    withContext(KernelDispatchers.connIo) {
-                        val buf = ByteArray(SOCKS_READ_BUF)
-                        while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
-                            val count = tcp.input.read(buf)
-                            if (count < 0) break
-                            if (count > 0) downstream.send(buf.copyOf(count))
+                    // Don't pump downstream until the handshake finishes: reading while still SYN_RCVD
+                    // would find the loop condition false and exit at once (audit #5), emitting a bogus
+                    // FIN. Waiting exits if the connection is torn down (state leaves SYN_RCVD).
+                    while (state == State.SYN_RCVD) delay(FLOW_POLL_MS)
+                    if (state == State.ESTABLISHED || state == State.CLOSE_WAIT) {
+                        withContext(KernelDispatchers.connIo) {
+                            val buf = ByteArray(SOCKS_READ_BUF)
+                            while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
+                                val count = tcp.input.read(buf)
+                                if (count < 0) break
+                                if (count > 0) downstream.send(buf.copyOf(count))
+                            }
                         }
                     }
                 } catch (_: Exception) {
                 } finally {
                     downstream.close()
-                    if (!ourFinSent) sendFin()
+                    // Translate a real upstream EOF into a FIN only from a sending state; in SYN_RCVD or
+                    // after teardown there is nothing to close and sendFin would just latch ourFinSent.
+                    if (!ourFinSent && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) sendFin()
                 }
             }
         }
