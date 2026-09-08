@@ -3,6 +3,7 @@ package com.alphynia.pakomo.kernel
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
+import com.alphynia.pakomo.BuildConfig
 import com.alphynia.pakomo.kernel.icmp.IcmpResponder
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet
 import com.alphynia.pakomo.kernel.socks.Socks5Client
@@ -148,6 +149,16 @@ class Tun2SocksEngine {
     // ─── Packet dispatch ───
 
     private suspend fun dispatch(packet: Ipv4Packet) {
+        if (packet.isFragment) {
+            // We don't reassemble IPv4 fragments. Dispatching one would treat the first fragment as a
+            // whole segment and misread a later fragment's bytes as a transport header — drop it instead
+            // of corrupting the flow (audit #10). Fragmented traffic (mostly oversized UDP) then fails
+            // cleanly rather than silently.
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "drop IPv4 fragment proto=${packet.protocol} id=${packet.identification} off=${packet.fragmentOffset}")
+            }
+            return
+        }
         when (packet.protocol) {
             Ipv4Packet.PROTOCOL_TCP -> handleTcp(packet)
             Ipv4Packet.PROTOCOL_UDP -> handleUdp(packet)

@@ -9,6 +9,13 @@ data class Ipv4Packet(
     val sourceAddress: Int, val destinationAddress: Int,
     val payload: ByteArray,
 ) {
+    /**
+     * True when this datagram is part of a fragmented packet: the More-Fragments flag is set (bit 0 of
+     * the 3-bit [flags]) or it carries a non-zero [fragmentOffset]. Such packets can't be dispatched as
+     * whole transport segments without reassembly.
+     */
+    val isFragment: Boolean get() = (flags and 0x1) != 0 || fragmentOffset != 0
+
     companion object {
         const val MIN_HEADER_BYTES = 20
         const val PROTOCOL_ICMP = 1
