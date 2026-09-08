@@ -151,7 +151,7 @@ class TcpConnection(
             // Out of order (or already seen): re-ACK our current position so the peer retransmits the
             // gap. Do NOT consume payload or act on a FIN that sits beyond a hole — an out-of-order FIN
             // must not close the connection ahead of data still in flight (audit #3).
-            if (isAfter(seg.sequenceNumber, expected)) sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
+            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
             return
         }
         // In order. Deliver payload upstream; only advance/ACK data the upstream accepted (audit #2).
@@ -183,6 +183,7 @@ class TcpConnection(
 
     private suspend fun handleCloseWait(seg: TcpSegment) {
         if (seg.isRst) { closeConnection(); return }
+        appWindow = seg.windowSize shl peerWindowShift
         processAck(seg.acknowledgmentNumber)
     }
 
@@ -211,11 +212,9 @@ class TcpConnection(
 
     private fun launchSocksRelay() {
         ownedScope.launch {
-            val tcp = withContext(KernelDispatchers.connSetup) {
-                socksClient.tcpConnect(
-                    sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
-                )
-            }
+            val tcp = socksClient.tcpConnect(
+                sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
+            )
             if (tcp == null) { Log.w(TAG, "SOCKS5 connect failed $sourcePort"); resetConnection(); return@launch }
             if (BuildConfig.DEBUG) Log.i(TAG, "SOCKS5 connected $sourcePort->$destinationPort")
             try {
@@ -223,7 +222,7 @@ class TcpConnection(
                     if (state == State.CLOSED) return@withLock
                     socksTcp = tcp
                     while (earlyData.isNotEmpty()) {
-                        withContext(KernelDispatchers.connIo) {
+                        withContext(KernelDispatchers.connWrite) {
                             tcp.output.write(earlyData.removeFirst()); tcp.output.flush()
                         }
                     }
@@ -255,7 +254,7 @@ class TcpConnection(
                     // FIN. Waiting exits if the connection is torn down (state leaves SYN_RCVD).
                     while (state == State.SYN_RCVD) delay(FLOW_POLL_MS)
                     if (state == State.ESTABLISHED || state == State.CLOSE_WAIT) {
-                        withContext(KernelDispatchers.connIo) {
+                        withContext(KernelDispatchers.connRead) {
                             val buf = ByteArray(SOCKS_READ_BUF)
                             while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
                                 val count = tcp.input.read(buf)
@@ -350,7 +349,7 @@ class TcpConnection(
                 return@withLock true
             }
             try {
-                withContext(KernelDispatchers.connIo) { tcp.output.write(data); tcp.output.flush() }
+                withContext(KernelDispatchers.connWrite) { tcp.output.write(data); tcp.output.flush() }
                 true
             } catch (_: Exception) { resetConnection(); false }
         }

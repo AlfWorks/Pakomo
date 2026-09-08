@@ -16,7 +16,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 
@@ -52,9 +51,9 @@ class UdpSession(
     fun startActor() {
         actorJob = sessionScope.launch {
             try {
-                val assoc = withContext(KernelDispatchers.connIo) {
-                    socksClient.udpAssociate(sourceAddress, sourcePort, destinationAddress, destinationPort)
-                }
+                val assoc = socksClient.udpAssociate(
+                    sourceAddress, sourcePort, destinationAddress, destinationPort,
+                )
                 if (assoc == null) {
                     Log.w(TAG, "UDP ASSOCIATE failed $sourcePort:$destinationPort")
                     close()
@@ -70,7 +69,7 @@ class UdpSession(
                     while (isActive && !closed) {
                         buf.clear()
                         val sourceAddr = try {
-                            withContext(KernelDispatchers.connIo) { relayChannel!!.receive(buf) }
+                            relayChannel!!.receive(buf)
                         } catch (_: Exception) { null }
                         if (sourceAddr != null) {
                             buf.flip()
@@ -124,9 +123,7 @@ class UdpSession(
             udpBuf.putInt(destinationAddress)
             udpBuf.putShort(destinationPort.toShort())
             udpBuf.put(payload)
-            withContext(KernelDispatchers.connIo) {
-                relayChannel!!.send(udpBuf.flip() as ByteBuffer, assoc.relayAddress)
-            }
+            relayChannel!!.send(udpBuf.flip() as ByteBuffer, assoc.relayAddress)
         } catch (_: Exception) {
         }
     }

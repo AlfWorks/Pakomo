@@ -8,11 +8,19 @@ import com.alphynia.pakomo.kernel.tun.TunReader
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KernelUnitTest {
+
+    @Test
+    fun blockingConnectionWorkUsesIndependentDispatchers() {
+        assertNotSame(KernelDispatchers.connRead, KernelDispatchers.connWrite)
+        assertNotSame(KernelDispatchers.connRead, KernelDispatchers.connSetup)
+        assertNotSame(KernelDispatchers.connWrite, KernelDispatchers.connSetup)
+    }
 
     @Test
     fun establishedTcpIdleReapingIsOptIn() {
