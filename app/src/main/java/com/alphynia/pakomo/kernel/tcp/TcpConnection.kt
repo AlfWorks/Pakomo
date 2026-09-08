@@ -138,21 +138,30 @@ class TcpConnection(
     }
 
     private suspend fun ingestSegment(seg: TcpSegment) {
-        val segLen = seg.payload.size + (if (seg.isSyn) 1 else 0) + (if (seg.isFin) 1 else 0)
         val expected = rcvNxt
-        if (seg.sequenceNumber == expected) {
-            // Only advance and ACK data the upstream actually accepted; a refused segment is left
-            // unacknowledged so the peer retransmits it (backpressure — audit #2).
-            if (seg.payload.isNotEmpty() && !writeToSocks(seg.payload)) return
-            rcvNxt = (seg.sequenceNumber + segLen) and 0xFFFF_FFFFL
-            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
-        } else if (isAfter(seg.sequenceNumber, expected)) {
-            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
+        if (seg.sequenceNumber != expected) {
+            // Out of order (or already seen): re-ACK our current position so the peer retransmits the
+            // gap. Do NOT consume payload or act on a FIN that sits beyond a hole — an out-of-order FIN
+            // must not close the connection ahead of data still in flight (audit #3).
+            if (isAfter(seg.sequenceNumber, expected)) sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
+            return
+        }
+        // In order. Deliver payload upstream; only advance/ACK data the upstream accepted (audit #2).
+        if (seg.payload.isNotEmpty()) {
+            if (!writeToSocks(seg.payload)) return
+            rcvNxt = (rcvNxt + seg.payload.size) and 0xFFFF_FFFFL
         }
         if (seg.isFin) {
             theirFinReceived = true
-            rcvNxt = (rcvNxt + 1) and 0xFFFF_FFFFL
-            if (ourFinSent) enterTimeWait() else { state = State.CLOSE_WAIT; sendFin() }
+            rcvNxt = (rcvNxt + 1) and 0xFFFF_FFFFL // a FIN consumes exactly one sequence number
+            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
+            // The app closed its send direction. Half-close the upstream (send EOF) but keep reading
+            // the server's response; the downstream loop stays alive in CLOSE_WAIT and turns the
+            // server's EOF into our FIN. Previously we FIN'd and closed the whole SOCKS connection at
+            // once, cutting off responses to a request that half-closes (audit #3).
+            if (ourFinSent) enterTimeWait() else { state = State.CLOSE_WAIT; halfCloseUpstream() }
+        } else {
+            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
         }
     }
 
@@ -171,8 +180,9 @@ class TcpConnection(
 
     private suspend fun handleLastAck(seg: TcpSegment) {
         if (!seg.isAck) return
-        if (seg.acknowledgmentNumber == (sndNxt + 1) and 0xFFFF_FFFFL ||
-            seg.acknowledgmentNumber == sndNxt) closeConnection()
+        // Our FIN already advanced sndNxt by one, so it is acknowledged when ackNum == sndNxt (the old
+        // `sndNxt + 1` double-counted the FIN's sequence — audit #3).
+        if (seg.acknowledgmentNumber == sndNxt) closeConnection()
     }
 
     private suspend fun handleFinWait1(seg: TcpSegment) {
@@ -182,7 +192,8 @@ class TcpConnection(
             rcvNxt = (seg.sequenceNumber + 1) and 0xFFFF_FFFFL
             sendSegment(TcpSegment.FLAG_ACK, ByteArray(0)); enterTimeWait()
         }
-        if (seg.isAck && seg.acknowledgmentNumber == (sndNxt + 1) and 0xFFFF_FFFFL) state = State.FIN_WAIT_2
+        // Our FIN advanced sndNxt by one; it is acked when ackNum == sndNxt (was `sndNxt + 1` — audit #3).
+        if (seg.isAck && seg.acknowledgmentNumber == sndNxt) state = State.FIN_WAIT_2
     }
 
     private suspend fun handleFinWait2(seg: TcpSegment) {
@@ -383,6 +394,15 @@ class TcpConnection(
     private fun closeSocks() {
         socksReadJob?.cancel(); socksReadJob = null
         runCatching { socksTcp?.sock?.close() }; socksTcp = null
+    }
+
+    /**
+     * Half-close the upstream after the app's FIN: shut down only the SOCKS socket's output so the
+     * server sees our EOF, while the input stays open to read the response. The downstream loop keeps
+     * running in CLOSE_WAIT and emits our FIN when the server closes (audit #3).
+     */
+    private fun halfCloseUpstream() {
+        runCatching { socksTcp?.sock?.shutdownOutput() }
     }
 
     private fun startRtoTimer() { cancelRto(); rtoJob = connectionScope.launch { delay(rtoMs); retransmit() } }
