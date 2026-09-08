@@ -15,6 +15,16 @@ import org.junit.Test
 class KernelUnitTest {
 
     @Test
+    fun establishedTcpIdleReapingIsOptIn() {
+        val config = Tun2SocksConfig(
+            socksPort = 1080,
+            socksUsername = "user",
+            socksPassword = "password",
+        )
+        assertEquals(0, config.tcpReadWriteTimeoutMs)
+    }
+
+    @Test
     fun checksumBasic() {
         val data = byteArrayOf(0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11)
         val sum = Checksum.sum(data, 0, data.size)
@@ -77,6 +87,23 @@ class KernelUnitTest {
         assertNotNull(parsed)
         assertEquals(0x1234, parsed!!.identification)
         assertEquals(64, parsed.ttl)
+    }
+
+    @Test
+    fun ipv4FragmentsAreIdentifiedBeforeTransportDispatch() {
+        val moreFragments = Ipv4Packet.buildHeader(
+            protocol = Ipv4Packet.PROTOCOL_UDP,
+            sourceAddress = 0x0A000001,
+            destinationAddress = 0x0A000002,
+            payloadLength = 0,
+        ).also { it[6] = (it[6].toInt() or 0x20).toByte() }
+        assertTrue(Ipv4Packet.parse(moreFragments)!!.isFragment)
+
+        val laterFragment = moreFragments.copyOf().also {
+            it[6] = 0
+            it[7] = 1
+        }
+        assertTrue(Ipv4Packet.parse(laterFragment)!!.isFragment)
     }
 
     @Test

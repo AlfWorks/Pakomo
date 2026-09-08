@@ -22,7 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay; import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class Tun2SocksEngine {
@@ -36,6 +37,11 @@ class Tun2SocksEngine {
     private var readJob: Job? = null
     private var reaperJob: Job? = null
 
+    // Invoked once if a TUN read/write loop dies fatally, so the service can tear the VPN down and
+    // surface the error instead of showing "running" over a dead tunnel (audit #11).
+    @Volatile private var onUnexpectedStop: ((Throwable) -> Unit)? = null
+    private val fatalHandled = AtomicBoolean(false)
+
     // Connection tables, keyed by the full 4-tuple (see FlowKey — a packed Long collided distinct flows).
     private val tcpConnections = ConcurrentHashMap<FlowKey, TcpConnection>()
     private val udpSessions = ConcurrentHashMap<FlowKey, UdpSession>()
@@ -48,10 +54,16 @@ class Tun2SocksEngine {
 
     // ─── Public API (3-contract: start, stop, stats) ───
 
-    fun start(config: Tun2SocksConfig, tunFd: FileDescriptor) {
+    fun start(
+        config: Tun2SocksConfig,
+        tunFd: FileDescriptor,
+        onUnexpectedStop: (Throwable) -> Unit = {},
+    ) {
         require(!running.get()) { "Engine already running" }
         this.config = config
         this.tunFd = tunFd
+        this.onUnexpectedStop = onUnexpectedStop
+        fatalHandled.set(false)
         running.set(true)
 
         // Non-blocking TUN fd: a blocking Os.read cannot be interrupted by coroutine cancellation,
@@ -66,13 +78,13 @@ class Tun2SocksEngine {
             password = config.socksPassword,
             connectTimeoutMs = config.connectTimeoutMs,
         )
-        writer = TunWriter(tunFd, engineScope).also { it.start() }
+        writer = TunWriter(tunFd, engineScope) { e -> failEngine("TUN write", e) }.also { it.start() }
 
         readJob = engineScope.launch(KernelDispatchers.core) {
             val buffer = ByteArray(config.mtu)
             try {
                 while (running.get() && isActive) {
-                                        val count = try {
+                    val count = try {
                         Os.read(tunFd, buffer, 0, buffer.size)
                     } catch (e: android.system.ErrnoException) {
                         if (e.errno == OsConstants.EAGAIN) { delay(10); continue }
@@ -86,7 +98,7 @@ class Tun2SocksEngine {
                     dispatch(packet)
                 }
             } catch (e: Exception) {
-                if (running.get()) Log.w(TAG, "TUN read loop failed", e)
+                if (running.get()) { Log.w(TAG, "TUN read loop failed", e); failEngine("TUN read", e) }
             }
         }
 
@@ -96,13 +108,11 @@ class Tun2SocksEngine {
     }
 
     /**
-     * Periodically closes idle/abandoned connections so the session tables never fill up. Without
-     * this, TCP connections that go idle in ESTABLISHED or get stuck half-closed (peer vanished,
-     * never ACKs our FIN) linger forever until [Tun2SocksConfig.maxSessionCount] is hit and every
-     * new SYN is silently dropped — the connection works, then "times out" a short while later.
+    * Closes abandoned handshake/teardown states, plus established connections only when the
+    * caller explicitly configures an idle timeout.
      */
     private fun startReaper(config: Tun2SocksConfig) = engineScope.launch {
-        val establishedIdleMs = config.tcpReadWriteTimeoutMs.toLong()
+        val establishedIdleMs = config.tcpReadWriteTimeoutMs.takeIf { it > 0 }?.toLong()
         while (running.get() && isActive) {
             delay(REAP_INTERVAL_MS)
             val now = android.os.SystemClock.elapsedRealtime()
@@ -112,7 +122,7 @@ class Tun2SocksEngine {
                 val stale = when (conn.state) {
                     // Active data states get the generous read/write idle budget.
                     TcpConnection.State.ESTABLISHED, TcpConnection.State.CLOSE_WAIT ->
-                        idle > establishedIdleMs
+                        establishedIdleMs != null && idle > establishedIdleMs
                     // Handshaking / half-closed states must not linger: a vanished peer leaves them
                     // here with no traffic to ever close them.
                     else -> idle > HALF_OPEN_IDLE_MS
@@ -123,6 +133,20 @@ class Tun2SocksEngine {
                 Log.i(TAG, "reaper closed $reaped idle conns (tcp=${tcpConnections.size} udp=${udpSessions.size})")
             }
         }
+    }
+
+    /**
+     * A TUN read/write loop died fatally. Tear the engine down — releasing the writer's channel so
+     * senders parked in send() unblock, and closing every connection/timer — then notify the service
+     * (once) so it can bring the VPN down and surface the error, instead of leaving a half-alive
+     * pipeline under a "running" UI (audit #11).
+     */
+    private fun failEngine(where: String, e: Throwable) {
+        if (!running.get()) return
+        if (!fatalHandled.compareAndSet(false, true)) return
+        Log.e(TAG, "engine fatal ($where); tearing down", e)
+        runCatching { onUnexpectedStop?.invoke(e) }
+        stop()
     }
 
     fun stop() {

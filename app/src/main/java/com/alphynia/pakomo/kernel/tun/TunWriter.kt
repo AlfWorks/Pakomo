@@ -16,6 +16,9 @@ import kotlinx.coroutines.launch
 class TunWriter(
     private val tunFd: FileDescriptor,
     private val engineScope: CoroutineScope,
+    // Invoked if the write loop dies on a non-recoverable error, so the engine can tear down instead
+    // of leaving this coroutine gone while its channel stays open and fills up (audit #11).
+    private val onFatal: (Throwable) -> Unit = {},
 ) {
     // Suspending channel: when the writer falls behind (e.g. a video download flood), `send`
     // SUSPENDS the calling coroutine — releasing its dispatcher thread — instead of blocking it.
@@ -34,7 +37,7 @@ class TunWriter(
             try {
                 for (packet in channel) writePacket(packet)
             } catch (e: Exception) {
-                if (running.get()) Log.w(TAG, "TUN write loop failed", e)
+                if (running.get()) { Log.w(TAG, "TUN write loop failed", e); onFatal(e) }
             }
         }
     }

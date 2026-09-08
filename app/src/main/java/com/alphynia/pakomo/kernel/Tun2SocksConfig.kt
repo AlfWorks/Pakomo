@@ -14,7 +14,8 @@ data class Tun2SocksConfig(
     val tcpBufferSize: Int = 16384,
     val maxSessionCount: Int = 1024,
     val connectTimeoutMs: Int = 10000,
-    val tcpReadWriteTimeoutMs: Int = 300_000,
+    // Zero preserves established connections indefinitely; positive values opt into idle reaping.
+    val tcpReadWriteTimeoutMs: Int = 0,
     val udpReadWriteTimeoutMs: Int = 30_000,
     val icmpReplyEnabled: Boolean = true,
 )
