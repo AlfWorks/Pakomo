@@ -6,7 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -42,7 +45,9 @@ import java.net.Inet4Address
 import java.net.Socket
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,6 +77,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private var startJob: Job? = null
     private val pipelineMutex = Mutex()
     private val runtimeGeneration = AtomicLong(0L)
+    private val activeUnderlyingNetwork = AtomicReference<UnderlyingNetwork?>(null)
+    private val underlyingNetworkScores = ConcurrentHashMap<Network, Int>()
+    @Volatile private var underlyingNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var activeVpnConfig: VpnRuntimeConfig? = null
     private var terminalError: String? = null
     private var hitTracker: RecentHitTracker? = null
     private var activeScopeLabel: String? = null
@@ -150,15 +159,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 startJob?.cancel()
                 startJob = serviceScope.launch {
                     pipelineMutex.withLock {
-                        startForwarding(
-                            config.scope,
-                            config.selectedPackages,
-                            config.targetDomains,
-                            config.domainsByPackage,
-                        config.rule,
-                        config.useKotlinKernel,
-                        config.configId,
-                        )
+                        startForwarding(config)
                     }
                 }
             }
@@ -205,6 +206,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 socks.reconfigure(runtime.shaper, runtime.shapingPolicy, runtime.faultPolicy)
                 socks.setCompensateLatency(preferences.readLatencyCompensationEnabled())
                 applyRuntime(runtime)
+                activeVpnConfig = config
                 Log.i(TAG, "Runtime configuration updated: scope=${config.scope.name}")
                 runCatching { updateRuntimeNotification() }
                     .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
@@ -230,6 +232,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
     override fun onDestroy() {
         Log.i(TAG, "VPN service destroyed")
+        activeVpnConfig = null
         stopPipeline()
         serviceScope.cancel()
         terminalError?.let {
@@ -239,17 +242,20 @@ class WeakNetworkVpnService : android.net.VpnService() {
     }
 
     private fun startForwarding(
-        scope: TargetScope,
-        allowedPackages: List<String>,
-        targetDomains: List<String>,
-        domainsByPackage: Map<String, List<String>>,
-        rule: NetworkRule,
-        useKotlinKernel: Boolean,
-        configId: Long,
+        config: VpnRuntimeConfig,
+        preferredUnderlyingNetwork: UnderlyingNetwork? = null,
     ) {
-        stopPipeline()
+        val scope = config.scope
+        val allowedPackages = config.selectedPackages
+        val targetDomains = config.targetDomains
+        val domainsByPackage = config.domainsByPackage
+        val rule = config.rule
         try {
-            val underlyingNetwork = readUnderlyingNetwork()
+            val underlyingNetwork = preferredUnderlyingNetwork
+                ?: activeUnderlyingNetwork.get()
+                ?: readUnderlyingNetwork()
+            stopPipeline()
+            activeUnderlyingNetwork.set(underlyingNetwork)
             val credentials = SocksCredentials(
                 username = "pakomo_${UUID.randomUUID().toString().replace("-", "")}",
                 password = UUID.randomUUID().toString().replace("-", "") +
@@ -264,7 +270,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 protector = object : SocketProtector {
                     override fun protect(socket: Socket): Boolean {
                         return runCatching {
-                            underlyingNetwork.network.bindSocket(socket)
+                            val network = activeUnderlyingNetwork.get()
+                                ?: error("No usable underlying network")
+                            network.network.bindSocket(socket)
                             true
                         }.getOrElse {
                             Log.w(TAG, "Unable to bind TCP socket to underlying network", it)
@@ -274,7 +282,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
                     override fun protect(socket: DatagramSocket): Boolean {
                         return runCatching {
-                            underlyingNetwork.network.bindSocket(socket)
+                            val network = activeUnderlyingNetwork.get()
+                                ?: error("No usable underlying network")
+                            network.network.bindSocket(socket)
                             true
                         }.getOrElse {
                             Log.w(TAG, "Unable to bind UDP socket to underlying network", it)
@@ -317,9 +327,10 @@ class WeakNetworkVpnService : android.net.VpnService() {
             builder.setBlocking(false)
             tunnelInterface = builder.establish()
                 ?: error("Android rejected the VPN interface")
+            startUnderlyingNetworkTracking()
             Log.i(TAG, "VPN interface established")
 
-            if (useKotlinKernel) {
+            if (config.useKotlinKernel) {
                 val engineConfig = Tun2SocksConfig(
                     socksPort = socksPort,
                     socksUsername = credentials.username,
@@ -327,7 +338,21 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 )
                 val engine = Tun2SocksEngine()
                 nativeTunnel = engine
-                engine.start(engineConfig, tunnelInterface!!.fileDescriptor)
+                engine.start(engineConfig, tunnelInterface!!.fileDescriptor) { error ->
+                    serviceScope.launch {
+                        pipelineMutex.withLock {
+                            if (nativeTunnel === engine) {
+                                Log.e(TAG, "Kotlin forwarding engine stopped unexpectedly", error)
+                                stopWithError(
+                                    appLanguage.tr(
+                                        "转发引擎异常终止",
+                                        "Forwarding engine stopped unexpectedly",
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
                 Log.i(TAG, "Native forwarding engine started")
             } else {
                 val hevConfig = HevTunnelConfig.write(cacheDir, socksPort, credentials)
@@ -343,11 +368,12 @@ class WeakNetworkVpnService : android.net.VpnService() {
             // only a real stop resets it.
             if (startedAtElapsedMs == 0L) startedAtElapsedMs = SystemClock.elapsedRealtime()
             startStatsMonitoring(nativeTunnel ?: return, localSocks)
+            activeVpnConfig = config
             VpnServiceController.publish(EngineStage.FORWARDING, "本地转发链路已建立")
             Log.i(TAG, "Forwarding pipeline ready")
             runCatching { updateRuntimeNotification() }
                 .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
-            VpnServiceController.publishAppliedConfig(configId)
+            VpnServiceController.publishAppliedConfig(config.configId)
         } catch (error: Throwable) {
             Log.e(TAG, "Failed to start local forwarding", error)
             stopWithError(error.toUserMessage())
@@ -360,6 +386,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             pipelineMutex.withLock {
                 Log.i(TAG, "Stopping forwarding pipeline")
                 terminalError = null
+                activeVpnConfig = null
                 startedAtElapsedMs = 0L
                 stopPipeline()
                 VpnServiceController.publish(EngineStage.STOPPED)
@@ -371,6 +398,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
 
     private fun stopPipeline() {
         runtimeGeneration.incrementAndGet()
+        stopUnderlyingNetworkTracking()
         statsJob?.cancel()
         statsJob = null
         reconfigureJob?.cancel()
@@ -455,6 +483,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
     private fun stopWithError(message: String) {
         Log.e(TAG, "Forwarding stopped with error: $message")
         terminalError = message
+        activeVpnConfig = null
         startedAtElapsedMs = 0L
         stopPipeline()
         VpnServiceController.publish(EngineStage.ERROR, message)
@@ -651,14 +680,146 @@ class WeakNetworkVpnService : android.net.VpnService() {
         val connectivity = getSystemService(ConnectivityManager::class.java)
         val network = connectivity.activeNetwork
             ?: error("当前没有可用的底层网络")
+        return readUnderlyingNetwork(connectivity, network)
+            ?: error("底层网络没有可用的 IPv4 DNS")
+    }
+
+    private fun readUnderlyingNetwork(
+        connectivity: ConnectivityManager,
+        network: Network,
+    ): UnderlyingNetwork? {
         val dnsServers = connectivity.getLinkProperties(network)
             ?.dnsServers
             .orEmpty()
             .filterIsInstance<Inet4Address>()
-        if (dnsServers.isEmpty()) {
-            error("底层网络没有可用的 IPv4 DNS")
+        return dnsServers.takeIf { it.isNotEmpty() }?.let { UnderlyingNetwork(network, it) }
+    }
+
+    private fun startUnderlyingNetworkTracking() {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        activeUnderlyingNetwork.get()?.let { underlying ->
+            underlyingNetworkScores[underlying.network] =
+                underlyingNetworkScore(connectivity.getNetworkCapabilities(underlying.network)).coerceAtLeast(0)
         }
-        return UnderlyingNetwork(network, dnsServers)
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (underlyingNetworkCallback !== this) return
+                val score = underlyingNetworkScore(connectivity.getNetworkCapabilities(network))
+                if (score >= 0) underlyingNetworkScores[network] = score
+                refreshUnderlyingNetwork(this)
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+                if (underlyingNetworkCallback !== this) return
+                refreshUnderlyingNetwork(this)
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                if (underlyingNetworkCallback !== this) return
+                val score = underlyingNetworkScore(networkCapabilities)
+                if (score >= 0) {
+                    underlyingNetworkScores[network] = score
+                } else {
+                    underlyingNetworkScores.remove(network)
+                }
+                refreshUnderlyingNetwork(this)
+            }
+
+            override fun onLost(network: Network) {
+                if (underlyingNetworkCallback !== this) return
+                underlyingNetworkScores.remove(network)
+                refreshUnderlyingNetwork(this)
+            }
+        }
+        underlyingNetworkCallback = callback
+        try {
+            connectivity.registerNetworkCallback(request, callback)
+        } catch (error: RuntimeException) {
+            underlyingNetworkCallback = null
+            Log.w(TAG, "Unable to monitor underlying networks", error)
+        }
+    }
+
+    private fun refreshUnderlyingNetwork(
+        callback: ConnectivityManager.NetworkCallback,
+    ) {
+        if (underlyingNetworkCallback !== callback) return
+        val current = activeUnderlyingNetwork.get()
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val bestCandidate = underlyingNetworkScores.entries
+            .filter { readUnderlyingNetwork(connectivity, it.key) != null }
+            .maxByOrNull { it.value }
+        val currentScore = current?.network?.let { underlyingNetworkScores[it] } ?: -1
+        val nextNetwork = if (currentScore >= 0 && currentScore >= (bestCandidate?.value ?: -1)) {
+            current?.network
+        } else {
+            bestCandidate?.key
+        }
+        val next = nextNetwork?.let { readUnderlyingNetwork(connectivity, it) }
+        if (next == current) return
+
+        activeUnderlyingNetwork.set(next)
+        runCatching { setUnderlyingNetworks(next?.network?.let { arrayOf(it) } ?: emptyArray()) }
+            .onFailure { Log.w(TAG, "Unable to update VPN underlying network", it) }
+        if (next == null) {
+            Log.w(TAG, "No usable underlying network remains")
+        } else {
+            Log.i(TAG, "Underlying network or DNS changed to ${next.network}")
+            rebuildForUnderlyingNetwork(callback, next)
+        }
+    }
+
+    private fun rebuildForUnderlyingNetwork(
+        callback: ConnectivityManager.NetworkCallback,
+        underlyingNetwork: UnderlyingNetwork,
+    ) {
+        serviceScope.launch {
+            pipelineMutex.withLock {
+                if (underlyingNetworkCallback !== callback ||
+                    activeUnderlyingNetwork.get() != underlyingNetwork
+                ) {
+                    return@withLock
+                }
+                val config = activeVpnConfig ?: return@withLock
+                Log.i(TAG, "Rebuilding forwarding pipeline for underlying network change")
+                startForwarding(config, underlyingNetwork)
+            }
+        }
+    }
+
+    private fun underlyingNetworkScore(capabilities: NetworkCapabilities?): Int {
+        if (capabilities == null ||
+            !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        ) {
+            return -1
+        }
+        var score = if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) 100 else 0
+        score += when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 30
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 20
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 10
+            else -> 0
+        }
+        return score
+    }
+
+    private fun stopUnderlyingNetworkTracking() {
+        val callback = underlyingNetworkCallback
+        underlyingNetworkCallback = null
+        activeUnderlyingNetwork.set(null)
+        underlyingNetworkScores.clear()
+        if (callback != null) {
+            val connectivity = getSystemService(ConnectivityManager::class.java)
+            runCatching { connectivity.unregisterNetworkCallback(callback) }
+        }
     }
 
     private fun createNotificationChannel() {
