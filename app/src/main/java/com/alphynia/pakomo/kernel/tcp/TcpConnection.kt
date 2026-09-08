@@ -57,6 +57,7 @@ class TcpConnection(
     // When this connection's SYN arrived; handed to the SOCKS server to size latency compensation.
     private var synArrivalNanos = 0L
     private val earlyData = ArrayDeque<ByteArray>()
+    private var earlyBytes = 0
     private var socksReadJob: Job? = null
     private var ourFinSent = false
     private var theirFinReceived = false
@@ -140,7 +141,9 @@ class TcpConnection(
         val segLen = seg.payload.size + (if (seg.isSyn) 1 else 0) + (if (seg.isFin) 1 else 0)
         val expected = rcvNxt
         if (seg.sequenceNumber == expected) {
-            if (seg.payload.isNotEmpty()) writeToSocks(seg.payload)
+            // Only advance and ACK data the upstream actually accepted; a refused segment is left
+            // unacknowledged so the peer retransmits it (backpressure — audit #2).
+            if (seg.payload.isNotEmpty() && !writeToSocks(seg.payload)) return
             rcvNxt = (seg.sequenceNumber + segLen) and 0xFFFF_FFFFL
             sendSegment(TcpSegment.FLAG_ACK, ByteArray(0))
         } else if (isAfter(seg.sequenceNumber, expected)) {
@@ -208,6 +211,7 @@ class TcpConnection(
                     }
                 } catch (_: Exception) { resetConnection(); return@launch }
             }
+            earlyBytes = 0
             // Pipeline upstream reads and app sends: a reader coroutine pulls from the SOCKS socket
             // into a bounded channel while a sender coroutine drains it to the app. Serializing the
             // two (read 16 KB, then send it, then read again) added both latencies per batch and
@@ -290,14 +294,25 @@ class TcpConnection(
         3, 3, ourWindowShift.toByte(),              // Window Scale
     )
 
-    private suspend fun writeToSocks(data: ByteArray) {
+    /**
+     * Hand inbound data to the SOCKS upstream. Returns whether the data was accepted — the caller must
+     * only advance rcvNxt / ACK when it was, so we never acknowledge bytes we could not hold. Before
+     * SOCKS is connected we buffer up to our advertised receive window ([ourWindow]); beyond that we
+     * refuse, applying backpressure (the peer retransmits, by which point SOCKS is normally up). The
+     * old code dropped the 65th+ pending segment yet still ACKed it, losing already-acknowledged data
+     * (audit #2).
+     */
+    private suspend fun writeToSocks(data: ByteArray): Boolean {
         val tcp = socksTcp
         if (tcp == null) {
-            if (earlyData.size < 64) earlyData.addLast(data)
-            return
+            if (earlyBytes + data.size > ourWindow) return false
+            earlyData.addLast(data); earlyBytes += data.size
+            return true
         }
-        try { withContext(KernelDispatchers.connIo) { tcp.output.write(data); tcp.output.flush() } }
-        catch (_: Exception) { resetConnection() }
+        return try {
+            withContext(KernelDispatchers.connIo) { tcp.output.write(data); tcp.output.flush() }
+            true
+        } catch (_: Exception) { resetConnection(); false }
     }
 
     private suspend fun sendSegment(flags: Int, payload: ByteArray, options: ByteArray = ByteArray(0)) =
@@ -399,7 +414,7 @@ class TcpConnection(
     }
 
     private fun cleanup() {
-        cancelRto(); closeSocks(); inputChannel.close(); sendQueue.clear(); earlyData.clear()
+        cancelRto(); closeSocks(); inputChannel.close(); sendQueue.clear(); earlyData.clear(); earlyBytes = 0
     }
 
     private fun isAfter(s1: Long, s2: Long): Boolean = ((s1 - s2) and 0xFFFF_FFFFL) < 0x8000_0000L && s1 != s2
