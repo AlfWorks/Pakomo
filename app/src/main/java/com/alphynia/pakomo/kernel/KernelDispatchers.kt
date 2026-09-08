@@ -25,8 +25,16 @@ internal object KernelDispatchers {
     /** TUN read loop + TUN write loop. Small and reserved so the datapath never starves. */
     val core = Dispatchers.IO.limitedParallelism(3)
 
-    /** Blocking upstream socket I/O (SOCKS connect, relay reads/writes). */
+    /** Blocking upstream relay I/O (per-connection reads/writes) — the long-lived, blocking ops. */
     val connIo = Dispatchers.IO.limitedParallelism(CONN_IO_PARALLELISM)
 
+    /**
+     * SOCKS connection setup (TCP connect, UDP associate). Kept on its own budget so establishing new
+     * connections doesn't queue behind [connIo] threads parked in blocking relay reads — a flood of
+     * idle-but-blocked reads must not stop new connections from opening (audit #6).
+     */
+    val connSetup = Dispatchers.IO.limitedParallelism(CONN_SETUP_PARALLELISM)
+
     private const val CONN_IO_PARALLELISM = 256
+    private const val CONN_SETUP_PARALLELISM = 64
 }

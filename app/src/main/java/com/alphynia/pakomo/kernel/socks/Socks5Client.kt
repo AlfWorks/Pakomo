@@ -50,7 +50,7 @@ class Socks5Client(
         destinationAddress: Int,
         destinationPort: Int,
         synArrivalNanos: Long = 0L,
-    ): TcpConnection? = withContext(KernelDispatchers.connIo) {
+    ): TcpConnection? = withContext(KernelDispatchers.connSetup) {
         try {
             val sock = Socket()
             // Large loopback buffers (set before connect so the receive window scales) let the local
@@ -146,7 +146,7 @@ class Socks5Client(
      * Full SOCKS5 UDP ASSOCIATE with preamble.
      * Returns the control channel + relay address.
      */
-    suspend fun udpAssociate(sourceAddress: Int, sourcePort: Int, destinationAddress: Int = 0, destinationPort: Int = 0): UdpAssociation? = withContext(KernelDispatchers.connIo) {
+    suspend fun udpAssociate(sourceAddress: Int, sourcePort: Int, destinationAddress: Int = 0, destinationPort: Int = 0): UdpAssociation? = withContext(KernelDispatchers.connSetup) {
         try {
             val sock = Socket()
             sock.connect(

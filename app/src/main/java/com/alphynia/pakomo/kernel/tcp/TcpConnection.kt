@@ -95,6 +95,11 @@ class TcpConnection(
         if (state == State.CLOSED) return
         state = State.CLOSED
         onClosed()
+        // Wake an actor parked on inputChannel so it leaves runActor and its finally runs cleanup(),
+        // releasing the SOCKS socket, RTO timer and channels. Without this a reaped/closed connection's
+        // resources linger because the actor never observes the close (audit #6). Idempotent with the
+        // cleanup() close.
+        inputChannel.close()
     }
 
     private suspend fun runActor() {
@@ -207,7 +212,7 @@ class TcpConnection(
 
     private fun launchSocksRelay() {
         connectionScope.launch {
-            val tcp = withContext(KernelDispatchers.connIo) {
+            val tcp = withContext(KernelDispatchers.connSetup) {
                 socksClient.tcpConnect(
                     sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
                 )
