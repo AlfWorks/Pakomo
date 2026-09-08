@@ -39,6 +39,11 @@ class UdpSession(
     private var relayChannel: DatagramChannel? = null
     private var relayJob: Job? = null
 
+    // Last time this session saw traffic in EITHER direction; drives the idle timeout. Downstream-only
+    // flows (e.g. a server that keeps pushing after one request) must keep the session alive too, so
+    // this is refreshed on inbound relay datagrams as well as outbound app datagrams (audit #8).
+    @Volatile private var lastActivityNanos = System.nanoTime()
+
     fun enqueue(payload: ByteArray) {
         inputChannel.trySend(payload)
     }
@@ -71,7 +76,10 @@ class UdpSession(
                             val raw = ByteArray(buf.remaining())
                             buf.get(raw)
                             val payload = extractUdpPayload(raw)
-                            if (payload != null) sendToTun(sourceAddr as? java.net.InetSocketAddress ?: return@launch, payload)
+                            if (payload != null) {
+                                sendToTun(sourceAddr as? java.net.InetSocketAddress ?: return@launch, payload)
+                                lastActivityNanos = System.nanoTime()
+                            }
                         } else {
                             // The relay channel is non-blocking: with no datagram ready, yield instead of
                             // hot-spinning. Without this each UDP session pegs a core, and a few hundred
@@ -81,15 +89,15 @@ class UdpSession(
                         if (relayChannel == null || !relayChannel!!.isOpen) break
                     }
                 }
-                var lastActivity = System.nanoTime()
+                lastActivityNanos = System.nanoTime()
                 while (isActive && !closed) {
                     val result = try {
                         withTimeout(IDLE_POLL_MS) { inputChannel.receive() }
                     } catch (_: TimeoutCancellationException) { null }
                     if (result != null) {
-                        lastActivity = System.nanoTime()
+                        lastActivityNanos = System.nanoTime()
                         sendToRelay(assoc, result)
-                    } else if (System.nanoTime() - lastActivity > idleTimeoutMs * 1_000_000L) {
+                    } else if (System.nanoTime() - lastActivityNanos > idleTimeoutMs * 1_000_000L) {
                         break
                     }
                 }
