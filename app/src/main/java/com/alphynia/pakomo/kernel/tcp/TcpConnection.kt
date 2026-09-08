@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import com.alphynia.pakomo.kernel.KernelDispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
@@ -52,12 +53,16 @@ class TcpConnection(
     // the connection under load. The flow-control WAIT stays outside this lock so ACKs can still open
     // the window.
     private val sendLock = Mutex()
+    private val upstreamLock = Mutex()
+    private val connectionJob = SupervisorJob(connectionScope.coroutineContext[Job])
+    private val ownedScope = CoroutineScope(connectionScope.coroutineContext + connectionJob)
     val inputChannel = Channel<TcpSegment>(Channel.UNLIMITED)
     private var socksTcp: Socks5Client.TcpConnection? = null
     // When this connection's SYN arrived; handed to the SOCKS server to size latency compensation.
     private var synArrivalNanos = 0L
     private val earlyData = ArrayDeque<ByteArray>()
     private var earlyBytes = 0
+    private var upstreamFinPending = false
     private var socksReadJob: Job? = null
     private var ourFinSent = false
     private var theirFinReceived = false
@@ -82,7 +87,7 @@ class TcpConnection(
     fun enqueue(segment: TcpSegment) { inputChannel.trySend(segment) }
 
     fun startActor() {
-        connectionScope.launch {
+        ownedScope.launch {
             try { runActor() }
             catch (_: CancellationException) {}
             // Once CLOSED (teardown), a stray actor exception is expected noise — don't log a trace.
@@ -95,11 +100,9 @@ class TcpConnection(
         if (state == State.CLOSED) return
         state = State.CLOSED
         onClosed()
-        // Wake an actor parked on inputChannel so it leaves runActor and its finally runs cleanup(),
-        // releasing the SOCKS socket, RTO timer and channels. Without this a reaped/closed connection's
-        // resources linger because the actor never observes the close (audit #6). Idempotent with the
-        // cleanup() close.
         inputChannel.close()
+        closeSocks()
+        connectionJob.cancel()
     }
 
     private suspend fun runActor() {
@@ -193,25 +196,21 @@ class TcpConnection(
     private suspend fun handleFinWait1(seg: TcpSegment) {
         if (seg.isRst) { closeConnection(); return }
         processAck(seg.acknowledgmentNumber)
-        if (seg.isFin) {
-            rcvNxt = (seg.sequenceNumber + 1) and 0xFFFF_FFFFL
-            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0)); enterTimeWait()
-        }
+        if (seg.payload.isNotEmpty() || seg.isFin) ingestSegment(seg)
         // Our FIN advanced sndNxt by one; it is acked when ackNum == sndNxt (was `sndNxt + 1` — audit #3).
-        if (seg.isAck && seg.acknowledgmentNumber == sndNxt) state = State.FIN_WAIT_2
+        if (state == State.FIN_WAIT_1 && seg.isAck && seg.acknowledgmentNumber == sndNxt) {
+            state = State.FIN_WAIT_2
+        }
     }
 
     private suspend fun handleFinWait2(seg: TcpSegment) {
         if (seg.isRst) { closeConnection(); return }
         processAck(seg.acknowledgmentNumber)
-        if (seg.isFin) {
-            rcvNxt = (seg.sequenceNumber + 1) and 0xFFFF_FFFFL
-            sendSegment(TcpSegment.FLAG_ACK, ByteArray(0)); enterTimeWait()
-        }
+        if (seg.payload.isNotEmpty() || seg.isFin) ingestSegment(seg)
     }
 
     private fun launchSocksRelay() {
-        connectionScope.launch {
+        ownedScope.launch {
             val tcp = withContext(KernelDispatchers.connSetup) {
                 socksClient.tcpConnect(
                     sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
@@ -219,15 +218,26 @@ class TcpConnection(
             }
             if (tcp == null) { Log.w(TAG, "SOCKS5 connect failed $sourcePort"); resetConnection(); return@launch }
             if (BuildConfig.DEBUG) Log.i(TAG, "SOCKS5 connected $sourcePort->$destinationPort")
-            socksTcp = tcp
-            while (earlyData.isNotEmpty()) {
-                try {
-                    withContext(KernelDispatchers.connIo) {
-                        tcp.output.write(earlyData.removeFirst()); tcp.output.flush()
+            try {
+                upstreamLock.withLock {
+                    if (state == State.CLOSED) return@withLock
+                    socksTcp = tcp
+                    while (earlyData.isNotEmpty()) {
+                        withContext(KernelDispatchers.connIo) {
+                            tcp.output.write(earlyData.removeFirst()); tcp.output.flush()
+                        }
                     }
-                } catch (_: Exception) { resetConnection(); return@launch }
+                    earlyBytes = 0
+                    if (upstreamFinPending) tcp.sock.shutdownOutput()
+                }
+            } catch (_: Exception) {
+                if (state != State.CLOSED) resetConnection()
+                return@launch
             }
-            earlyBytes = 0
+            if (state == State.CLOSED || socksTcp !== tcp) {
+                runCatching { tcp.sock.close() }
+                return@launch
+            }
             // Pipeline upstream reads and app sends: a reader coroutine pulls from the SOCKS socket
             // into a bounded channel while a sender coroutine drains it to the app. Serializing the
             // two (read 16 KB, then send it, then read again) added both latencies per batch and
@@ -237,6 +247,8 @@ class TcpConnection(
                 try { for (data in downstream) sendDataToApp(data) } catch (_: Exception) {}
             }
             socksReadJob = launch {
+                var cleanEof = false
+                var readFailure: Exception? = null
                 try {
                     // Don't pump downstream until the handshake finishes: reading while still SYN_RCVD
                     // would find the loop condition false and exit at once (audit #5), emitting a bogus
@@ -247,21 +259,28 @@ class TcpConnection(
                             val buf = ByteArray(SOCKS_READ_BUF)
                             while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
                                 val count = tcp.input.read(buf)
-                                if (count < 0) break
+                                if (count < 0) { cleanEof = true; break }
                                 if (count > 0) downstream.send(buf.copyOf(count))
                             }
                         }
                     }
-                } catch (_: Exception) {
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    readFailure = error
                 } finally {
                     downstream.close()
                     // Wait for the sender to flush every queued segment to the app before the FIN, so a
                     // slow / small-window receiver still gets the tail of the response instead of a FIN
                     // jumping ahead of undelivered data (audit #4).
                     senderJob.join()
-                    // Translate a real upstream EOF into a FIN only from a sending state; in SYN_RCVD or
-                    // after teardown there is nothing to close and sendFin would just latch ourFinSent.
-                    if (!ourFinSent && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) sendFin()
+                    val canClose = state == State.ESTABLISHED || state == State.CLOSE_WAIT
+                    if (cleanEof && !ourFinSent && canClose) {
+                        sendFin()
+                    } else if (readFailure != null && canClose) {
+                        Log.w(TAG, "SOCKS read failed $sourcePort->$destinationPort", readFailure)
+                        resetConnection()
+                    }
                 }
             }
         }
@@ -323,16 +342,18 @@ class TcpConnection(
      * (audit #2).
      */
     private suspend fun writeToSocks(data: ByteArray): Boolean {
-        val tcp = socksTcp
-        if (tcp == null) {
-            if (earlyBytes + data.size > ourWindow) return false
-            earlyData.addLast(data); earlyBytes += data.size
-            return true
+        return upstreamLock.withLock {
+            val tcp = socksTcp
+            if (tcp == null) {
+                if (earlyBytes + data.size > ourWindow) return@withLock false
+                earlyData.addLast(data); earlyBytes += data.size
+                return@withLock true
+            }
+            try {
+                withContext(KernelDispatchers.connIo) { tcp.output.write(data); tcp.output.flush() }
+                true
+            } catch (_: Exception) { resetConnection(); false }
         }
-        return try {
-            withContext(KernelDispatchers.connIo) { tcp.output.write(data); tcp.output.flush() }
-            true
-        } catch (_: Exception) { resetConnection(); false }
     }
 
     private suspend fun sendSegment(flags: Int, payload: ByteArray, options: ByteArray = ByteArray(0)) =
@@ -380,7 +401,9 @@ class TcpConnection(
         when (state) {
             State.ESTABLISHED -> {
                 sendSegment(TcpSegment.FLAG_FIN or TcpSegment.FLAG_ACK, ByteArray(0))
-                state = State.FIN_WAIT_1; closeSocks()
+                // The remote side closed only its send direction. Keep the SOCKS output open so the
+                // app may still send data in FIN_WAIT until it closes its direction too.
+                state = State.FIN_WAIT_1
             }
             State.CLOSE_WAIT -> {
                 sendSegment(TcpSegment.FLAG_FIN or TcpSegment.FLAG_ACK, ByteArray(0))
@@ -397,7 +420,7 @@ class TcpConnection(
 
     private fun enterTimeWait() {
         state = State.TIME_WAIT; closeSocks()
-        connectionScope.launch { delay(2000L); closeConnection() }
+        ownedScope.launch { delay(2000L); closeConnection() }
     }
 
     private fun closeSocks() {
@@ -410,11 +433,20 @@ class TcpConnection(
      * server sees our EOF, while the input stays open to read the response. The downstream loop keeps
      * running in CLOSE_WAIT and emits our FIN when the server closes (audit #3).
      */
-    private fun halfCloseUpstream() {
-        runCatching { socksTcp?.sock?.shutdownOutput() }
+    private suspend fun halfCloseUpstream() {
+        val failed = upstreamLock.withLock {
+            val tcp = socksTcp
+            if (tcp == null) {
+                upstreamFinPending = true
+                false
+            } else {
+                runCatching { tcp.sock.shutdownOutput() }.isFailure
+            }
+        }
+        if (failed && state != State.CLOSED) resetConnection()
     }
 
-    private fun startRtoTimer() { cancelRto(); rtoJob = connectionScope.launch { delay(rtoMs); retransmit() } }
+    private fun startRtoTimer() { cancelRto(); rtoJob = ownedScope.launch { delay(rtoMs); retransmit() } }
     private fun cancelRto() { rtoJob?.cancel(); rtoJob = null }
 
     private suspend fun retransmit() {
@@ -443,7 +475,7 @@ class TcpConnection(
     }
 
     private fun cleanup() {
-        cancelRto(); closeSocks(); inputChannel.close(); sendQueue.clear(); earlyData.clear(); earlyBytes = 0
+        cancelRto(); closeSocks(); inputChannel.close(); sendQueue.clear(); connectionJob.cancel()
     }
 
     private fun isAfter(s1: Long, s2: Long): Boolean = ((s1 - s2) and 0xFFFF_FFFFL) < 0x8000_0000L && s1 != s2

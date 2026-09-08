@@ -37,6 +37,7 @@ class UdpSession(
     private val inputChannel = Channel<ByteArray>(Channel.UNLIMITED)
     private var association: Socks5Client.UdpAssociation? = null
     private var relayChannel: DatagramChannel? = null
+    private var actorJob: Job? = null
     private var relayJob: Job? = null
 
     // Last time this session saw traffic in EITHER direction; drives the idle timeout. Downstream-only
@@ -49,7 +50,7 @@ class UdpSession(
     }
 
     fun startActor() {
-        sessionScope.launch {
+        actorJob = sessionScope.launch {
             try {
                 val assoc = withContext(KernelDispatchers.connIo) {
                     socksClient.udpAssociate(sourceAddress, sourcePort, destinationAddress, destinationPort)
@@ -173,6 +174,8 @@ class UdpSession(
     fun close() {
         if (closed) return
         closed = true
+        actorJob?.cancel()
+        actorJob = null
         relayJob?.cancel()
         inputChannel.close()
         runCatching { relayChannel?.close() }

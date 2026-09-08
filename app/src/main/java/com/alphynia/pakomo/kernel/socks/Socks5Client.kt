@@ -14,6 +14,7 @@ import java.nio.channels.DatagramChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import com.alphynia.pakomo.kernel.KernelDispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 /**
@@ -50,87 +51,79 @@ class Socks5Client(
         destinationAddress: Int,
         destinationPort: Int,
         synArrivalNanos: Long = 0L,
-    ): TcpConnection? = withContext(KernelDispatchers.connSetup) {
-        try {
-            val sock = Socket()
-            // Large loopback buffers (set before connect so the receive window scales) let the local
-            // SOCKS server stream ahead instead of stalling on a small buffer — lifts per-connection
-            // download throughput.
-            runCatching { sock.receiveBufferSize = 1024 * 1024 }
-            runCatching { sock.sendBufferSize = 512 * 1024 }
-            sock.connect(
-                InetSocketAddress(socksAddress, socksPort),
-                connectTimeoutMs,
-            )
-            sock.tcpNoDelay = true
-            val input = sock.getInputStream()
-            val output = sock.getOutputStream()
+    ): TcpConnection? = withPendingSocket { sock ->
+        // Large loopback buffers (set before connect so the receive window scales) let the local
+        // SOCKS server stream ahead instead of stalling on a small buffer — lifts per-connection
+        // download throughput.
+        runCatching { sock.receiveBufferSize = 1024 * 1024 }
+        runCatching { sock.sendBufferSize = 512 * 1024 }
+        sock.connect(
+            InetSocketAddress(socksAddress, socksPort),
+            connectTimeoutMs,
+        )
+        sock.tcpNoDelay = true
+        val input = sock.getInputStream()
+        val output = sock.getOutputStream()
 
-            // Hand this connection's SYN-arrival time to the SOCKS server (keyed by our loopback
-            // port) BEFORE the preamble, so latency compensation can include the tun2socks setup.
-            // The server takes it after reading the preamble — the write→read edge orders us first.
-            if (synArrivalNanos != 0L) {
-                ConnectionSetupRegistry.record(sock.localPort, synArrivalNanos)
-            }
-
-            // 1. Write preamble
-            output.write(buildPreamble(
-                protocol = 6, // TCP
-                sourceAddress = sourceAddress,
-                sourcePort = sourcePort,
-                destinationAddress = destinationAddress,
-                destinationPort = destinationPort,
-            ))
-            output.flush()
-
-            // 2. Method negotiation
-            output.write(byteArrayOf(0x05, 0x01, 0x02))
-            output.flush()
-            val methodResponse = input.readExact(2)
-            if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
-                runCatching { sock.close() }
-                return@withContext null
-            }
-
-            // 3. Auth
-            val userBytes = username.toByteArray(StandardCharsets.UTF_8)
-            val passBytes = password.toByteArray(StandardCharsets.UTF_8)
-            val authMsg = ByteBuffer.allocate(3 + userBytes.size + passBytes.size)
-            authMsg.put(0x01.toByte())
-            authMsg.put(userBytes.size.toByte())
-            authMsg.put(userBytes)
-            authMsg.put(passBytes.size.toByte())
-            authMsg.put(passBytes)
-            output.write(authMsg.array())
-            output.flush()
-            val authResponse = input.readExact(2)
-            if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
-                runCatching { sock.close() }
-                return@withContext null
-            }
-
-            // 4. CONNECT request
-            val connectReq = ByteBuffer.allocate(10)
-            connectReq.put(0x05.toByte()) // version
-            connectReq.put(0x01.toByte()) // CONNECT
-            connectReq.put(0x00.toByte()) // reserved
-            connectReq.put(0x01.toByte()) // IPv4
-            connectReq.putInt(destinationAddress)
-            connectReq.putShort(destinationPort.toShort())
-            output.write(connectReq.array())
-            output.flush()
-
-            // Read reply (min 10 bytes)
-            val reply = input.readExact(10)
-            if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
-                runCatching { sock.close() }
-                return@withContext null
-            }
-
-            TcpConnection(sock, input, output)
-        } catch (_: Exception) {
-            null
+        // Hand this connection's SYN-arrival time to the SOCKS server (keyed by our loopback
+        // port) BEFORE the preamble, so latency compensation can include the tun2socks setup.
+        // The server takes it after reading the preamble — the write→read edge orders us first.
+        if (synArrivalNanos != 0L) {
+            ConnectionSetupRegistry.record(sock.localPort, synArrivalNanos)
         }
+
+        // 1. Write preamble
+        output.write(buildPreamble(
+            protocol = 6, // TCP
+            sourceAddress = sourceAddress,
+            sourcePort = sourcePort,
+            destinationAddress = destinationAddress,
+            destinationPort = destinationPort,
+        ))
+        output.flush()
+
+        // 2. Method negotiation
+        output.write(byteArrayOf(0x05, 0x01, 0x02))
+        output.flush()
+        val methodResponse = input.readExact(2)
+        if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
+            return@withPendingSocket null
+        }
+
+        // 3. Auth
+        val userBytes = username.toByteArray(StandardCharsets.UTF_8)
+        val passBytes = password.toByteArray(StandardCharsets.UTF_8)
+        val authMsg = ByteBuffer.allocate(3 + userBytes.size + passBytes.size)
+        authMsg.put(0x01.toByte())
+        authMsg.put(userBytes.size.toByte())
+        authMsg.put(userBytes)
+        authMsg.put(passBytes.size.toByte())
+        authMsg.put(passBytes)
+        output.write(authMsg.array())
+        output.flush()
+        val authResponse = input.readExact(2)
+        if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
+            return@withPendingSocket null
+        }
+
+        // 4. CONNECT request
+        val connectReq = ByteBuffer.allocate(10)
+        connectReq.put(0x05.toByte()) // version
+        connectReq.put(0x01.toByte()) // CONNECT
+        connectReq.put(0x00.toByte()) // reserved
+        connectReq.put(0x01.toByte()) // IPv4
+        connectReq.putInt(destinationAddress)
+        connectReq.putShort(destinationPort.toShort())
+        output.write(connectReq.array())
+        output.flush()
+
+        // Read reply (min 10 bytes)
+        val reply = input.readExact(10)
+        if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
+            return@withPendingSocket null
+        }
+
+        TcpConnection(sock, input, output)
     }
 
     // --- UDP ASSOCIATE ---
@@ -146,91 +139,108 @@ class Socks5Client(
      * Full SOCKS5 UDP ASSOCIATE with preamble.
      * Returns the control channel + relay address.
      */
-    suspend fun udpAssociate(sourceAddress: Int, sourcePort: Int, destinationAddress: Int = 0, destinationPort: Int = 0): UdpAssociation? = withContext(KernelDispatchers.connSetup) {
-        try {
-            val sock = Socket()
-            sock.connect(
-                InetSocketAddress(socksAddress, socksPort),
-                connectTimeoutMs,
-            )
-            val input = sock.getInputStream()
-            val output = sock.getOutputStream()
+    suspend fun udpAssociate(
+        sourceAddress: Int,
+        sourcePort: Int,
+        destinationAddress: Int = 0,
+        destinationPort: Int = 0,
+    ): UdpAssociation? = withPendingSocket { sock ->
+        sock.connect(
+            InetSocketAddress(socksAddress, socksPort),
+            connectTimeoutMs,
+        )
+        val input = sock.getInputStream()
+        val output = sock.getOutputStream()
 
-            // 1. Preamble (UDP)
-            output.write(buildPreamble(
-                protocol = 17, // UDP
-                sourceAddress = sourceAddress,
-                sourcePort = sourcePort,
-                destinationAddress = destinationAddress, destinationPort = destinationPort,
-            ))
-            output.flush()
+        // 1. Preamble (UDP)
+        output.write(buildPreamble(
+            protocol = 17, // UDP
+            sourceAddress = sourceAddress,
+            sourcePort = sourcePort,
+            destinationAddress = destinationAddress, destinationPort = destinationPort,
+        ))
+        output.flush()
 
-            // 2. Method negotiation
-            output.write(byteArrayOf(0x05, 0x01, 0x02))
-            output.flush()
-            val methodResponse = input.readExact(2)
-            if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
-                runCatching { sock.close() }
-                return@withContext null
+        // 2. Method negotiation
+        output.write(byteArrayOf(0x05, 0x01, 0x02))
+        output.flush()
+        val methodResponse = input.readExact(2)
+        if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
+            return@withPendingSocket null
+        }
+
+        // 3. Auth
+        val userBytes = username.toByteArray(StandardCharsets.UTF_8)
+        val passBytes = password.toByteArray(StandardCharsets.UTF_8)
+        val authMsg = ByteBuffer.allocate(3 + userBytes.size + passBytes.size)
+        authMsg.put(0x01.toByte())
+        authMsg.put(userBytes.size.toByte())
+        authMsg.put(userBytes)
+        authMsg.put(passBytes.size.toByte())
+        authMsg.put(passBytes)
+        output.write(authMsg.array())
+        output.flush()
+        val authResponse = input.readExact(2)
+        if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
+            return@withPendingSocket null
+        }
+
+        // 4. UDP ASSOCIATE request
+        val assocReq = ByteBuffer.allocate(10)
+        assocReq.put(0x05.toByte()) // version
+        assocReq.put(0x03.toByte()) // UDP ASSOCIATE
+        assocReq.put(0x00.toByte()) // reserved
+        assocReq.put(0x01.toByte()) // IPv4
+        assocReq.putInt(0)          // 0.0.0.0
+        assocReq.putShort(0)        // port 0
+        output.write(assocReq.array())
+        output.flush()
+
+        // Read reply
+        val reply = input.readExact(10)
+        if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
+            return@withPendingSocket null
+        }
+        val addrType = reply[3].toInt() and 0xFF
+        val bindAddr: InetAddress
+        var offset = 4
+        when (addrType) {
+            1 -> { // IPv4
+                bindAddr = InetAddress.getByAddress(reply.copyOfRange(offset, offset + 4))
+                offset += 4
             }
-
-            // 3. Auth
-            val userBytes = username.toByteArray(StandardCharsets.UTF_8)
-            val passBytes = password.toByteArray(StandardCharsets.UTF_8)
-            val authMsg = ByteBuffer.allocate(3 + userBytes.size + passBytes.size)
-            authMsg.put(0x01.toByte())
-            authMsg.put(userBytes.size.toByte())
-            authMsg.put(userBytes)
-            authMsg.put(passBytes.size.toByte())
-            authMsg.put(passBytes)
-            output.write(authMsg.array())
-            output.flush()
-            val authResponse = input.readExact(2)
-            if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
-                runCatching { sock.close() }
-                return@withContext null
+            4 -> { // IPv6 (unlikely but handle)
+                bindAddr = InetAddress.getByAddress(reply.copyOfRange(offset, offset + 16))
+                offset += 16
             }
+            else -> return@withPendingSocket null
+        }
+        val bindPort = readInt16(reply, offset)
 
-            // 4. UDP ASSOCIATE request
-            val assocReq = ByteBuffer.allocate(10)
-            assocReq.put(0x05.toByte()) // version
-            assocReq.put(0x03.toByte()) // UDP ASSOCIATE
-            assocReq.put(0x00.toByte()) // reserved
-            assocReq.put(0x01.toByte()) // IPv4
-            assocReq.putInt(0)          // 0.0.0.0
-            assocReq.putShort(0)        // port 0
-            output.write(assocReq.array())
-            output.flush()
+        UdpAssociation(controlSocket = sock,
+            controlInput = input,
+            controlOutput = output,
+            relayAddress = InetSocketAddress(bindAddr, bindPort),
+        )
+    }
 
-            // Read reply
-            val reply = input.readExact(10)
-            if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
-                runCatching { sock.close() }
-                return@withContext null
-            }
-            val addrType = reply[3].toInt() and 0xFF
-            val bindAddr: InetAddress
-            var offset = 4
-            when (addrType) {
-                1 -> { // IPv4
-                    bindAddr = InetAddress.getByAddress(reply.copyOfRange(offset, offset + 4))
-                    offset += 4
+    private suspend fun <T> withPendingSocket(block: (Socket) -> T?): T? {
+        var pendingSocket: Socket? = null
+        return try {
+            val result = withContext(KernelDispatchers.connSetup) {
+                Socket().let { socket ->
+                    pendingSocket = socket
+                    block(socket)
                 }
-                4 -> { // IPv6 (unlikely but handle)
-                    bindAddr = InetAddress.getByAddress(reply.copyOfRange(offset, offset + 16))
-                    offset += 16
-                }
-                else -> { runCatching { sock.close() }; return@withContext null }
             }
-            val bindPort = readInt16(reply, offset)
-
-            UdpAssociation(controlSocket = sock,
-                controlInput = input,
-                controlOutput = output,
-                relayAddress = InetSocketAddress(bindAddr, bindPort),
-            )
+            if (result != null) pendingSocket = null
+            result
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (_: Exception) {
             null
+        } finally {
+            runCatching { pendingSocket?.close() }
         }
     }
 
