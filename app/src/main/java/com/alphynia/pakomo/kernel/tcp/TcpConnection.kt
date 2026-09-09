@@ -214,7 +214,7 @@ class TcpConnection(
     private fun launchSocksRelay() {
         ownedScope.launch {
             val tcp = socksClient.tcpConnect(
-                sourceAddress, sourcePort, destinationAddress, destinationPort, synArrivalNanos,
+                sourceAddress, sourcePort, destinationAddress, destinationPort, nioReactor, synArrivalNanos,
             )
             if (tcp == null) { Log.w(TAG, "SOCKS5 connect failed $sourcePort"); resetConnection(); return@launch }
             if (BuildConfig.DEBUG) Log.i(TAG, "SOCKS5 connected $sourcePort->$destinationPort")

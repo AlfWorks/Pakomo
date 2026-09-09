@@ -1,6 +1,7 @@
 package com.alphynia.pakomo.kernel.socks
 
 import com.alphynia.pakomo.forwarding.ConnectionSetupRegistry
+import com.alphynia.pakomo.forwarding.NioSelectorLoop
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.readInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt32
@@ -45,15 +46,18 @@ class Socks5Client(
      * 3. SOCKS5 auth handshake
      * 4. CONNECT to [destAddr]:[destPort]
      *
-     * The short, request/response handshake runs in the channel's default **blocking** mode (simple
-     * and it happens once on [KernelDispatchers.connSetup]); the channel is switched to non-blocking
-     * only after the CONNECT reply, right before it is handed to the reactor for data relay.
+     * Only the TCP connect is blocking (bounded by [connectTimeoutMs], on [KernelDispatchers.connSetup]);
+     * the channel is switched to non-blocking immediately after, so the request/response handshake runs
+     * through [reactor] with a per-read timeout. A SOCKS server that accepts but never replies therefore
+     * cannot pin a connSetup thread — the handshake *suspends* (freeing the thread) and times out after
+     * [connectTimeoutMs] instead of blocking forever.
      */
     suspend fun tcpConnect(
         sourceAddress: Int,
         sourcePort: Int,
         destinationAddress: Int,
         destinationPort: Int,
+        reactor: NioSelectorLoop,
         synArrivalNanos: Long = 0L,
     ): TcpConnection? = withPendingChannel { channel ->
         val sock = channel.socket()
@@ -68,6 +72,9 @@ class Socks5Client(
             connectTimeoutMs,
         )
         sock.tcpNoDelay = true
+        // Non-blocking from here: every handshake read/write goes through the reactor with a timeout.
+        channel.configureBlocking(false)
+        val timeout = connectTimeoutMs.toLong()
 
         // Hand this connection's SYN-arrival time to the SOCKS server (keyed by our loopback
         // port) BEFORE the preamble, so latency compensation can include the tun2socks setup.
@@ -77,17 +84,17 @@ class Socks5Client(
         }
 
         // 1. Write preamble
-        channel.writeAllBlocking(buildPreamble(
+        reactor.writeFully(channel, ByteBuffer.wrap(buildPreamble(
             protocol = 6, // TCP
             sourceAddress = sourceAddress,
             sourcePort = sourcePort,
             destinationAddress = destinationAddress,
             destinationPort = destinationPort,
-        ))
+        )), timeout)
 
         // 2. Method negotiation
-        channel.writeAllBlocking(byteArrayOf(0x05, 0x01, 0x02))
-        val methodResponse = channel.readExactBlocking(2)
+        reactor.writeFully(channel, ByteBuffer.wrap(byteArrayOf(0x05, 0x01, 0x02)), timeout)
+        val methodResponse = reactor.readExact(channel, 2, timeout)
         if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
             return@withPendingChannel null
         }
@@ -101,8 +108,8 @@ class Socks5Client(
         authMsg.put(userBytes)
         authMsg.put(passBytes.size.toByte())
         authMsg.put(passBytes)
-        channel.writeAllBlocking(authMsg.array())
-        val authResponse = channel.readExactBlocking(2)
+        reactor.writeFully(channel, ByteBuffer.wrap(authMsg.array()), timeout)
+        val authResponse = reactor.readExact(channel, 2, timeout)
         if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
             return@withPendingChannel null
         }
@@ -115,16 +122,14 @@ class Socks5Client(
         connectReq.put(0x01.toByte()) // IPv4
         connectReq.putInt(destinationAddress)
         connectReq.putShort(destinationPort.toShort())
-        channel.writeAllBlocking(connectReq.array())
+        reactor.writeFully(channel, ByteBuffer.wrap(connectReq.array()), timeout)
 
         // Read reply (min 10 bytes)
-        val reply = channel.readExactBlocking(10)
+        val reply = reactor.readExact(channel, 10, timeout)
         if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
             return@withPendingChannel null
         }
 
-        // Handshake done — hand the channel to the reactor in non-blocking mode.
-        channel.configureBlocking(false)
         TcpConnection(channel)
     }
 
@@ -230,7 +235,7 @@ class Socks5Client(
      * Opens a [SocketChannel] on [KernelDispatchers.connSetup], runs the handshake [block], and closes
      * the channel if the block fails or returns null — mirrors [withPendingSocket] for the NIO path.
      */
-    private suspend fun <T> withPendingChannel(block: (SocketChannel) -> T?): T? {
+    private suspend fun <T> withPendingChannel(block: suspend (SocketChannel) -> T?): T? {
         var pending: SocketChannel? = null
         return try {
             val result = withContext(KernelDispatchers.connSetup) {
@@ -306,17 +311,14 @@ class Socks5Client(
             return result
         }
 
-        /** Writes every byte of [data] to a **blocking** channel. */
-        private fun SocketChannel.writeAllBlocking(data: ByteArray) {
-            val buf = ByteBuffer.wrap(data)
-            while (buf.hasRemaining()) write(buf)
-        }
-
-        /** Reads exactly [size] bytes from a **blocking** channel, or throws at EOF. */
-        private fun SocketChannel.readExactBlocking(size: Int): ByteArray {
+        /**
+         * Reads exactly [size] bytes from a non-blocking [channel] through the reactor, bounding each
+         * read by [timeoutMs] so a stalled handshake fails instead of hanging. Throws at EOF/timeout.
+         */
+        private suspend fun NioSelectorLoop.readExact(channel: SocketChannel, size: Int, timeoutMs: Long): ByteArray {
             val buf = ByteBuffer.allocate(size)
             while (buf.hasRemaining()) {
-                if (read(buf) < 0) throw java.io.EOFException()
+                if (read(channel, buf, timeoutMs) < 0) throw java.io.EOFException()
             }
             return buf.array()
         }
