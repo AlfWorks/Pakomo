@@ -14,8 +14,12 @@ data class Tun2SocksConfig(
     val tcpBufferSize: Int = 16384,
     val maxSessionCount: Int = 1024,
     val connectTimeoutMs: Int = 10000,
-    // Zero preserves established connections indefinitely; positive values opt into idle reaping.
-    val tcpReadWriteTimeoutMs: Int = 0,
+    // Idle timeout for ESTABLISHED connections. 300s (the old default) reaped long-lived heartbeats;
+    // 0 (never reap) leaks connections whose peer silently vanished — each keeps a blocking-read thread
+    // parked forever, squeezing the connIo pool. 15 min splits the difference: normal heartbeats
+    // (seconds to a few minutes) survive, while a genuinely dead idle connection is reclaimed and its
+    // read slot freed. 0 still opts out entirely for callers that want it.
+    val tcpReadWriteTimeoutMs: Int = 900_000,
     val udpReadWriteTimeoutMs: Int = 30_000,
     val icmpReplyEnabled: Boolean = true,
 )

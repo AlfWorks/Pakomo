@@ -23,13 +23,17 @@ class KernelUnitTest {
     }
 
     @Test
-    fun establishedTcpIdleReapingIsOptIn() {
+    fun establishedTcpIdleTimeoutIsGenerousButFinite() {
         val config = Tun2SocksConfig(
             socksPort = 1080,
             socksUsername = "user",
             socksPassword = "password",
         )
-        assertEquals(0, config.tcpReadWriteTimeoutMs)
+        // Not 300s (killed long heartbeats) and not 0 (leaked dead-idle connections, each pinning a
+        // blocking-read thread): a generous finite default so heartbeats survive while a genuinely dead
+        // idle connection is still reclaimed and its read slot freed (audit #9 / review).
+        assertEquals(900_000, config.tcpReadWriteTimeoutMs)
+        assertTrue(config.tcpReadWriteTimeoutMs > 300_000)
     }
 
     @Test

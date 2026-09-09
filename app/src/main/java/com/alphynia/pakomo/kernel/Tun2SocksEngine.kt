@@ -108,8 +108,9 @@ class Tun2SocksEngine {
     }
 
     /**
-    * Closes abandoned handshake/teardown states, plus established connections only when the
-    * caller explicitly configures an idle timeout.
+     * Closes abandoned handshake/teardown states (short [HALF_OPEN_IDLE_MS]) and established
+     * connections idle past [Tun2SocksConfig.tcpReadWriteTimeoutMs] (generous by default so heartbeats
+     * survive but a silently-dead idle connection is still reclaimed; 0 opts out of established reaping).
      */
     private fun startReaper(config: Tun2SocksConfig) = engineScope.launch {
         val establishedIdleMs = config.tcpReadWriteTimeoutMs.takeIf { it > 0 }?.toLong()
