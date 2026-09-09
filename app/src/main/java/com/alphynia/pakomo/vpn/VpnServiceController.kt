@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.update
 object VpnServiceController {
     private val _runtime = MutableStateFlow(EngineRuntime())
     val runtime: StateFlow<EngineRuntime> = _runtime.asStateFlow()
+    private val _activeRule = MutableStateFlow<NetworkRule?>(null)
+    /** Rule confirmed by the service, rather than the user's next selected preset. */
+    val activeRule: StateFlow<NetworkRule?> = _activeRule.asStateFlow()
 
     private val _appliedConfigId = MutableStateFlow(0L)
 
@@ -151,7 +154,8 @@ object VpnServiceController {
     }
 
     /** Called by the service once it has finished applying the configuration with [id]. Atomic max. */
-    internal fun publishAppliedConfig(id: Long) {
+    internal fun publishAppliedConfig(id: Long, rule: NetworkRule) {
+        _activeRule.value = rule
         _appliedConfigId.update { current -> maxOf(current, id) }
     }
 

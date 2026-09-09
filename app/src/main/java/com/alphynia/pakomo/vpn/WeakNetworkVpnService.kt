@@ -210,7 +210,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 Log.i(TAG, "Runtime configuration updated: scope=${config.scope.name}")
                 runCatching { updateRuntimeNotification() }
                     .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
-                VpnServiceController.publishAppliedConfig(config.configId)
+                VpnServiceController.publishAppliedConfig(config.configId, config.rule)
             } catch (cancel: kotlinx.coroutines.CancellationException) {
                 throw cancel // superseded/cancelled — not a failure, and must not be swallowed
             } catch (error: Throwable) {
@@ -373,7 +373,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
             Log.i(TAG, "Forwarding pipeline ready")
             runCatching { updateRuntimeNotification() }
                 .onFailure { Log.w(TAG, "Runtime notification update failed", it) }
-            VpnServiceController.publishAppliedConfig(config.configId)
+            VpnServiceController.publishAppliedConfig(config.configId, config.rule)
         } catch (error: Throwable) {
             Log.e(TAG, "Failed to start local forwarding", error)
             stopWithError(error.toUserMessage())

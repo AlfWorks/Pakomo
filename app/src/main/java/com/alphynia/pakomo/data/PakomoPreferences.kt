@@ -9,6 +9,7 @@ import com.alphynia.pakomo.core.model.TargetScope
 import com.alphynia.pakomo.core.model.defaultRules
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.channels.awaitClose
 
 class PakomoPreferences(context: Context) {
     private val preferences = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
@@ -81,6 +82,15 @@ class PakomoPreferences(context: Context) {
 
     fun readActiveRuleId(): String =
         preferences.getString(KEY_ACTIVE_RULE, "light") ?: "light"
+
+    fun observeActiveRuleId() = kotlinx.coroutines.flow.callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_ACTIVE_RULE || key == null) trySend(readActiveRuleId())
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(readActiveRuleId())
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     fun writeActiveRuleId(id: String) {
         preferences.edit { putString(KEY_ACTIVE_RULE, id) }

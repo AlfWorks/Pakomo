@@ -71,6 +71,13 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
             "State loaded: scope=${_state.value.scope.name}, rules=${storedRules.size}, addressDomains=${_state.value.addressDomains.size}",
         )
         refreshApps()
+        viewModelScope.launch {
+            preferences.observeActiveRuleId().collect { id ->
+                _state.update { current ->
+                    if (current.rules.any { it.id == id }) current.copy(activeRuleId = id) else current
+                }
+            }
+        }
     }
 
     fun refreshApps() {
