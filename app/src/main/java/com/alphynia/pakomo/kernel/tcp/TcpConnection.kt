@@ -3,11 +3,12 @@ package com.alphynia.pakomo.kernel.tcp
 import android.os.SystemClock
 import android.util.Log
 import com.alphynia.pakomo.BuildConfig
+import com.alphynia.pakomo.forwarding.NioSelectorLoop
 import com.alphynia.pakomo.kernel.socks.Socks5Client
+import java.nio.ByteBuffer
 import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import com.alphynia.pakomo.kernel.KernelDispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
@@ -17,7 +18,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlin.math.min
 
 class TcpConnection(
@@ -28,6 +28,7 @@ class TcpConnection(
     private val mss: Int,
     private val onSendPacket: suspend (ByteArray) -> Unit,
     private val socksClient: Socks5Client,
+    private val nioReactor: NioSelectorLoop,
     private val connectionScope: CoroutineScope,
     private val onClosed: () -> Unit,
     private val peerWindowShift: Int = 0,
@@ -222,19 +223,17 @@ class TcpConnection(
                     if (state == State.CLOSED) return@withLock
                     socksTcp = tcp
                     while (earlyData.isNotEmpty()) {
-                        withContext(KernelDispatchers.connWrite) {
-                            tcp.output.write(earlyData.removeFirst()); tcp.output.flush()
-                        }
+                        nioReactor.writeFully(tcp.channel, ByteBuffer.wrap(earlyData.removeFirst()), 0)
                     }
                     earlyBytes = 0
-                    if (upstreamFinPending) tcp.sock.shutdownOutput()
+                    if (upstreamFinPending) tcp.channel.shutdownOutput()
                 }
             } catch (_: Exception) {
                 if (state != State.CLOSED) resetConnection()
                 return@launch
             }
             if (state == State.CLOSED || socksTcp !== tcp) {
-                runCatching { tcp.sock.close() }
+                runCatching { tcp.channel.close() }
                 return@launch
             }
             // Pipeline upstream reads and app sends: a reader coroutine pulls from the SOCKS socket
@@ -254,12 +253,19 @@ class TcpConnection(
                     // FIN. Waiting exits if the connection is torn down (state leaves SYN_RCVD).
                     while (state == State.SYN_RCVD) delay(FLOW_POLL_MS)
                     if (state == State.ESTABLISHED || state == State.CLOSE_WAIT) {
-                        withContext(KernelDispatchers.connRead) {
-                            val buf = ByteArray(SOCKS_READ_BUF)
-                            while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
-                                val count = tcp.input.read(buf)
-                                if (count < 0) { cleanEof = true; break }
-                                if (count > 0) downstream.send(buf.copyOf(count))
+                        val buf = ByteBuffer.allocate(SOCKS_READ_BUF)
+                        while (isActive && (state == State.ESTABLISHED || state == State.CLOSE_WAIT)) {
+                            buf.clear()
+                            // idleTimeoutMs=0: never time out here; the engine reaper is the single
+                            // idle authority (audit #9). The read runs on this coroutine — the reactor
+                            // thread only waits for readiness and resumes us, so no pool thread parks.
+                            val count = nioReactor.read(tcp.channel, buf, 0)
+                            if (count < 0) { cleanEof = true; break }
+                            if (count > 0) {
+                                buf.flip()
+                                val data = ByteArray(count)
+                                buf.get(data)
+                                downstream.send(data)
                             }
                         }
                     }
@@ -349,7 +355,7 @@ class TcpConnection(
                 return@withLock true
             }
             try {
-                withContext(KernelDispatchers.connWrite) { tcp.output.write(data); tcp.output.flush() }
+                nioReactor.writeFully(tcp.channel, ByteBuffer.wrap(data), 0)
                 true
             } catch (_: Exception) { resetConnection(); false }
         }
@@ -424,7 +430,7 @@ class TcpConnection(
 
     private fun closeSocks() {
         socksReadJob?.cancel(); socksReadJob = null
-        runCatching { socksTcp?.sock?.close() }; socksTcp = null
+        runCatching { socksTcp?.channel?.close() }; socksTcp = null
     }
 
     /**
@@ -439,7 +445,7 @@ class TcpConnection(
                 upstreamFinPending = true
                 false
             } else {
-                runCatching { tcp.sock.shutdownOutput() }.isFailure
+                runCatching { tcp.channel.shutdownOutput() }.isFailure
             }
         }
         if (failed && state != State.CLOSED) resetConnection()

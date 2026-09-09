@@ -4,6 +4,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import com.alphynia.pakomo.BuildConfig
+import com.alphynia.pakomo.forwarding.NioSelectorLoop
 import com.alphynia.pakomo.kernel.icmp.IcmpResponder
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet
 import com.alphynia.pakomo.kernel.socks.Socks5Client
@@ -33,6 +34,9 @@ class Tun2SocksEngine {
     private var config: Tun2SocksConfig? = null
     private var tunFd: FileDescriptor? = null
     private var socksClient: Socks5Client? = null
+    // One shared NIO reactor relays every TCP connection's upstream reads/writes without a thread per
+    // connection, removing the blocking-read pool ceiling. Created on start, closed on stop.
+    private var nioReactor: NioSelectorLoop? = null
     private var writer: TunWriter? = null
     private var readJob: Job? = null
     private var reaperJob: Job? = null
@@ -78,6 +82,7 @@ class Tun2SocksEngine {
             password = config.socksPassword,
             connectTimeoutMs = config.connectTimeoutMs,
         )
+        nioReactor = NioSelectorLoop()
         writer = TunWriter(tunFd, engineScope) { e -> failEngine("TUN write", e) }.also { it.start() }
 
         readJob = engineScope.launch(KernelDispatchers.core) {
@@ -160,6 +165,9 @@ class Tun2SocksEngine {
         udpSessions.values.forEach { runCatching { it.close() } }
         tcpConnections.clear()
         udpSessions.clear()
+        // Close the reactor after connections: any coroutine still parked awaiting readiness is
+        // resumed with an error (or already cancelled with the engine scope) rather than leaking.
+        runCatching { nioReactor?.close() }; nioReactor = null
         engineScope.cancel()
         Log.i(TAG, "Engine stopped")
     }
@@ -218,6 +226,7 @@ class Tun2SocksEngine {
         val mss = resolveMss(packet.payload)
         val w = writer ?: return
         val sc = socksClient ?: return
+        val reactor = nioReactor ?: return
         val cfg = config ?: return
 
         val conn = TcpConnection(
@@ -228,6 +237,7 @@ class Tun2SocksEngine {
             mss = mss,
             onSendPacket = { pkt -> w.send(pkt); rxPackets.incrementAndGet(); rxBytes.addAndGet(pkt.size.toLong()) },
             socksClient = sc,
+            nioReactor = reactor,
             connectionScope = engineScope,
             onClosed = { tcpConnections.remove(key) },
             peerWindowShift = resolveWindowShift(packet.payload),
