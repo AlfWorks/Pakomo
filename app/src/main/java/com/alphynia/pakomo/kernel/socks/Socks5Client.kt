@@ -5,13 +5,9 @@ import com.alphynia.pakomo.forwarding.NioSelectorLoop
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.readInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt16
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt32
-import java.io.InputStream
-import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.Socket
 import java.nio.ByteBuffer
-import java.nio.channels.DatagramChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import com.alphynia.pakomo.kernel.KernelDispatchers
@@ -136,44 +132,48 @@ class Socks5Client(
     // --- UDP ASSOCIATE ---
 
     data class UdpAssociation(
-        val controlSocket: Socket,
-        val controlInput: InputStream,
-        val controlOutput: OutputStream,
+        // The TCP control connection that holds the association open for the SOCKS server; kept
+        // non-blocking (like the TCP path) and simply closed when the session ends. Never read after
+        // the handshake — the datagram relay runs over a separate DatagramChannel.
+        val controlChannel: SocketChannel,
         val relayAddress: InetSocketAddress,  // where to send UDP datagrams
     )
 
     /**
-     * Full SOCKS5 UDP ASSOCIATE with preamble.
-     * Returns the control channel + relay address.
+     * Full SOCKS5 UDP ASSOCIATE with preamble. Returns the control channel + relay address.
+     *
+     * Like [tcpConnect], only the connect is blocking; the handshake then runs through [reactor] with a
+     * per-read timeout so a SOCKS server that accepts but never replies can't pin a connSetup thread
+     * (the earlier blocking stream read had no read timeout — a stalled UDP ASSOCIATE could
+     * hold a connSetup slot indefinitely and, en masse, starve new connections of the setup pool).
      */
     suspend fun udpAssociate(
         sourceAddress: Int,
         sourcePort: Int,
+        reactor: NioSelectorLoop,
         destinationAddress: Int = 0,
         destinationPort: Int = 0,
-    ): UdpAssociation? = withPendingSocket { sock ->
-        sock.connect(
+    ): UdpAssociation? = withPendingChannel { channel ->
+        channel.socket().connect(
             InetSocketAddress(socksAddress, socksPort),
             connectTimeoutMs,
         )
-        val input = sock.getInputStream()
-        val output = sock.getOutputStream()
+        channel.configureBlocking(false)
+        val timeout = connectTimeoutMs.toLong()
 
         // 1. Preamble (UDP)
-        output.write(buildPreamble(
+        reactor.writeFully(channel, ByteBuffer.wrap(buildPreamble(
             protocol = 17, // UDP
             sourceAddress = sourceAddress,
             sourcePort = sourcePort,
             destinationAddress = destinationAddress, destinationPort = destinationPort,
-        ))
-        output.flush()
+        )), timeout)
 
         // 2. Method negotiation
-        output.write(byteArrayOf(0x05, 0x01, 0x02))
-        output.flush()
-        val methodResponse = input.readExact(2)
+        reactor.writeFully(channel, ByteBuffer.wrap(byteArrayOf(0x05, 0x01, 0x02)), timeout)
+        val methodResponse = reactor.readExact(channel, 2, timeout)
         if (methodResponse[0].toInt() != 0x05 || methodResponse[1].toInt() != 0x02) {
-            return@withPendingSocket null
+            return@withPendingChannel null
         }
 
         // 3. Auth
@@ -185,11 +185,10 @@ class Socks5Client(
         authMsg.put(userBytes)
         authMsg.put(passBytes.size.toByte())
         authMsg.put(passBytes)
-        output.write(authMsg.array())
-        output.flush()
-        val authResponse = input.readExact(2)
+        reactor.writeFully(channel, ByteBuffer.wrap(authMsg.array()), timeout)
+        val authResponse = reactor.readExact(channel, 2, timeout)
         if (authResponse[0].toInt() != 0x01 || authResponse[1].toInt() != 0x00) {
-            return@withPendingSocket null
+            return@withPendingChannel null
         }
 
         // 4. UDP ASSOCIATE request
@@ -200,13 +199,12 @@ class Socks5Client(
         assocReq.put(0x01.toByte()) // IPv4
         assocReq.putInt(0)          // 0.0.0.0
         assocReq.putShort(0)        // port 0
-        output.write(assocReq.array())
-        output.flush()
+        reactor.writeFully(channel, ByteBuffer.wrap(assocReq.array()), timeout)
 
         // Read reply
-        val reply = input.readExact(10)
+        val reply = reactor.readExact(channel, 10, timeout)
         if (reply[0].toInt() != 0x05 || reply[1].toInt() != 0x00) {
-            return@withPendingSocket null
+            return@withPendingChannel null
         }
         val addrType = reply[3].toInt() and 0xFF
         val bindAddr: InetAddress
@@ -220,20 +218,19 @@ class Socks5Client(
                 bindAddr = InetAddress.getByAddress(reply.copyOfRange(offset, offset + 16))
                 offset += 16
             }
-            else -> return@withPendingSocket null
+            else -> return@withPendingChannel null
         }
         val bindPort = readInt16(reply, offset)
 
-        UdpAssociation(controlSocket = sock,
-            controlInput = input,
-            controlOutput = output,
+        UdpAssociation(
+            controlChannel = channel,
             relayAddress = InetSocketAddress(bindAddr, bindPort),
         )
     }
 
     /**
      * Opens a [SocketChannel] on [KernelDispatchers.connSetup], runs the handshake [block], and closes
-     * the channel if the block fails or returns null — mirrors [withPendingSocket] for the NIO path.
+     * the channel if the block fails or returns null. Both the TCP and UDP SOCKS paths use this.
      */
     private suspend fun <T> withPendingChannel(block: suspend (SocketChannel) -> T?): T? {
         var pending: SocketChannel? = null
@@ -252,26 +249,6 @@ class Socks5Client(
             null
         } finally {
             runCatching { pending?.close() }
-        }
-    }
-
-    private suspend fun <T> withPendingSocket(block: (Socket) -> T?): T? {
-        var pendingSocket: Socket? = null
-        return try {
-            val result = withContext(KernelDispatchers.connSetup) {
-                Socket().let { socket ->
-                    pendingSocket = socket
-                    block(socket)
-                }
-            }
-            if (result != null) pendingSocket = null
-            result
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { pendingSocket?.close() }
         }
     }
 
@@ -300,17 +277,6 @@ class Socks5Client(
     }
 
     private companion object {
-        private fun InputStream.readExact(size: Int): ByteArray {
-            val result = ByteArray(size)
-            var offset = 0
-            while (offset < size) {
-                val count = read(result, offset, size - offset)
-                if (count < 0) throw java.io.EOFException()
-                offset += count
-            }
-            return result
-        }
-
         /**
          * Reads exactly [size] bytes from a non-blocking [channel] through the reactor, bounding each
          * read by [timeoutMs] so a stalled handshake fails instead of hanging. Throws at EOF/timeout.

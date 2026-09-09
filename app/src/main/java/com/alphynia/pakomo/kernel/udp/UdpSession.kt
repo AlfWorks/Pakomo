@@ -1,6 +1,7 @@
 package com.alphynia.pakomo.kernel.udp
 
 import android.util.Log
+import com.alphynia.pakomo.forwarding.NioSelectorLoop
 import com.alphynia.pakomo.kernel.ip.Checksum
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet
 import com.alphynia.pakomo.kernel.ip.Ipv4Packet.Companion.writeInt16
@@ -26,6 +27,7 @@ class UdpSession(
     val destinationPort: Int,
     private val onSendPacket: suspend (ByteArray) -> Unit,
     private val socksClient: Socks5Client,
+    private val nioReactor: NioSelectorLoop,
     private val sessionScope: CoroutineScope,
     private val idleTimeoutMs: Long,
     private val onClosed: () -> Unit,
@@ -52,7 +54,7 @@ class UdpSession(
         actorJob = sessionScope.launch {
             try {
                 val assoc = socksClient.udpAssociate(
-                    sourceAddress, sourcePort, destinationAddress, destinationPort,
+                    sourceAddress, sourcePort, nioReactor, destinationAddress, destinationPort,
                 )
                 if (assoc == null) {
                     Log.w(TAG, "UDP ASSOCIATE failed $sourcePort:$destinationPort")
@@ -176,7 +178,7 @@ class UdpSession(
         relayJob?.cancel()
         inputChannel.close()
         runCatching { relayChannel?.close() }
-        runCatching { association?.controlSocket?.close() }
+        runCatching { association?.controlChannel?.close() }
         onClosed()
     }
 

@@ -304,6 +304,7 @@ class Tun2SocksEngine {
 
         val w = writer ?: return
         val sc = socksClient ?: return
+        val reactor = nioReactor ?: return
         val cfg = config ?: return
 
         val session = UdpSession(
@@ -313,6 +314,7 @@ class Tun2SocksEngine {
             destinationPort = dstPort,
             onSendPacket = { pkt -> w.send(pkt); rxPackets.incrementAndGet(); rxBytes.addAndGet(pkt.size.toLong()) },
             socksClient = sc,
+            nioReactor = reactor,
             sessionScope = engineScope,
             idleTimeoutMs = cfg.udpReadWriteTimeoutMs.toLong(),
             onClosed = { udpSessions.remove(key) },
