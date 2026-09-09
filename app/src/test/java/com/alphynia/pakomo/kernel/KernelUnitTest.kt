@@ -16,10 +16,12 @@ import org.junit.Test
 class KernelUnitTest {
 
     @Test
-    fun blockingConnectionWorkUsesIndependentDispatchers() {
-        assertNotSame(KernelDispatchers.connRead, KernelDispatchers.connWrite)
-        assertNotSame(KernelDispatchers.connRead, KernelDispatchers.connSetup)
-        assertNotSame(KernelDispatchers.connWrite, KernelDispatchers.connSetup)
+    fun connectionSetupUsesADispatcherIndependentOfTheDatapath() {
+        // Upstream TCP relay is non-blocking (shared NioSelectorLoop), so there are no per-connection
+        // read/write pools left to starve. What must stay isolated is connection SETUP: the short
+        // blocking SOCKS handshakes run on their own budget so a burst of new flows can't queue behind
+        // the TUN datapath loops (audit #6).
+        assertNotSame(KernelDispatchers.core, KernelDispatchers.connSetup)
     }
 
     @Test
