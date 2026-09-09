@@ -765,14 +765,22 @@ class WeakNetworkVpnService : android.net.VpnService() {
         val next = nextNetwork?.let { readUnderlyingNetwork(connectivity, it) }
         if (next == current) return
 
+        // Rebuild (which drops every live connection) only when the underlying Network object actually
+        // changes. UnderlyingNetwork is a data class that includes dnsServers, so a DNS-only change on
+        // the SAME network (DHCP renewal, private-DNS toggle, ...) also makes next != current — but that
+        // must not tear down the pipeline. Absorb the new DNS into the stored value and refresh the
+        // system's view via setUnderlyingNetworks; skip the rebuild (Sugar review, MR!6).
+        val networkChanged = next?.network != current?.network
         activeUnderlyingNetwork.set(next)
         runCatching { setUnderlyingNetworks(next?.network?.let { arrayOf(it) } ?: emptyArray()) }
             .onFailure { Log.w(TAG, "Unable to update VPN underlying network", it) }
-        if (next == null) {
-            Log.w(TAG, "No usable underlying network remains")
-        } else {
-            Log.i(TAG, "Underlying network or DNS changed to ${next.network}")
-            rebuildForUnderlyingNetwork(callback, next)
+        when {
+            next == null -> Log.w(TAG, "No usable underlying network remains")
+            networkChanged -> {
+                Log.i(TAG, "Underlying network changed to ${next.network}; rebuilding")
+                rebuildForUnderlyingNetwork(callback, next)
+            }
+            else -> Log.i(TAG, "Underlying DNS changed on ${next.network}; kept connections (no rebuild)")
         }
     }
 
