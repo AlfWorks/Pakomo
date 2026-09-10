@@ -83,6 +83,9 @@ class WeakNetworkVpnService : android.net.VpnService() {
     @Volatile private var activeVpnConfig: VpnRuntimeConfig? = null
     private var terminalError: String? = null
     private var hitTracker: RecentHitTracker? = null
+    // Spans the whole tunnel session (not rebuilt on reconfigure) so the latency trend carries across
+    // a rule switch — the point of the overlay chart is watching shaping change take effect live.
+    private var latencyTracker: FlowLatencyTracker? = null
     private var activeScopeLabel: String? = null
     @Volatile private var attributor: AndroidConnectionAttributor? = null
     private var activeShaper: TrafficShaper? = null
@@ -265,6 +268,8 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 scope, allowedPackages, targetDomains, domainsByPackage, rule,
             )
             applyRuntime(runtime)
+            val latency = FlowLatencyTracker()
+            latencyTracker = latency
             val localSocks = Socks5Server(
                 credentials = credentials,
                 protector = object : SocketProtector {
@@ -298,6 +303,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 expectOriginPreamble = true,
                 compensateLatency = preferences.readLatencyCompensationEnabled(),
                 resolveSourcePackage = { origin -> origin?.let { displayAttributor.displayPackageFor(it) } },
+                flowLatencyReporter = latency,
             )
             val socksPort = localSocks.start()
             socksServer = localSocks
@@ -413,6 +419,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
         runCatching { tunnelConfig?.delete() }
         tunnelConfig = null
         hitTracker = null
+        latencyTracker = null
         activeScopeLabel = null
         attributor = null
         activeShaper = null
@@ -450,6 +457,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 ).copy(
                     activeScopeLabel = activeScopeLabel,
                     recentHits = hitTracker?.snapshot().orEmpty(),
+                    flowLatencies = latencyTracker?.snapshot().orEmpty(),
                     attributionAttempts = attributor?.stats()?.attempts ?: 0,
                     attributionMisses = attributor?.stats()?.misses ?: 0,
                     uptimeMs = if (startedAtElapsedMs > 0) {

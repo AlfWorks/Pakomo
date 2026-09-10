@@ -90,6 +90,9 @@ class Socks5Server(
     // Resolves a connection's owning app package for the traffic list's source label (any app, not
     // just the selected set). Best-effort; returns null when unknown. Default no-op for tests.
     private val resolveSourcePackage: (ConnectionOrigin?) -> String? = { null },
+    // Receives a latency observation per new TCP connection (injected delay + measured handshake RTT)
+    // for the overlay's per-flow latency chart. Null disables collection (tests / no diagnostics).
+    private val flowLatencyReporter: FlowLatencyReporter? = null,
 ) : AutoCloseable {
     // Swappable at runtime so a rule/domain edit takes effect on new connections without tearing
     // down the tunnel. New connections resolve against the current policy; existing flows keep the
@@ -345,6 +348,18 @@ class Socks5Server(
                 destIp = origin?.destinationAddress?.hostAddress.orEmpty(),
             )
             flow.shaped = shapeTraffic
+            // One latency sample per connection for the overlay chart: the real handshake RTT paired
+            // with the shaper's injected round-trip delay (0 when this flow isn't shaped), so the
+            // trend shows shaping layered on top of the genuine network latency.
+            flowLatencyReporter?.report(
+                FlowLatencyHit(
+                    host = displayHost,
+                    packageName = sourcePkg.ifEmpty { null },
+                    shaped = shapeTraffic,
+                    injectedMs = if (shapeTraffic) shaper.injectedLatencyMs() else 0,
+                    measuredRttMs = (connectNanos / NANOS_PER_MILLISECOND).toInt(),
+                ),
+            )
             try {
                 relay(
                     clientChannel, outbound, shapeTraffic,

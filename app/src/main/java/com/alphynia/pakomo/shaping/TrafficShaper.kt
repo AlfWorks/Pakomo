@@ -96,6 +96,14 @@ class TrafficShaper(
 
     fun delayedCount(): Long = delayedTransfers.get()
 
+    /**
+     * The configured round-trip injected latency (upload + download base latency), in ms, excluding
+     * jitter, bandwidth wait and synthetic loss recovery. The deterministic delay this shaper adds to
+     * a flow — sampled per connection for the latency chart as the "shaping is active" signal.
+     */
+    fun injectedLatencyMs(): Int =
+        latencyMsFor(TrafficDirection.UPLOAD) + latencyMsFor(TrafficDirection.DOWNLOAD)
+
     fun blocksAllTraffic(): Boolean =
         lossPercentFor(TrafficDirection.UPLOAD) >= 100 ||
             lossPercentFor(TrafficDirection.DOWNLOAD) >= 100

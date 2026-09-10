@@ -236,6 +236,7 @@ data class RuntimeStats(
     val delayedTransfers: Long = 0,
     val activeScopeLabel: String? = null,
     val recentHits: List<ScopeHit> = emptyList(),
+    val flowLatencies: List<FlowLatencySeries> = emptyList(),
     val attributionAttempts: Long = 0,
     val attributionMisses: Long = 0,
     val uptimeMs: Long = 0,
