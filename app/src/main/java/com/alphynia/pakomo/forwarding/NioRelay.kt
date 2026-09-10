@@ -80,7 +80,9 @@ class NioSelectorLoop : AutoCloseable {
 
     private suspend fun await(channel: SelectableChannel, op: Int, timeoutMs: Long) =
         suspendCancellableCoroutine { cont: CancellableContinuation<Unit> ->
-            val deadline = if (timeoutMs > 0) System.currentTimeMillis() + timeoutMs else Long.MAX_VALUE
+            // Monotonic clock: a wall-clock deadline would fire early / late if the device time is
+            // adjusted mid-wait. nanoTime never jumps.
+            val deadline = if (timeoutMs > 0) System.nanoTime() + timeoutMs * 1_000_000L else Long.MAX_VALUE
             // Enqueue only while the reactor is alive; otherwise nothing would ever run the task.
             val enqueued = synchronized(lifecycle) {
                 if (!running) return@synchronized false
@@ -110,15 +112,19 @@ class NioSelectorLoop : AutoCloseable {
             if (cont.isActive) cont.resumeWithException(IOException("relay closed"))
             return
         }
+        // reg is declared outside the try so the catch can fail BOTH directions: if registering the new
+        // waiter throws (e.g. the channel closed underneath us), the registration record is dropped —
+        // so a read waiter already parked on this channel would otherwise be orphaned (removed from the
+        // map, never resumed, its deadline gone). Fail every continuation on the reg, not just this one.
+        val reg = registrations.getOrPut(channel) { Registration(channel) }
+        if (op == SelectionKey.OP_READ) {
+            reg.readCont = cont
+            reg.readDeadline = deadline
+        } else {
+            reg.writeCont = cont
+            reg.writeDeadline = deadline
+        }
         try {
-            val reg = registrations.getOrPut(channel) { Registration(channel) }
-            if (op == SelectionKey.OP_READ) {
-                reg.readCont = cont
-                reg.readDeadline = deadline
-            } else {
-                reg.writeCont = cont
-                reg.writeDeadline = deadline
-            }
             val ops = interestOf(reg)
             val key = channel.keyFor(selector)
             if (key == null || !key.isValid) {
@@ -129,7 +135,7 @@ class NioSelectorLoop : AutoCloseable {
             }
         } catch (error: Throwable) {
             registrations.remove(channel)
-            if (cont.isActive) cont.resumeWithException(error)
+            failRegistration(reg, error)
         }
     }
 
@@ -154,7 +160,7 @@ class NioSelectorLoop : AutoCloseable {
                 }
                 selector.select(SELECT_TIMEOUT_MS)
                 if (!running) break
-                val now = System.currentTimeMillis()
+                val now = System.nanoTime()
 
                 val selected = selector.selectedKeys().iterator()
                 while (selected.hasNext()) {

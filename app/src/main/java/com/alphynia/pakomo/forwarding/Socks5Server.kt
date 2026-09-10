@@ -925,6 +925,7 @@ class Socks5Server(
         var gateStarted = false
         var gateOpenNanos = 0L
         var seenBytes = 0L
+        var heldBytes = 0L
         fun releaseNanosFor(chunkSize: Int, shapingNanos: Long): Long {
             val arrival = System.nanoTime()
             if (holdNanos <= 0L) return arrival + shapingNanos
@@ -938,6 +939,15 @@ class Socks5Server(
                 gateOpenNanos = arrival + holdNanos
             }
             flow?.held = true // record the hold as actually applied
+            heldBytes += chunkSize
+            if (heldBytes > HOLD_BUFFER_CAP_BYTES) {
+                // Response too large to keep holding in memory: open the gate now so this and every
+                // later chunk pass at their own arrival time. Without this the hold queue is unbounded —
+                // a fast/large response (e.g. 20 MB/s held 30 s ≈ 600 MB) could exhaust memory and kill
+                // the process. This caps the in-memory hold at ~HOLD_BUFFER_CAP_BYTES; oversized
+                // responses simply stop being held once the budget is spent.
+                gateOpenNanos = arrival
+            }
             // Held until the gate opens; chunks arriving after it pass at their own arrival time.
             return maxOf(arrival, gateOpenNanos) + shapingNanos
         }
@@ -1151,6 +1161,10 @@ class Socks5Server(
         // Bounds in-flight shaped chunks (~one delay-window of data); provides backpressure so a
         // bandwidth limit slows the reader instead of buffering unboundedly.
         const val SHAPED_QUEUE_CAPACITY = 128
+        // Max bytes a Response Hold may buffer in memory before it stops holding (opens the gate). The
+        // hold queue is otherwise unbounded; this caps a large/fast held response so it can't OOM the
+        // process. 32 MiB comfortably covers ordinary responses while bounding worst-case memory.
+        const val HOLD_BUFFER_CAP_BYTES = 32L * 1024 * 1024
         // Chunks the unshaped relay may hold in flight between its reader and writer (pipelining).
         const val RELAY_PIPELINE_DEPTH = 4
         const val TAG = "PakomoSocks"
