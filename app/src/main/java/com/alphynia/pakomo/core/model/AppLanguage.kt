@@ -16,7 +16,15 @@ enum class AppLanguage(val selfLabel: String) {
     companion object {
         val DEFAULT = ZH
 
+        /**
+         * First-launch default when the user hasn't picked a language yet: follow the system locale —
+         * Chinese system → [ZH], anything else → [EN] (the only two languages we ship). Once the user
+         * picks a language in Settings it is persisted and [fromName] matches it, so their choice wins.
+         */
+        fun systemDefault(): AppLanguage =
+            if (java.util.Locale.getDefault().language.equals("zh", ignoreCase = true)) ZH else EN
+
         fun fromName(name: String?): AppLanguage =
-            entries.firstOrNull { it.name == name } ?: DEFAULT
+            entries.firstOrNull { it.name == name } ?: systemDefault()
     }
 }
