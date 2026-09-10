@@ -400,7 +400,9 @@ class PakomoViewModel(application: Application) : AndroidViewModel(application) 
         preferences.clear()
         _state.value = PakomoUiState()
         _themeMode.value = ThemeMode.Companion
-        _language.value = AppLanguage.DEFAULT
+        // clear() wipes the persisted language, so the "unset" state must follow the system locale,
+        // matching first launch (fromName(null) -> systemDefault()) rather than hard-coding ZH.
+        _language.value = AppLanguage.systemDefault()
         refreshApps()
     }
 

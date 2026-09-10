@@ -21,6 +21,9 @@ object VpnServiceController {
     /** Rule confirmed by the service, rather than the user's next selected preset. */
     val activeRule: StateFlow<NetworkRule?> = _activeRule.asStateFlow()
 
+    /** Guards the paired advance of [_activeRule] + [_appliedConfigId] in [publishAppliedConfig]. */
+    private val configVersionLock = Any()
+
     private val _appliedConfigId = MutableStateFlow(0L)
 
     /**
@@ -153,10 +156,21 @@ object VpnServiceController {
         }
     }
 
-    /** Called by the service once it has finished applying the configuration with [id]. Atomic max. */
+    /**
+     * Called by the service once it has finished applying the configuration with [id]. Advances the
+     * rule and the id together, and only when [id] is the newest applied version, so the pair
+     * `(appliedConfigId, activeRule)` stays same-source: were two apply callbacks to arrive out of
+     * order, an older one can no longer overwrite the newer config's rule while [appliedConfigId]
+     * keeps the newer id (which would make `selectRule`'s confirmation misjudge). Today the ordering
+     * is already guaranteed by reconfigure's cancel + generation guard, so this is defensive.
+     */
     internal fun publishAppliedConfig(id: Long, rule: NetworkRule) {
-        _activeRule.value = rule
-        _appliedConfigId.update { current -> maxOf(current, id) }
+        synchronized(configVersionLock) {
+            if (id >= _appliedConfigId.value) {
+                _activeRule.value = rule
+                _appliedConfigId.value = id
+            }
+        }
     }
 
     /** Called by the service when the hot apply (reconfigure) of [id] failed. Atomic max. */
