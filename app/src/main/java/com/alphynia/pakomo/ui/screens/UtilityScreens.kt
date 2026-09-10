@@ -592,13 +592,27 @@ private fun FlowRow(flow: FlowRecord, onClick: () -> Unit) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        text = coreText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    // Core address line carries the shaped/held tags on its right — which is line 2 for
+                    // a domain (below the prefix) and the only line for a bare IP, i.e. right above the
+                    // timestamp on the row below — without adding a line or raising the single-IP row.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = coreText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (flow.held) {
+                            Spacer(Modifier.width(6.dp))
+                            FlowTag(t("已暂扣", "held"), colors.warningStrong)
+                        }
+                        if (flow.shaped) {
+                            Spacer(Modifier.width(6.dp))
+                            FlowTag(t("整形", "shaped"), colors.muted)
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(5.dp))
@@ -614,6 +628,9 @@ private fun FlowRow(flow: FlowRecord, onClick: () -> Unit) {
                     )
                     Spacer(Modifier.width(8.dp))
                 }
+                // Takes the leftover width and ellipsizes under pressure, so the tags + status dot +
+                // timestamp on the right always fit (a shaped/held flow's extra tags used to push the
+                // timestamp past the card edge).
                 Text(
                     text = "↑ ${formatFlowBytes(flow.uploadBytes)}   ↓ ${formatFlowBytes(flow.downloadBytes)}",
                     style = MaterialTheme.typography.bodySmall,
@@ -621,16 +638,12 @@ private fun FlowRow(flow: FlowRecord, onClick: () -> Unit) {
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
                     softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
-                if (flow.held) FlowTag(t("已暂扣", "held"), colors.warningStrong)
-                if (flow.shaped) {
-                    Spacer(Modifier.width(6.dp))
-                    FlowTag(t("整形", "shaped"), colors.muted)
-                }
                 Spacer(Modifier.width(8.dp))
-                // Status as a small colour dot (accent = active, muted = closed) rather than a text
-                // label — saves the width that was squeezing bytes and the timestamp.
+                // Status dot (accent = active, muted = closed) + timestamp, right-aligned. The shaped/
+                // held tags sit on the address line above, right beside where the timestamp is.
                 Box(
                     modifier = Modifier
                         .size(7.dp)
@@ -639,7 +652,7 @@ private fun FlowRow(flow: FlowRecord, onClick: () -> Unit) {
                             RoundedCornerShape(50),
                         ),
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = FLOW_TIME_FORMAT.format(java.util.Date(flow.startedAtMs)),
                     style = MaterialTheme.typography.labelSmall,
