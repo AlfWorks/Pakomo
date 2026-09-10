@@ -117,10 +117,16 @@ class NioSelectorLoop : AutoCloseable {
         // so a read waiter already parked on this channel would otherwise be orphaned (removed from the
         // map, never resumed, its deadline gone). Fail every continuation on the reg, not just this one.
         val reg = registrations.getOrPut(channel) { Registration(channel) }
+        // One waiter per direction per channel is a caller contract (the sequential reader loop /
+        // writeFully / handshake readExact never await twice concurrently). If it is ever violated,
+        // don't silently drop the previous continuation — it would hang forever; resume it with an
+        // error so the bug surfaces as a failed op instead of a leak. (Reactor thread only; no lock.)
         if (op == SelectionKey.OP_READ) {
+            reg.readCont?.let { prev -> if (prev.isActive) prev.resumeWithException(IllegalStateException("concurrent read await on one channel")) }
             reg.readCont = cont
             reg.readDeadline = deadline
         } else {
+            reg.writeCont?.let { prev -> if (prev.isActive) prev.resumeWithException(IllegalStateException("concurrent write await on one channel")) }
             reg.writeCont = cont
             reg.writeDeadline = deadline
         }
