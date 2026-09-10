@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.Timeline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,18 +55,21 @@ import com.alphynia.pakomo.ui.theme.t
 
 /**
  * The quick-control overlay in the app's own design language (status-card colours, Material vector
- * icons). It renders in two independent overlay windows hosted by [QuickControlService]: [QuickPill]
- * is the always-present compact stub (power over expand, fixed, never moves), and [QuickPanel] is the
- * rule list that appears in its own, wider window above or below the pill — so opening it never nudges
- * the pill.
+ * icons). It renders in independent overlay windows hosted by [QuickControlService]: [QuickPill] is
+ * the always-present compact stub (power over the rule-expand and chart toggles, fixed, never moves),
+ * [QuickPanel] is the rule list that appears in its own wider window above or below the pill, and
+ * [QuickLatencyChart] is the per-flow latency trend that slides out sideways — so opening either side
+ * window never nudges the pill.
  */
 @Composable
 fun QuickPill(
     stage: EngineStage,
     expanded: Boolean,
+    chartOpen: Boolean,
     busy: Boolean,
     onToggle: () -> Unit,
     onExpandToggle: () -> Unit,
+    onChartToggle: () -> Unit,
 ) {
     val colors = LocalPakomoColors.current
     val running = stage == EngineStage.FORWARDING
@@ -79,8 +83,8 @@ fun QuickPill(
         animationSpec = tween(320),
         label = "container",
     )
-    // A compact vertical stub: power on top, expand below — the active rule shows only when expanded.
-    // A little more end padding leaves a small blank strip toward the inward side.
+    // A compact vertical stub: power on top, then the rule-list expand toggle, then the latency-chart
+    // toggle. A little more end padding leaves a small blank strip toward the inward side.
     Surface(
         shape = RoundedCornerShape(15.dp),
         color = container,
@@ -123,6 +127,22 @@ fun QuickPill(
                 Icon(
                     imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = t("展开或收起规则列表", "Expand or collapse the rule list"),
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Spacer(Modifier.size(5.dp))
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Color.White.copy(alpha = if (chartOpen) 0.26f else 0.12f))
+                    .clickable(onClick = onChartToggle),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Timeline,
+                    contentDescription = t("展开或收起延迟趋势", "Show or hide the latency trend"),
                     tint = Color.White,
                     modifier = Modifier.size(18.dp),
                 )

@@ -40,6 +40,7 @@ import com.alphynia.pakomo.MainActivity
 import com.alphynia.pakomo.R
 import com.alphynia.pakomo.core.model.AppLanguage
 import com.alphynia.pakomo.core.model.EngineStage
+import com.alphynia.pakomo.core.model.FlowLatencySeries
 import com.alphynia.pakomo.core.model.NetworkRule
 import com.alphynia.pakomo.core.model.defaultRules
 import com.alphynia.pakomo.data.PakomoPreferences
@@ -49,12 +50,14 @@ import com.alphynia.pakomo.vpn.VpnServiceController
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -77,6 +80,9 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
     // Window B: the rule panel; created on expand, positioned above/below the pill, removed on collapse.
     private var panel: OverlayContainer? = null
     private var panelParams: WindowManager.LayoutParams? = null
+    // Window C: the latency chart; created on chart-toggle, slides out sideways (inward) from the pill.
+    private var chart: OverlayContainer? = null
+    private var chartParams: WindowManager.LayoutParams? = null
 
     private val state = MutableStateFlow(PillState())
     private var expanded = false
@@ -86,6 +92,13 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
     private var switchMessage: String? = null
     private var lastToggleAtMs = 0L
     private var onRight = true
+    // Chart window state. Its per-flow series update live (from RuntimeStats) only while it is open, on
+    // a dedicated flow so the pill/panel state stays churn-free.
+    private var chartOpen = false
+    private var openLeft = false
+    private var chartListMaxDp = 220
+    private val chartData = MutableStateFlow<List<FlowLatencySeries>>(emptyList())
+    private var chartJob: Job? = null
 
     data class PillState(
         val theme: ThemeMode = ThemeMode.Standard,
@@ -98,6 +111,7 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         val listMaxDp: Int = 168,
         val busy: Boolean = false,
         val message: String? = null,
+        val chartOpen: Boolean = false,
     )
 
     override fun onCreate() {
@@ -197,9 +211,11 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
             QuickPill(
                 stage = s.stage,
                 expanded = s.expanded,
+                chartOpen = s.chartOpen,
                 busy = s.busy,
-                onToggle = { if (toggleVpn()) setExpanded(false) },
+                onToggle = { if (toggleVpn()) { setExpanded(false); setChartOpen(false) } },
                 onExpandToggle = { setExpanded(!expanded) },
+                onChartToggle = { setChartOpen(!chartOpen) },
             )
         }
         val wrapper = wrap(compose, draggable = true, onOutside = { _, _ -> })
@@ -290,6 +306,98 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         panelParams = null
     }
 
+    private fun setChartOpen(value: Boolean) {
+        if (value == chartOpen || pill == null) return
+        chartOpen = value
+        // Mutually exclusive with the rule panel — only one side window at a time.
+        if (value && expanded) setExpanded(false)
+        when {
+            // Re-open while the previous chart is still animating out: just push state so it slides
+            // back in (addChart's early-return would otherwise skip pushState).
+            value && chart != null -> pushState()
+            value -> addChart()
+            else -> {
+                pushState() // the chart slides out via its transition, then the window is removed
+                pill?.postDelayed({ if (!chartOpen) removeChart() }, PANEL_EXIT_MS)
+            }
+        }
+    }
+
+    private fun addChart() {
+        if (chart != null) return
+        val pillP = pillParams ?: return
+        val screen = screenBounds()
+        val gap = dp(6)
+        val chartWidth = dp(CHART_W).coerceAtMost(screen.width())
+        // Slide out toward the screen interior: pill docked right → chart on its left, and vice versa.
+        openLeft = onRight
+        val provisionalX = if (openLeft) {
+            (pillP.x - gap - chartWidth).coerceAtLeast(0)
+        } else {
+            (pillP.x + pillP.width + gap).coerceAtMost((screen.width() - chartWidth).coerceAtLeast(0))
+        }
+        // Cap the scrollable list to what fits vertically on screen (the chart isn't tied to the pill's
+        // Y the way the panel is, but it must still fit the display).
+        val avail = (screen.height() - dp(24)).coerceAtLeast(dp(120))
+        chartListMaxDp = ((avail - dp(CHART_CHROME_DP)).coerceAtLeast(dp(80)) / resources.displayMetrics.density).toInt()
+        pushState()
+
+        // Update the live per-flow series only while the chart is open.
+        chartJob?.cancel()
+        chartJob = serviceScope.launch {
+            VpnServiceController.runtime
+                .map { it.stats.flowLatencies }
+                .distinctUntilChanged()
+                .collect { chartData.value = it }
+        }
+
+        val compose = composeHost {
+            val s by state.collectAsState()
+            val data by chartData.collectAsState()
+            QuickLatencyChart(
+                series = data,
+                expanded = s.chartOpen,
+                openLeft = openLeft,
+                listMaxDp = chartListMaxDp,
+            )
+        }
+        val wrapper = wrap(compose, draggable = false, onOutside = { x, y -> if (!pillContains(x, y)) setChartOpen(false) })
+        val pillTop = pillP.y
+        val params = baseParams(chartWidth, watchOutside = true).apply {
+            x = provisionalX
+            y = pillTop // refined once measured so the chart stays on-screen
+        }
+        runCatching { windowManager.addView(wrapper, params) }
+            .onSuccess {
+                chart = wrapper
+                chartParams = params
+                // Keep the chart fully on-screen: top-align with the pill, but nudge up if its measured
+                // height would overflow the bottom. Only the chart window moves — the pill never does.
+                wrapper.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                    override fun onLayoutChange(
+                        v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or2: Int, ob: Int,
+                    ) {
+                        val h = v.height
+                        if (h <= 0) return
+                        val ny = pillTop.coerceIn(dp(8), (screen.height() - h - dp(8)).coerceAtLeast(dp(8)))
+                        if (ny != params.y) {
+                            params.y = ny
+                            runCatching { windowManager.updateViewLayout(wrapper, params) }
+                        }
+                    }
+                })
+            }
+            .onFailure { Log.e(TAG, "Unable to show latency chart", it) }
+    }
+
+    private fun removeChart() {
+        chartJob?.cancel()
+        chartJob = null
+        chart?.let { runCatching { windowManager.removeView(it) } }
+        chart = null
+        chartParams = null
+    }
+
     // Dragging only touches the pill window (window A); the panel is its own window and never drags.
     private fun onMove(dx: Float, dy: Float) {
         val view = pill ?: return
@@ -297,6 +405,11 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         if (expanded) { // collapse immediately so the panel doesn't linger at the old spot mid-drag
             expanded = false
             removePanel()
+            pushState()
+        }
+        if (chartOpen) { // same for the chart — a side window shouldn't trail the pill mid-drag
+            chartOpen = false
+            removeChart()
             pushState()
         }
         val screen = screenBounds()
@@ -321,10 +434,12 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
 
     private fun removeControl() {
         removePanel()
+        removeChart()
         pill?.let { runCatching { windowManager.removeView(it) } }
         pill = null
         pillParams = null
         expanded = false
+        chartOpen = false
     }
 
     /** Whether a screen-space point falls inside the pill window (so a panel ACTION_OUTSIDE on it is a
@@ -338,6 +453,8 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
     private fun setExpanded(value: Boolean) {
         if (value == expanded || pill == null) return
         expanded = value
+        // The rule panel and the chart are mutually exclusive — only one side window at a time.
+        if (value && chartOpen) setChartOpen(false)
         when {
             // Re-expanding while the previous panel is still animating out (a pending removePanel hasn't
             // fired): don't recreate — just push the new state so it animates back in. addPanel()'s
@@ -374,6 +491,7 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
             listMaxDp = listMaxDp,
             busy = switching,
             message = switchMessage,
+            chartOpen = chartOpen,
         )
     }
 
@@ -561,11 +679,16 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         private const val TOGGLE_DEBOUNCE_MS = 300L
         private const val PILL_W = 50
         private const val PANEL_W = 200
+        private const val CHART_W = 232
         private const val PANEL_EXIT_MS = 230L
 
         // Panel chrome above the scrollable list (top margin + padding + "SWITCH RULE" title + summary),
         // subtracted from the available space to cap the list height so the panel fits its window.
         private const val PANEL_CHROME_DP = 78
+
+        // Chart chrome around the scrollable flow list (padding + "LATENCY" title + legend row),
+        // subtracted from the available vertical space to cap the list height.
+        private const val CHART_CHROME_DP = 64
 
         @Volatile private var instance: QuickControlService? = null
         @Volatile private var hostVisible: Boolean = false
