@@ -40,7 +40,6 @@ import com.alphynia.pakomo.MainActivity
 import com.alphynia.pakomo.R
 import com.alphynia.pakomo.core.model.AppLanguage
 import com.alphynia.pakomo.core.model.EngineStage
-import com.alphynia.pakomo.core.model.FlowLatencySeries
 import com.alphynia.pakomo.core.model.NetworkRule
 import com.alphynia.pakomo.core.model.defaultRules
 import com.alphynia.pakomo.data.PakomoPreferences
@@ -50,14 +49,12 @@ import com.alphynia.pakomo.vpn.VpnServiceController
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -83,6 +80,9 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
     // Window C: the latency chart; created on chart-toggle, slides out sideways (inward) from the pill.
     private var chart: OverlayContainer? = null
     private var chartParams: WindowManager.LayoutParams? = null
+    // Fades the chart window to semi-transparent after it has been open a while; reset on each reopen.
+    private var chartDimAnimator: android.animation.ValueAnimator? = null
+    private var chartDimRunnable: Runnable? = null
 
     private val state = MutableStateFlow(PillState())
     private var expanded = false
@@ -92,13 +92,14 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
     private var switchMessage: String? = null
     private var lastToggleAtMs = 0L
     private var onRight = true
-    // Chart window state. Its per-flow series update live (from RuntimeStats) only while it is open, on
-    // a dedicated flow so the pill/panel state stays churn-free.
+    // Chart window state.
     private var chartOpen = false
     private var openLeft = false
     private var chartListMaxDp = 220
-    private val chartData = MutableStateFlow<List<FlowLatencySeries>>(emptyList())
-    private var chartJob: Job? = null
+    // The latency history lives here (not in the composable) so it survives the chart opening/closing —
+    // reopening shows the running history instead of restarting from zero. Filled continuously by a
+    // service-scope coroutine reading RuntimeStats, independent of whether the chart window is shown.
+    private val latencyChart = LatencyChartState()
 
     data class PillState(
         val theme: ThemeMode = ThemeMode.Standard,
@@ -128,6 +129,11 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
                 .collect { pushState() }
         }
         serviceScope.launch { preferences.observeActiveRuleId().collect { pushState() } }
+        // Accumulate the latency history for the whole service lifetime, so the chart shows the running
+        // history whenever it is opened rather than starting blank each time.
+        serviceScope.launch {
+            latencyChart.run { VpnServiceController.runtime.value.stats.flowLatencies.filter { it.samples.isNotEmpty() } }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -342,28 +348,23 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         chartListMaxDp = ((avail - dp(CHART_CHROME_DP)).coerceAtLeast(dp(80)) / resources.displayMetrics.density).toInt()
         pushState()
 
-        // Update the live per-flow series only while the chart is open.
-        chartJob?.cancel()
-        chartJob = serviceScope.launch {
-            VpnServiceController.runtime
-                .map { it.stats.flowLatencies }
-                .distinctUntilChanged()
-                .collect { chartData.value = it }
-        }
-
         val compose = composeHost {
             val s by state.collectAsState()
-            val data by chartData.collectAsState()
             QuickLatencyChart(
-                series = data,
+                state = latencyChart,
                 expanded = s.chartOpen,
                 openLeft = openLeft,
                 listMaxDp = chartListMaxDp,
             )
         }
-        val wrapper = wrap(compose, draggable = false, onOutside = { x, y -> if (!pillContains(x, y)) setChartOpen(false) })
+        // Unlike the rule panel, the chart does NOT close on an outside tap — it stays until the chart
+        // button is tapped again (or the panel supersedes it). It's a passive display with no controls,
+        // so FLAG_NOT_TOUCHABLE makes the whole window click-through (taps reach whatever is behind it).
+        val wrapper = wrap(compose, draggable = false, onOutside = { _, _ -> })
         val pillTop = pillP.y
-        val params = baseParams(chartWidth, watchOutside = true).apply {
+        val params = baseParams(chartWidth, watchOutside = false).apply {
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            alpha = 1f // pin fully opaque at open (some ROMs default overlay windows below 1.0)
             x = provisionalX
             y = pillTop // refined once measured so the chart stays on-screen
         }
@@ -373,6 +374,9 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
                 chartParams = params
                 // Keep the chart fully on-screen: top-align with the pill, but nudge up if its measured
                 // height would overflow the bottom. Only the chart window moves — the pill never does.
+                // One-shot: once the chart's height is known, place it fully on-screen — then STOP
+                // listening, so later per-second content re-layouts don't re-pin it to the opening
+                // position (which would fight a vertical drag and freeze the chart's Y).
                 wrapper.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
                     override fun onLayoutChange(
                         v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or2: Int, ob: Int,
@@ -384,15 +388,43 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
                             params.y = ny
                             runCatching { windowManager.updateViewLayout(wrapper, params) }
                         }
+                        v.removeOnLayoutChangeListener(this)
                     }
                 })
+                scheduleChartDim()
             }
             .onFailure { Log.e(TAG, "Unable to show latency chart", it) }
     }
 
+    /** After a delay, ease the chart window to semi-transparent so it's unobtrusive while monitoring. */
+    private fun scheduleChartDim() {
+        val view = chart ?: return
+        chartDimRunnable?.let { view.removeCallbacks(it) }
+        val runnable = Runnable { animateChartAlpha(CHART_DIM_ALPHA) }
+        chartDimRunnable = runnable
+        view.postDelayed(runnable, CHART_DIM_DELAY_MS)
+    }
+
+    private fun animateChartAlpha(target: Float) {
+        val view = chart ?: return
+        val params = chartParams ?: return
+        chartDimAnimator?.cancel()
+        chartDimAnimator = android.animation.ValueAnimator.ofFloat(params.alpha, target).apply {
+            duration = CHART_DIM_FADE_MS
+            addUpdateListener {
+                if (chart !== view) { cancel(); return@addUpdateListener }
+                params.alpha = it.animatedValue as Float
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+            start()
+        }
+    }
+
     private fun removeChart() {
-        chartJob?.cancel()
-        chartJob = null
+        chartDimAnimator?.cancel()
+        chartDimAnimator = null
+        chart?.let { view -> chartDimRunnable?.let { view.removeCallbacks(it) } }
+        chartDimRunnable = null
         chart?.let { runCatching { windowManager.removeView(it) } }
         chart = null
         chartParams = null
@@ -407,15 +439,21 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
             removePanel()
             pushState()
         }
-        if (chartOpen) { // same for the chart — a side window shouldn't trail the pill mid-drag
-            chartOpen = false
-            removeChart()
-            pushState()
-        }
         val screen = screenBounds()
+        val oldX = params.x
+        val oldY = params.y
         params.x = (params.x + dx.toInt()).coerceIn(0, (screen.width() - params.width).coerceAtLeast(0))
         params.y = (params.y + dy.toInt()).coerceIn(0, (screen.height() - view.height).coerceAtLeast(0))
         runCatching { windowManager.updateViewLayout(view, params) }
+        // The chart is a passive display docked to the pill: keep it open and let it follow the pill by
+        // the same amount (it re-docks precisely on release). It never collapses on a drag.
+        val c = chart
+        val cp = chartParams
+        if (c != null && cp != null) {
+            cp.x += params.x - oldX
+            cp.y += params.y - oldY
+            runCatching { windowManager.updateViewLayout(c, cp) }
+        }
     }
 
     private fun snapToNearestEdge(save: Boolean) {
@@ -427,9 +465,28 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         params.x = if (onRight) maxX else 0
         params.y = params.y.coerceIn(0, (screen.height() - view.height).coerceAtLeast(0))
         runCatching { windowManager.updateViewLayout(view, params) }
+        repositionChart()
         if (save) {
             overlayState.edit().putBoolean(KEY_RIGHT, onRight).putInt(KEY_Y, params.y).apply()
         }
+    }
+
+    /** Re-dock the open chart to the pill's current edge/position (side flips with the pill). */
+    private fun repositionChart() {
+        val c = chart ?: return
+        val cp = chartParams ?: return
+        val pillP = pillParams ?: return
+        val screen = screenBounds()
+        val gap = dp(6)
+        openLeft = onRight
+        cp.x = if (openLeft) {
+            (pillP.x - gap - cp.width).coerceAtLeast(0)
+        } else {
+            (pillP.x + pillP.width + gap).coerceAtMost((screen.width() - cp.width).coerceAtLeast(0))
+        }
+        val h = c.height.takeIf { it > 0 } ?: 0
+        cp.y = pillP.y.coerceIn(dp(8), (screen.height() - h - dp(8)).coerceAtLeast(dp(8)))
+        runCatching { windowManager.updateViewLayout(c, cp) }
     }
 
     private fun removeControl() {
@@ -689,6 +746,12 @@ class QuickControlService : Service(), LifecycleOwner, ViewModelStoreOwner, Save
         // Chart chrome around the scrollable flow list (padding + "LATENCY" title + legend row),
         // subtracted from the available vertical space to cap the list height.
         private const val CHART_CHROME_DP = 64
+
+        // The chart window fades to CHART_DIM_ALPHA after CHART_DIM_DELAY_MS so it's unobtrusive; a
+        // reopen recreates the window at full opacity.
+        private const val CHART_DIM_DELAY_MS = 4_000L
+        private const val CHART_DIM_FADE_MS = 500L
+        private const val CHART_DIM_ALPHA = 0.75f
 
         @Volatile private var instance: QuickControlService? = null
         @Volatile private var hostVisible: Boolean = false

@@ -457,7 +457,7 @@ class WeakNetworkVpnService : android.net.VpnService() {
                 ).copy(
                     activeScopeLabel = activeScopeLabel,
                     recentHits = hitTracker?.snapshot().orEmpty(),
-                    flowLatencies = latencyTracker?.snapshot().orEmpty(),
+                    flowLatencies = latencyTracker?.let { it.tick(System.currentTimeMillis()); it.snapshot() }.orEmpty(),
                     attributionAttempts = attributor?.stats()?.attempts ?: 0,
                     attributionMisses = attributor?.stats()?.misses ?: 0,
                     uptimeMs = if (startedAtElapsedMs > 0) {

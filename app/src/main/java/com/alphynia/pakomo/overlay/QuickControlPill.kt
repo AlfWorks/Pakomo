@@ -83,7 +83,7 @@ fun QuickPill(
         animationSpec = tween(320),
         label = "container",
     )
-    // A compact vertical stub: power on top, then the rule-list expand toggle, then the latency-chart
+    // A compact vertical stub: power on top, then the latency-chart toggle, then the rule-list expand
     // toggle. A little more end padding leaves a small blank strip toward the inward side.
     Surface(
         shape = RoundedCornerShape(15.dp),
@@ -120,13 +120,13 @@ fun QuickPill(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(Color.White.copy(alpha = if (expanded) 0.26f else 0.12f))
-                    .clickable(onClick = onExpandToggle),
+                    .background(Color.White.copy(alpha = if (chartOpen) 0.26f else 0.12f))
+                    .clickable(onClick = onChartToggle),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    contentDescription = t("展开或收起规则列表", "Expand or collapse the rule list"),
+                    imageVector = Icons.Rounded.Timeline,
+                    contentDescription = t("展开或收起延迟趋势", "Show or hide the latency trend"),
                     tint = Color.White,
                     modifier = Modifier.size(18.dp),
                 )
@@ -136,13 +136,13 @@ fun QuickPill(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(Color.White.copy(alpha = if (chartOpen) 0.26f else 0.12f))
-                    .clickable(onClick = onChartToggle),
+                    .background(Color.White.copy(alpha = if (expanded) 0.26f else 0.12f))
+                    .clickable(onClick = onExpandToggle),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.Timeline,
-                    contentDescription = t("展开或收起延迟趋势", "Show or hide the latency trend"),
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = t("展开或收起规则列表", "Expand or collapse the rule list"),
                     tint = Color.White,
                     modifier = Modifier.size(18.dp),
                 )
