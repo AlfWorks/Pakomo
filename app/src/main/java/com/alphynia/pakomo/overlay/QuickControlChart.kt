@@ -276,8 +276,9 @@ private fun AggregateChart(
     val trackColor = colors.muted.copy(alpha = 0.10f)
 
     // The service appends columns; here we only animate the pan. On (re)open, snap to the current slot
-    // so the running history shows at once; on each new column, slide one step. The Animatable lives in
-    // the composable so it has a frame clock.
+    // so the running history shows at once; on each new column, slide one step. `scrollOffset` itself
+    // lives on the service-held LatencyChartState, but the animation is driven from this composable's
+    // LaunchedEffect, which is where the frame clock comes from.
     val firstShow = remember { booleanArrayOf(true) }
     LaunchedEffect(state.nextSlot) {
         val target = (state.nextSlot - 1).coerceAtLeast(0).toFloat()
