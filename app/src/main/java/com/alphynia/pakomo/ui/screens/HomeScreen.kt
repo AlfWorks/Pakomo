@@ -92,6 +92,7 @@ import kotlin.math.sin
 import java.util.Locale
 import kotlin.math.ln
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val TRAFFIC_HISTORY = 48
 private const val TRAFFIC_SAMPLE_MS = 1_000
@@ -116,15 +117,7 @@ internal fun rememberTrafficChartState(state: PakomoUiState): TrafficChartState 
     val running = state.engineStage == EngineStage.FORWARDING
     LaunchedEffect(running) {
         if (running) {
-            val initial = latestStats.value
-            chartState.history.add(
-                TrafficSample(
-                    slot = 0,
-                    upload = initial.uploadBytesPerSecond,
-                    download = initial.downloadBytesPerSecond,
-                ),
-            )
-            var nextSlot = 1
+            var nextSlot = 0
             while (true) {
                 val s = latestStats.value
                 chartState.history.add(
@@ -134,18 +127,23 @@ internal fun rememberTrafficChartState(state: PakomoUiState): TrafficChartState 
                         download = s.downloadBytesPerSecond,
                     ),
                 )
-                chartState.scrollOffset.animateTo(
-                    targetValue = nextSlot.toFloat(),
-                    animationSpec = tween(
-                        durationMillis = TRAFFIC_SLIDE_MS,
-                        easing = FastOutSlowInEasing,
-                    ),
-                )
+                // Animate the pan WITHOUT blocking the sampling loop: the frame clock (and thus
+                // animateTo) is paused while the app is in the background, so blocking on it there would
+                // stop sampling and leave the graph frozen/blank. The loop's cadence is the plain delay,
+                // which keeps firing in the background, so history keeps accruing; a launched animation
+                // just catches the offset up (superseded each tick via the Animatable's mutex).
+                val target = nextSlot.toFloat()
+                launch {
+                    chartState.scrollOffset.animateTo(
+                        targetValue = target,
+                        animationSpec = tween(durationMillis = TRAFFIC_SLIDE_MS, easing = FastOutSlowInEasing),
+                    )
+                }
                 if (chartState.history.size > TRAFFIC_HISTORY) {
                     chartState.history.removeAt(0)
                 }
                 nextSlot += 1
-                delay((TRAFFIC_SAMPLE_MS - TRAFFIC_SLIDE_MS).toLong())
+                delay(TRAFFIC_SAMPLE_MS.toLong())
             }
         } else {
             chartState.history.clear()
