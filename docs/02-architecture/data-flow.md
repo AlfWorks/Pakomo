@@ -23,8 +23,9 @@ App 发起连接
        连接前故障判定：命中"网络中断·立即"且可预判时返回 refused；命中 DNS 缓存保护时执行 reset 或 drop
        未命中或需嗅探时：先经 protect() 连出目标，读取 SNI 或 HTTP Host 后再判定，必要时降级为 RST
        命中整形或慢响应：在中继 pump 上施加
-  → 经 protect() 的出站 Socket 连接目标服务器
-  → 下行数据经中继（可能被整形或暂扣）返回 App
+  → 经 protect() 的出站 Socket 连接目标服务器（建连往返即握手 RTT）
+  → 建连处上报一条按连接延迟样本（握手 RTT + 该流整形注入延迟）给 FlowLatencyTracker，供悬浮窗延迟图表
+  → 双向数据经**共享 NIO reactor**（`forwarding/NioRelay`）非阻塞中继（可能被整形或暂扣）返回 App
   → FlowLog 记录该连接（协议、显示主机名、端口、上下行字节、是否暂扣/整形、状态、来源应用、
     源/目的 IP:端口、结束时间；DNS 流量另记查询过的域名及其解析到的 IP）
 ```

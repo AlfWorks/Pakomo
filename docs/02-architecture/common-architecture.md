@@ -22,11 +22,12 @@ App → TUN → 转发引擎 [ Kernel: Tun2SocksEngine（纯 Kotlin） | Hev: he
 | VPN 生命周期 | `vpn/WeakNetworkVpnService`、`vpn/VpnServiceController` | 建立、热更新与停止接管；发布运行状态与 `appliedConfigId` |
 | 配置传递 | `vpn/VpnRuntimeConfigStore` | 大配置图保留在进程内，Intent 只携带一次性 configId，避免 Binder 大事务 |
 | 转发引擎（二选一） | `kernel/Tun2SocksEngine` 或 `hev-socks5-tunnel` | 在 TUN 裸包与 SOCKS5 流之间转换 |
-| 本地中继 | `forwarding/Socks5Server`、`forwarding/NioRelay` | 认证 SOCKS5、按连接中继、`protect()` 出站 |
+| 本地中继 | `forwarding/Socks5Server`、`forwarding/NioRelay` | 认证 SOCKS5、按连接中继（上游经**共享 NIO reactor**，非阻塞、无每连接读写线程）、`protect()` 出站 |
 | 整形 | `shaping/TrafficShaper`、`forwarding/ShapingPolicy` | 延迟、抖动、丢包与限速 |
 | 故障 | `forwarding/FaultPolicy`、`forwarding/DnsMessage` | 四种特殊故障的判定与注入 |
 | 归属 | `vpn/AndroidConnectionAttributor`、`forwarding/DomainRoutingPolicy`、`forwarding/HostSniffer` | 基于 UID、SNI 与学习 IP 的按应用与域名归属 |
-| 可观测 | `forwarding/FlowLog`、`vpn/TunnelStatsSampler`、`vpn/RecentHitTracker` | 逐连接记录、运行时统计与命中 |
+| 可观测 | `forwarding/FlowLog`、`vpn/TunnelStatsSampler`、`vpn/RecentHitTracker`、`vpn/FlowLatencyTracker` | 逐连接记录、运行时统计、命中，以及按连接延迟（实测 RTT + 整形注入）|
+| 快捷悬浮控制 | `overlay/QuickControlService`、`overlay/QuickControlPill`、`overlay/QuickControlChart` | 贴边悬浮窗：启停、就地切规则、按连接延迟趋势图表 |
 | 自动化（debug） | `app/src/debug/java/com/alphynia/pakomo/automation/` | 通过 adb 广播驱动，转发至 `VpnServiceController` |
 
 ## 数据面原则

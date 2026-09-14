@@ -56,6 +56,7 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 | 按域名归属（SNI + 学习 IP） | ✔ | ✔ | `Implemented` | 是 | QUIC / 无 SNI 尽力；DoH 学不到 IP |
 | 逐连接流量记录（FlowLog） | ✔ | ✔ | `Implemented` | 是 | TCP 与 UDP/QUIC/DNS，不含 ICMP；点条目查看详情（来源应用、源/目的 IP、时长、整形/暂扣、DNS 查询域名+解析结果） |
 | 运行时统计（速率/活动连接/累计丢弃/暂扣/uptime） | ✔ | ✔ | `Implemented` | 是 | `RuntimeStats`；**无**"当前丢包率/当前 RTT"稳定派生量 |
+| 按连接延迟趋势（实测握手 RTT + 整形注入延迟） | ✔ | ✔ | `Implemented` | 是（悬浮窗图表） | 每 TCP 连接建连测一次 RTT（`connectNanos`）+ shaper 配置注入延迟；`FlowLatencyTracker` 按 host+应用保持滚动序列，经 `RuntimeStats.flowLatencies` 暴露给悬浮窗延迟图表 |
 | 自动化控制协议（adb 广播驱动） | ✔ | ✔ | `Implemented` | adb | debug/release 均含；release 强制 token。见 [自动化控制接口](../automation-control.md) |
 
 ### 产品 / 呈现
@@ -66,8 +67,8 @@ Pakomo 的转发引擎有两个可选实现，以 Android build flavor 区分，
 | 规则预设 + 自定义规则（含特殊故障，随规则保存） | ✔ | ✔ | `Implemented` | 是 | normal/light/medium/severe/offline + 用户规则 |
 | 主题切换 + Pako 美术 | ✔ | ✔ | `Implemented` | 是 | 基础切换（`ThemeMode`）+ `PakomoArtwork` |
 | Mascot 视觉状态（Stopped/Starting/Running/Idle/Error，5 态） | ✔ | ✔ | `Implemented` | 是 | 由 `EngineStage` 派生（`mascotStateOf`），`StatusDecor` 渲染。见 [状态映射](../03-product/state-mapping.md) |
-| 多语言（中 / 英，即时切换） | ✔ | ✔ | `Implemented` | 是 | |
-| 快捷悬浮控制（悬浮球开关接管） | ✔ | ✔ | `Implemented` | 是 | 需 `SYSTEM_ALERT_WINDOW` |
+| 多语言（中 / 英，即时切换；首次启动跟随系统语言） | ✔ | ✔ | `Implemented` | 是 | 未设置过时按系统 locale 取中/英，用户在设置里选过即以用户为准 |
+| 快捷悬浮控制（贴边悬浮窗） | ✔ | ✔ | `Implemented` | 是 | 需 `SYSTEM_ALERT_WINDOW`；一键启停 + 就地切换规则；可侧向展开**按连接延迟趋势图表**（各连接曲线 + 综合平均，切规则实时更新）。图表窗口穿透点击、随胶囊拖动 |
 | 诊断（实时状态 / 归属命中 / Logcat） | ✔ | ✔ | `Implemented` | 是 | |
 
 ### 分发与更新
@@ -110,6 +111,10 @@ HTTP 响应，因此这类能力不属于 Pakomo 的支持范围。此类能力�
 - 特殊故障：`forwarding/FaultPolicy.kt`、`forwarding/Socks5Server.kt`、`data/SpecialFaultCodec.kt`、`core/model/PakomoModels.kt`
 - 归属：`vpn/AndroidConnectionAttributor.kt`、`forwarding/DomainRoutingPolicy.kt`
 - FlowLog：`forwarding/FlowLog.kt`、`core/model/FlowRecord.kt`
+- 按连接延迟：`vpn/FlowLatencyTracker.kt`、`forwarding/FlowLatencyReporter.kt`、`shaping/TrafficShaper.kt`（`injectedLatencyMs`）、`core/model/FlowLatency.kt`
+- 悬浮窗快捷控制：`overlay/QuickControlService.kt`、`overlay/QuickControlPill.kt`、`overlay/QuickControlChart.kt`
+- TCP 中继事件循环（NIO reactor）：`forwarding/NioRelay.kt`（非阻塞、无每连接读写线程）
+- 首次启动语言：`core/model/AppLanguage.kt`（`systemDefault` / `fromName`）
 - Kernel 内核：`com/alphynia/pakomo/kernel/`（tun/ip/tcp/udp/icmp/socks）
 - Mascot 状态：`ui/components/PakomoArtwork.kt`（`MascotState` / `mascotStateOf` / `StatusDecor`）
 - 引擎状态：`core/model/PakomoModels.kt`（`EngineStage`：STOPPED/STARTING/FORWARDING/ERROR）

@@ -52,6 +52,7 @@ Legend: ✔ supported · ◐ partial/degraded · ✘ not supported · — not ap
 | Per-domain attribution (SNI + learned IP) | ✔ | ✔ | `Implemented` | Yes | Best-effort for QUIC / no-SNI; IPs cannot be learned for DoH |
 | Per-connection traffic log (FlowLog) | ✔ | ✔ | `Implemented` | Yes | TCP and UDP/QUIC/DNS, not ICMP; tap a row for details (owning app, source/dest IP, duration, shaped/held, DNS queried domains + resolved IPs) |
 | Runtime statistics (rate / active connections / cumulative drops / holds / uptime) | ✔ | ✔ | `Implemented` | Yes | `RuntimeStats`; **no** stable derived "current loss rate / current RTT" |
+| Per-connection latency trend (measured handshake RTT + injected shaping delay) | ✔ | ✔ | `Implemented` | Yes (overlay chart) | One RTT sample per TCP connect (`connectNanos`) + the shaper's configured injected delay; `FlowLatencyTracker` keeps a rolling series per host+app, exposed via `RuntimeStats.flowLatencies` to the overlay latency chart |
 | Automation control protocol (adb-broadcast driven) | ✔ | ✔ | `Implemented` | adb | Included in debug/release; mandatory token on release. See [Automation Control Interface](../automation-control_EN.md) |
 
 ### Product / presentation
@@ -62,8 +63,8 @@ Legend: ✔ supported · ◐ partial/degraded · ✘ not supported · — not ap
 | Rule presets + custom rules (with special faults, saved with the rule) | ✔ | ✔ | `Implemented` | Yes | normal/light/medium/severe/offline + user rules |
 | Theme switching + Pako artwork | ✔ | ✔ | `Implemented` | Yes | Basic switching (`ThemeMode`) + `PakomoArtwork` |
 | Mascot visual states (Stopped/Starting/Running/Idle/Error, 5 states) | ✔ | ✔ | `Implemented` | Yes | Derived from `EngineStage` (`mascotStateOf`), rendered by `StatusDecor`. See [State Mapping](../03-product/state-mapping_EN.md) |
-| Localization (CN / EN, instant switching) | ✔ | ✔ | `Implemented` | Yes | |
-| Floating quick control (floating-ball takeover toggle) | ✔ | ✔ | `Implemented` | Yes | Requires `SYSTEM_ALERT_WINDOW` |
+| Localization (CN / EN, instant switching; first launch follows the system locale) | ✔ | ✔ | `Implemented` | Yes | Falls back to the system locale (CN/EN) until unset; a user's explicit choice wins |
+| Floating quick control (edge floating window) | ✔ | ✔ | `Implemented` | Yes | Requires `SYSTEM_ALERT_WINDOW`; one-tap start/stop + in-place rule switching; a **per-connection latency-trend chart** slides out sideways (per-connection curves + composite average, updating live on a rule switch). The chart window is click-through and follows the pill when dragged |
 | Diagnostics (real-time status / attribution hits / Logcat) | ✔ | ✔ | `Implemented` | Yes | |
 
 ### Distribution and updates
@@ -102,6 +103,10 @@ If Pakomo adds low-level networking capability in the future, the Kernel needs t
 - Special faults: `forwarding/FaultPolicy.kt`, `forwarding/Socks5Server.kt`, `data/SpecialFaultCodec.kt`, `core/model/PakomoModels.kt`
 - Attribution: `vpn/AndroidConnectionAttributor.kt`, `forwarding/DomainRoutingPolicy.kt`
 - FlowLog: `forwarding/FlowLog.kt`, `core/model/FlowRecord.kt`
+- Per-connection latency: `vpn/FlowLatencyTracker.kt`, `forwarding/FlowLatencyReporter.kt`, `shaping/TrafficShaper.kt` (`injectedLatencyMs`), `core/model/FlowLatency.kt`
+- Overlay quick control: `overlay/QuickControlService.kt`, `overlay/QuickControlPill.kt`, `overlay/QuickControlChart.kt`
+- TCP relay event loop (NIO reactor): `forwarding/NioRelay.kt` (non-blocking, no per-connection read/write threads)
+- First-launch language: `core/model/AppLanguage.kt` (`systemDefault` / `fromName`)
 - Kernel: `com/alphynia/pakomo/kernel/` (tun/ip/tcp/udp/icmp/socks)
 - Mascot states: `ui/components/PakomoArtwork.kt` (`MascotState` / `mascotStateOf` / `StatusDecor`)
 - Engine state: `core/model/PakomoModels.kt` (`EngineStage`: STOPPED/STARTING/FORWARDING/ERROR)

@@ -42,6 +42,7 @@ Pakomo does not support application-layer content faults. HTTP 404/500/503, malf
 ## Runtime statistics
 
 - Runtime statistics (`RuntimeStats`) provide metrics such as rate, active connection count, cumulative drops and holds, and uptime, but do not provide stable derived values like "current loss rate" or "current RTT." There is therefore no condition state such as "high latency," "packet loss," or "disconnected" derived from real-time statistics; the mascot has only the five lifecycle states, see [State Mapping](../03-product/state-mapping_EN.md).
+- The **per-connection latency trend** (the overlay chart, `RuntimeStats.flowLatencies`) plots the **single handshake RTT measured when each TCP connection is established**, plus that flow's injected shaping delay at the time; between connections it **holds the last value** (one column sampled per second) rather than continuously measuring real per-packet RTT. So it reflects "the latency of each new connection + the injected amount" — good for confirming shaping takes effect and watching the trend's magnitude, but it is not a continuous per-packet jitter measurement.
 
 ## Latency compensation
 

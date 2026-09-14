@@ -67,7 +67,7 @@ Typical scenarios:
 
 ## Features
 
-- **Two forwarding engines**: the Kernel edition (pure-Kotlin kernel) and the Hev edition (hev native), functionally identical and able to coexist on the same device.
+- **Two forwarding engines**: the Kernel edition (pure-Kotlin kernel) and the Hev edition (hev native), functionally identical and able to coexist on the same device. TCP forwarding runs on a shared event loop (NIO reactor) — non-blocking, with no per-connection read/write threads.
 - **Takeover scope**: three mutually exclusive modes — global, selected apps, selected addresses (domains) — with domain subdomain matching.
 - **Weak-network parameters**: fixed latency, jitter, packet loss, and up/down rate limiting, in a simple mode and an advanced mode (independent per-direction settings).
 - **Special faults** (saved with the rule; multiple can be enabled at once):
@@ -76,9 +76,10 @@ Typical scenarios:
   - Network outage (silent timeout, immediate failure);
   - Slow response (late response): holds the downstream response of a matched connection for a specified duration and then releases it at once, simulating the late response the client observes, with a "release small responses" threshold to let heartbeats and probes through.
 - **Traffic log**: lists, per connection, the traffic passing through Pakomo (protocol, host, port, up/down bytes, whether held, whether shaped, status), filterable by host, port, and protocol.
-- **Localization**: Simplified Chinese and English, switchable instantly in settings.
+- **Per-connection latency trend**: records each connection's handshake RTT + injected shaping delay, surfaced live in the overlay chart as per-connection curves plus a composite average.
+- **Localization**: Simplified Chinese and English, switchable instantly in settings; **first launch follows the system locale**.
 - **Theme**: a built-in, switchable Pako decorative theme.
-- **Floating quick control**: instantly toggle takeover via a floating ball.
+- **Floating quick control**: an edge floating window — one-tap start/stop, in-place rule switching, and an expandable sideways per-connection latency-trend chart.
 - **Diagnostics**: live runtime status, attribution-hit statistics, and raw Logcat output.
 - **In-app self-update**: based on [novi](https://github.com/AlfWorks/Novi), with two-layer trust of a P-256 manifest signature + APK signer verification; when CI tags a `vX.Y.Z` release it automatically publishes a signed dual-track (kernel/hev) public update source, and an in-app dialog runs detect → download → verify → install.
 
@@ -157,7 +158,7 @@ The artifacts are `app/build/outputs/apk/kernel/release/app-kernel-release.apk` 
 |   |-- forwarding/      # SOCKS5 relay, shaping and fault policy, NIO reactor, traffic log
 |   |-- shaping/         # Weak-network shaper (latency / jitter / loss / rate limiting)
 |   |-- vpn/             # VpnService, tunnel config, connection attribution, runtime stats
-|   |-- overlay/         # Floating-ball quick control
+|   |-- overlay/         # Floating-window quick control (rule switching + latency-trend chart)
 |   `-- ui/              # Jetpack Compose UI (screens / components / theme)
 |-- app/src/main/res/                # Resources (icons, drawables, theme)
 |-- third_party/hev-socks5-tunnel/   # Hev edition vendored forwarding core (git submodule)

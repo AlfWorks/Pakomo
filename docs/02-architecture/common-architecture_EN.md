@@ -20,11 +20,12 @@ Device TUN traffic is forwarded by the engine to a SOCKS5 relay that listens onl
 | VPN lifecycle | `vpn/WeakNetworkVpnService`, `vpn/VpnServiceController` | Establish, hot-update, and stop takeover; publish runtime state and `appliedConfigId` |
 | Config passing | `vpn/VpnRuntimeConfigStore` | Keep the large config graph in-process; the Intent carries only a one-shot configId, avoiding large Binder transactions |
 | Forwarding engine (one of two) | `kernel/Tun2SocksEngine` or `hev-socks5-tunnel` | Convert between raw TUN packets and SOCKS5 streams |
-| Local relay | `forwarding/Socks5Server`, `forwarding/NioRelay` | Authenticate SOCKS5, relay per connection, `protect()` outbound |
+| Local relay | `forwarding/Socks5Server`, `forwarding/NioRelay` | Authenticate SOCKS5, relay per connection (upstream over a **shared NIO reactor** — non-blocking, no per-connection read/write threads), `protect()` outbound |
 | Shaping | `shaping/TrafficShaper`, `forwarding/ShapingPolicy` | Latency, jitter, packet loss, and rate limiting |
 | Faults | `forwarding/FaultPolicy`, `forwarding/DnsMessage` | Decision and injection of the four special faults |
 | Attribution | `vpn/AndroidConnectionAttributor`, `forwarding/DomainRoutingPolicy`, `forwarding/HostSniffer` | Per-app and per-domain attribution based on UID, SNI, and learned IP |
-| Observability | `forwarding/FlowLog`, `vpn/TunnelStatsSampler`, `vpn/RecentHitTracker` | Per-connection logging, runtime statistics, and hits |
+| Observability | `forwarding/FlowLog`, `vpn/TunnelStatsSampler`, `vpn/RecentHitTracker`, `vpn/FlowLatencyTracker` | Per-connection logging, runtime statistics, hits, and per-connection latency (measured RTT + injected shaping) |
+| Floating quick control | `overlay/QuickControlService`, `overlay/QuickControlPill`, `overlay/QuickControlChart` | Edge floating window: start/stop, in-place rule switching, per-connection latency-trend chart |
 | Automation (debug) | `app/src/debug/java/com/alphynia/pakomo/automation/` | Driven by adb broadcasts, forwarded to `VpnServiceController` |
 
 ## Data-plane principles

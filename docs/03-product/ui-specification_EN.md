@@ -21,9 +21,9 @@ This document explains how Pakomo's implemented UI presents its capabilities. Fo
 | Rule editor | `RuleEditorScreen.kt` | Latency, jitter, packet loss, and up/down rate limiting, distinguishing simple and advanced modes; the special-fault entry is at the bottom |
 | Special-fault targets | `SpecialFaultScreens.kt` | Enabling and parameters for the four faults (DNS result, outage behavior, slow-response duration and release threshold), plus selecting app and domain targets |
 | Traffic & diagnostics | `UtilityScreens.kt` (`DiagnosticsScreen`) | Default "Traffic" tab: per-connection records with a top-bar search and a filter panel; tapping a row opens a connection detail sheet. The "Diagnostics" tab shows live status, attribution hits, and Logcat |
-| Settings | `UtilityScreens.kt` (`SettingsScreen`) | Theme mode and language (Chinese and English, instant switching); a "Shaping" section holds the latency-compensation toggle (off by default, hot-toggleable) |
+| Settings | `UtilityScreens.kt` (`SettingsScreen`) | Theme mode and language (Chinese and English, instant switching; **first launch follows the system locale**); a "Shaping" section holds the latency-compensation toggle (off by default, hot-toggleable) |
 | Latency test | `LatencyTestScreen.kt` | Measures the target connection latency via the local SOCKS or a direct connection |
-| Floating quick control | `overlay/QuickControlService.kt` | Instantly toggles takeover via a floating ball; requires the `SYSTEM_ALERT_WINDOW` permission |
+| Floating quick control | `overlay/QuickControlService.kt`, `QuickControlPill.kt`, `QuickControlChart.kt` | Edge floating window: one-tap start/stop, in-place rule switching, and an expandable per-connection latency-trend chart; requires the `SYSTEM_ALERT_WINDOW` permission. See the [section below](#floating-quick-control-overlay) |
 
 ## Traffic page and connection details
 
@@ -37,6 +37,14 @@ This document explains how Pakomo's implemented UI presents its capabilities. Fo
 ## Main control and status
 
 The main switch on the Home status bar is the only start/stop control. The status copy comes from the real `EngineStage` — e.g. STOPPED shows as "Stopped," FORWARDING shows as running — and no imaginary intermediate states are presented. When running, it shows the live rate, active connection count, and number of effective rules, with data from `RuntimeStats`.
+
+## Floating quick control (overlay)
+
+A slim vertical pill docked at the screen edge, operable without returning to the app; requires the `SYSTEM_ALERT_WINDOW` permission. It is composed of several independent overlay windows, and **the pill itself never moves** when a sub-window opens.
+
+- **Pill (resident)**: three stacked buttons — power (one-tap start/stop, its icon following `EngineStage`), the latency-chart toggle, and the rule-expand toggle. Draggable; snaps to the nearest edge on release.
+- **Rule panel**: tapping the rule button opens an independent window above/below the pill listing all rules; tapping one switches — while running it hot-switches and waits for the service to confirm (a timeout prompts a retry), while stopped it only persists and takes effect on the next start. Dismissed by tapping outside it or the rule button again.
+- **Latency-trend chart**: tapping the chart button slides an independent window out **sideways toward the screen interior** (pill docked right opens left, docked left opens right). One aggregate plot: a smooth coloured curve per connection plus a composite average (EMA-smoothed); the x-axis is time with an **intermittent left-scroll** (matching the home traffic graph), and the y-axis is the **post-shaping latency** (measured handshake RTT + injected shaping delay), so it confirms shaping is taking effect live. The chart is **display-only and click-through**, and only closes when the chart button is tapped again (not on an outside tap); it follows the pill while dragging and re-docks on release; after a while open it fades to semi-transparent and a reopen restores it. The rule panel and the chart are **mutually exclusive** — only one shows at a time.
 
 ## The UI obeys the capability boundaries
 

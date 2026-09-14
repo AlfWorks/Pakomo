@@ -12,8 +12,9 @@ The authoritative list of capabilities is the [Capability Matrix](../01-capabili
 
 - Connection-layer weak-network shaping — latency, jitter, packet loss, and up/down rate limiting — with a simple mode and an advanced mode that sets each direction independently.
 - Four special faults: connection reset, DNS failure, network outage, and slow response (late response). Fault configuration is saved with the rule and multiple faults can be enabled at once.
-- Per-app and per-domain attribution, per-connection traffic logging, and real-time diagnostics.
-- Two implementation paths, Kernel and Hev. They are functionally identical and can coexist on the same device.
+- Per-app and per-domain attribution, per-connection traffic logging, per-connection latency trends (measured RTT + injected shaping), and real-time diagnostics.
+- An edge floating-window quick control: one-tap start/stop, in-place rule switching, and a per-connection latency-trend chart that slides out sideways.
+- Two implementation paths, Kernel and Hev. They are functionally identical and can coexist on the same device. TCP forwarding runs on a shared event loop (NIO reactor), non-blocking.
 - An automation control protocol, driven by adb broadcasts, that lets Pakomo be used as a programmable weak-network and fault injector.
 
 ## Explicitly out of scope

@@ -69,7 +69,7 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
 
 ## 功能特性
 
-- **双转发引擎**：Kernel 版（纯 Kotlin 内核）与 Hev 版（hev native）两种可选实现，功能一致，可同机并存。
+- **双转发引擎**：Kernel 版（纯 Kotlin 内核）与 Hev 版（hev native）两种可选实现，功能一致，可同机并存。TCP 转发基于共享事件循环（NIO reactor），非阻塞、无每连接读写线程。
 - **接管范围**：全局、指定应用、指定地址（域名）三种互斥模式，域名支持子域匹配。
 - **弱网参数**：固定延迟、抖动、丢包率与上下行限速，提供简单模式与高级模式（分方向独立设置）。
 - **特殊故障**（随规则保存，可同时启用多种）：
@@ -80,9 +80,10 @@ Pakomo 是一款非 Root 的 Android 弱网与故障模拟工具。Pakomo 以本
     并可设置"放行小响应"阈值以放过心跳与探测。
 - **流量记录**：逐连接列出经过 Pakomo 的流量（协议、主机、端口、上下行字节、是否暂扣、是否整形、状态），
   支持按主机、端口与协议过滤。
-- **多语言**：简体中文与英文，可在设置内即时切换。
+- **按连接延迟趋势**：逐连接记录建连握手 RTT + 整形注入延迟，供悬浮窗延迟图表实时呈现各连接曲线与综合平均。
+- **多语言**：简体中文与英文，可在设置内即时切换；**首次启动跟随系统语言**。
 - **主题**：内置可切换的 Pako 装饰主题。
-- **快捷悬浮控制**：通过悬浮球即时开关接管。
+- **快捷悬浮控制**：贴边悬浮窗，一键启停、就地切换规则，并可侧向展开按连接延迟趋势图表。
 - **诊断**：实时运行状态、归属命中统计与原始 Logcat 输出。
 - **应用内自更新**：基于 [novi](https://github.com/AlfWorks/Novi)，清单 P-256 签名 + APK 签名者校验双层信任；CI 打 `vX.Y.Z` tag 时自动发布签名的双轨（kernel/hev）公开更新源，应用内弹窗完成检测 → 下载 → 校验 → 安装。
 
@@ -174,7 +175,7 @@ applicationId 分别为 `com.alphynia.pakomo.kernel` 与 `com.alphynia.pakomo.he
 |   |-- forwarding/      # SOCKS5 中继、整形与故障策略、NIO 反应堆、流量记录
 |   |-- shaping/         # 弱网整形器（延迟 / 抖动 / 丢包 / 限速）
 |   |-- vpn/             # VpnService、隧道配置、连接归属、运行时统计
-|   |-- overlay/         # 悬浮球快捷控制
+|   |-- overlay/         # 悬浮窗快捷控制（切规则 + 延迟趋势图表）
 |   `-- ui/              # Jetpack Compose 界面（screens / components / theme）
 |-- app/src/main/res/                # 资源（图标、drawable、主题）
 |-- third_party/hev-socks5-tunnel/   # Hev 版 vendored 转发核心（git submodule）

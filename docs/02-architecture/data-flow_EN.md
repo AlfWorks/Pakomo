@@ -21,8 +21,11 @@ App initiates a connection
        pre-connect fault decision: on "network blackout · immediate" that can be predicted, return refused; on a DNS cache guard hit, reset or drop
        when not matched or when sniffing is needed: first connect out via protect(), read the SNI or HTTP Host, then decide, degrading to RST if necessary
        on a shaping or slow-response hit: apply it on the relay pump
-  → the protect()-ed outbound socket connects to the target server
-  → downstream data returns to the app through the relay (possibly shaped or held)
+  → the protect()-ed outbound socket connects to the target server (this round-trip is the handshake RTT)
+  → a per-connection latency sample (handshake RTT + this flow's injected shaping delay) is reported to
+    FlowLatencyTracker at connect time, feeding the overlay latency chart
+  → data is relayed both ways over the **shared NIO reactor** (`forwarding/NioRelay`), non-blocking
+    (possibly shaped or held), back to the app
   → FlowLog records the connection (protocol, display host, port, up/down bytes, whether held/shaped,
     status, owning app, source/destination IP:port, close time; DNS flows also record the domains
     queried and the IPs they resolved to)

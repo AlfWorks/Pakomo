@@ -45,3 +45,5 @@ The Kernel edition has no third-party native dependency and needs no NDK to buil
 ## History
 
 The Kernel edition passed on-device acceptance in August 2026; during the replacement of hev, a checksum defect and a DNS-port bug were fixed and throughput was optimized.
+
+0.3.0 systematically hardened the TCP connection lifecycle and the forwarding path: corrected half-close / FIN sequencing and FIN-ACK checks, delivered handshake-carried data, switched inbound data to back-pressure (shrinking the advertised window) instead of blindly acking, keyed connections by the full 4-tuple, reclaimed idle connections promptly, and dropped IPv4 fragments correctly; upstream relay moved to a **shared event loop (NIO reactor, `forwarding/NioRelay`)**, removing the per-connection blocking read/write thread pools, and fixed waiter leaks and monotonic-clock timeouts on reactor/channel close. These fixes address the connection stalls / abrupt breaks / failure to recover after a network switch seen under weak networks, long-lived connections, and network changes.
